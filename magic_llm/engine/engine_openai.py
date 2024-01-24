@@ -12,9 +12,10 @@ class EngineOpenAI(BaseChat):
                  api_key: str,
                  model: str,
                  stream: bool = False,
+                 base_url: str = "https://api.openai.com/v1",
                  **kwargs) -> None:
         super().__init__()
-        self.url = 'https://api.openai.com/v1/chat/completions'
+        self.base_url = base_url + '/chat/completions'
         self.api_key = api_key
         self.model = model
         self.stream = stream
@@ -37,7 +38,7 @@ class EngineOpenAI(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
 
         # Create a request object with the URL, data, and headers.
-        request = urllib.request.Request(self.url, data=json_data, headers=headers)
+        request = urllib.request.Request(self.base_url, data=json_data, headers=headers)
 
         # Make the request and read the response.
         with urllib.request.urlopen(request) as response:
