@@ -31,6 +31,7 @@ class EngineOpenAI(BaseChat):
         data = {
             "model": self.model,
             "messages": chat.messages,
+            "stream": self.stream,
             **kwargs
         }
 
@@ -42,15 +43,21 @@ class EngineOpenAI(BaseChat):
 
         # Make the request and read the response.
         with urllib.request.urlopen(request) as response:
-            response_data = response.read()
-            encoding = response.info().get_content_charset('utf-8')
+            print(self.stream)
+            if self.stream:
+                for chunk in response:
+                    chunk = chunk.decode('utf-8')
+                    yield chunk
+            else:
+                response_data = response.read()
+                encoding = response.info().get_content_charset('utf-8')
 
-            # Decode and print the response.
-            r = json.loads(response_data.decode(encoding))
-            return ModelChatResponse(**{
-                'content': r['choices'][0]['message']['content'],
-                'prompt_tokens': r['usage']['prompt_tokens'],
-                'completion_tokens': r['usage']['completion_tokens'],
-                'total_tokens': r['usage']['total_tokens'],
-                'role': 'assistant'
-            })
+                # Decode and print the response.
+                r = json.loads(response_data.decode(encoding))
+                return ModelChatResponse(**{
+                    'content': r['choices'][0]['message']['content'],
+                    'prompt_tokens': r['usage']['prompt_tokens'],
+                    'completion_tokens': r['usage']['completion_tokens'],
+                    'total_tokens': r['usage']['total_tokens'],
+                    'role': 'assistant'
+                })
