@@ -1,3 +1,5 @@
+import time
+
 import boto3
 import json
 
@@ -26,7 +28,7 @@ class EngineAmazon(BaseChat):
             aws_secret_access_key=aws_secret_access_key
         )
 
-    def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+    def prepare_data(self, chat: ModelChat, **kwargs):
         if self.model.startswith('amazon'):
             body = json.dumps({
                 "inputText": chat.generic_chat(format='titan'),
@@ -54,10 +56,12 @@ class EngineAmazon(BaseChat):
                 "temperature": kwargs.get('temperature', 0.2),
                 "top_p": kwargs.get('top_p', 1),
             })
+        else:
+            raise Exception("Unknown model")
+        return body
 
-            print(chat.generic_chat(format='llama2'))
-
-        response = self.client.invoke_model(body=body,
+    def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        response = self.client.invoke_model(body=self.prepare_data(chat, **kwargs),
                                             modelId=self.model,
                                             accept='application/json',
                                             contentType='application/json')
@@ -90,3 +94,74 @@ class EngineAmazon(BaseChat):
                 'total_tokens': r['prompt_token_count'] + r['generation_token_count'],
                 'role': 'assistant'
             })
+
+    def stram_generate(self, chat: ModelChat, **kwargs):
+        response = self.client.invoke_model_with_response_stream(
+            body=self.prepare_data(chat, **kwargs),
+            modelId=self.model,
+            accept='application/json',
+            contentType='application/json')
+        for event in response.get("body"):
+            event = json.loads(event["chunk"]["bytes"])
+            if self.model.startswith('anthropic'):
+                chunk = {
+                    'id': '1',
+                    'choices':
+                        [{
+                            'delta':
+                                {
+                                    'content': event['completion'],
+                                    'role': None
+                                },
+                            'finish_reason': 'stop' if event['stop_reason'] else None,
+                            'index': 0
+                        }],
+                    'created': int(time.time()),
+                    'model': self.model,
+                    'object': 'chat.completion.chunk'
+                }
+                stop_reason = event['stop_reason']
+            elif self.model.startswith('amazon'):
+                chunk = {
+                    'id': '1',
+                    'choices':
+                        [{
+                            'delta':
+                                {
+                                    'content': event['outputText'],
+                                    'role': None
+                                },
+                            'finish_reason': 'stop' if event['completionReason'] == 'FINISH' else None,
+                            'index': event['index']
+                        }],
+                    'created': int(time.time()),
+                    'model': self.model,
+                    'object': 'chat.completion.chunk'
+                }
+                stop_reason = event['completionReason']
+            elif self.model.startswith('meta'):
+                chunk = {
+                    'id': '1',
+                    'choices':
+                        [{
+                            'delta':
+                                {
+                                    'content': event['generation'],
+                                    'role': None
+                                },
+                            'finish_reason': 'stop' if event['stop_reason'] else None,
+                            'index': 0
+                        }],
+                    'created': int(time.time()),
+                    'model': self.model,
+                    'object': 'chat.completion.chunk'
+                }
+                stop_reason = event['stop_reason']
+            else:
+                raise Exception('Unrecognized')
+            chunk = json.dumps(chunk)
+            yield f'data: {chunk}\n'
+            yield f'\n'
+            if stop_reason:
+                yield 'data: [DONE]\n'
+            yield f'\n'
