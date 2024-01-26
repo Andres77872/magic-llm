@@ -2,6 +2,7 @@
 
 import json
 import urllib.request
+import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
@@ -15,8 +16,10 @@ class EngineGoogle(BaseChat):
                  **kwargs) -> None:
         super().__init__()
 
-        self.url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}'
-
+        if stream:
+            self.url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?key={api_key}'
+        else:
+            self.url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}'
         self.api_key = api_key
         self.model = model
         self.stream = stream
@@ -27,7 +30,7 @@ class EngineGoogle(BaseChat):
         request = urllib.request.Request(url_counter, data=json_data, headers=headers, method='POST')
         return json.loads(urllib.request.urlopen(request).read().decode('utf'))['totalTokens']
 
-    def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+    def prepare_data(self, chat: ModelChat, **kwargs):
         # Construct the header and data to be sent in the request.
         headers = {
             'Content-Type': 'application/json',
@@ -54,8 +57,11 @@ class EngineGoogle(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
 
         # Create a request object with the URL, data, and headers.
-        request = urllib.request.Request(self.url, data=json_data, headers=headers, method='POST')
+        return urllib.request.Request(self.url, data=json_data, headers=headers,
+                                      method='POST'), json_data, headers, data
 
+    def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        request, json_data, headers, data = self.prepare_data(chat, **kwargs)
         # Make the request and read the response.
         with urllib.request.urlopen(request) as response:
             response_data = response.read()
@@ -81,3 +87,33 @@ class EngineGoogle(BaseChat):
                 'total_tokens': completion_tokens,
                 'role': 'assistant'
             })
+
+    def stram_generate(self, chat: ModelChat, **kwargs):
+        request, json_data, _, _ = self.prepare_data(chat, **kwargs)
+        with urllib.request.urlopen(request) as response:
+            for chunk in response:
+                t = chunk.decode('utf-8').strip()
+                if t.startswith('"text":'):
+                    t = t[7:].strip()
+                    chunk = {
+                        'id': '1',
+                        'choices':
+                            [{
+                                'delta':
+                                    {
+                                        'content': t,
+                                        'role': 'assistant'
+                                    },
+                                'finish_reason': None,
+                                'index': 0
+                            }],
+                        'created': int(time.time()),
+                        'model': self.model,
+                        'object': 'chat.completion.chunk'
+                    }
+                    print(chunk)
+                    chunk = json.dumps(chunk)
+                    yield f'data: {chunk}\n'
+                    yield f'\n'
+            yield 'data: [DONE]\n'
+            yield f'\n'
