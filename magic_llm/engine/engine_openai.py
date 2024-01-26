@@ -25,14 +25,16 @@ class EngineOpenAI(BaseChat):
         # Construct the header and data to be sent in the request.
         headers = {
             'Content-Type': 'application/json',
-            'Authorization': f'Bearer {self.api_key}'
+            'Authorization': f'Bearer {self.api_key}',
+            'accept': 'application/json',
+            'user-agent': 'arz-magic-llm-engine'
         }
 
         data = {
             "model": self.model,
             "messages": chat.messages,
             "stream": self.stream,
-            **kwargs
+            **self.kwargs
         }
 
         # Convert the data dictionary to a JSON string.
@@ -43,7 +45,7 @@ class EngineOpenAI(BaseChat):
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_data(chat)) as response:
+        with urllib.request.urlopen(self.prepare_data(chat, **kwargs)) as response:
             response_data = response.read()
             encoding = response.info().get_content_charset('utf-8')
 
@@ -59,7 +61,7 @@ class EngineOpenAI(BaseChat):
 
     def stram_generate(self, chat: ModelChat, **kwargs):
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_data(chat)) as response:
+        with urllib.request.urlopen(self.prepare_data(chat, **kwargs)) as response:
             for chunk in response:
                 chunk = chunk.decode('utf-8')
                 yield chunk
