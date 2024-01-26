@@ -57,3 +57,6 @@ class EngineCloudFlare(BaseChat):
                 'total_tokens': 0,
                 'role': 'assistant'
             })
+
+    def stram_generate(self, chat: ModelChat, **kwargs):
+        raise NotImplementedError
