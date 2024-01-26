@@ -21,7 +21,7 @@ class EngineOpenAI(BaseChat):
         self.stream = stream
         self.kwargs = kwargs
 
-    def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+    def prepare_data(self, chat: ModelChat, **kwargs):
         # Construct the header and data to be sent in the request.
         headers = {
             'Content-Type': 'application/json',
@@ -39,25 +39,27 @@ class EngineOpenAI(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
 
         # Create a request object with the URL, data, and headers.
-        request = urllib.request.Request(self.base_url, data=json_data, headers=headers)
+        return urllib.request.Request(self.base_url, data=json_data, headers=headers)
 
+    def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
-        with urllib.request.urlopen(request) as response:
-            print(self.stream)
-            if self.stream:
-                for chunk in response:
-                    chunk = chunk.decode('utf-8')
-                    yield chunk
-            else:
-                response_data = response.read()
-                encoding = response.info().get_content_charset('utf-8')
+        with urllib.request.urlopen(self.prepare_data(chat)) as response:
+            response_data = response.read()
+            encoding = response.info().get_content_charset('utf-8')
 
-                # Decode and print the response.
-                r = json.loads(response_data.decode(encoding))
-                return ModelChatResponse(**{
-                    'content': r['choices'][0]['message']['content'],
-                    'prompt_tokens': r['usage']['prompt_tokens'],
-                    'completion_tokens': r['usage']['completion_tokens'],
-                    'total_tokens': r['usage']['total_tokens'],
-                    'role': 'assistant'
-                })
+            # Decode and print the response.
+            r = json.loads(response_data.decode(encoding))
+            return ModelChatResponse(**{
+                'content': r['choices'][0]['message']['content'],
+                'prompt_tokens': r['usage']['prompt_tokens'],
+                'completion_tokens': r['usage']['completion_tokens'],
+                'total_tokens': r['usage']['total_tokens'],
+                'role': 'assistant'
+            })
+
+    def stram_generate(self, chat: ModelChat, **kwargs):
+        # Make the request and read the response.
+        with urllib.request.urlopen(self.prepare_data(chat)) as response:
+            for chunk in response:
+                chunk = chunk.decode('utf-8')
+                yield chunk
