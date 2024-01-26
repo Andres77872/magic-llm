@@ -111,7 +111,6 @@ class EngineGoogle(BaseChat):
                         'model': self.model,
                         'object': 'chat.completion.chunk'
                     }
-                    print(chunk)
                     chunk = json.dumps(chunk)
                     yield f'data: {chunk}\n'
                     yield f'\n'
