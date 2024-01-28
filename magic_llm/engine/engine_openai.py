@@ -63,5 +63,8 @@ class EngineOpenAI(BaseChat):
         # Make the request and read the response.
         with urllib.request.urlopen(self.prepare_data(chat, **kwargs)) as response:
             for chunk in response:
-                chunk = chunk.decode('utf-8')
-                yield chunk
+                if chunk.startswith(b'data:'):
+                    chunk = chunk.decode('utf-8')
+                    yield chunk
+                else:
+                    print(chunk)
