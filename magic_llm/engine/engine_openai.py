@@ -51,13 +51,22 @@ class EngineOpenAI(BaseChat):
 
             # Decode and print the response.
             r = json.loads(response_data.decode(encoding))
-            return ModelChatResponse(**{
-                'content': r['choices'][0]['message']['content'],
-                'prompt_tokens': r['usage']['prompt_tokens'],
-                'completion_tokens': r['usage']['completion_tokens'],
-                'total_tokens': r['usage']['total_tokens'],
-                'role': 'assistant'
-            })
+            if r['choices'][0]['message']['content']:
+                return ModelChatResponse(**{
+                    'content': r['choices'][0]['message']['content'],
+                    'prompt_tokens': r['usage']['prompt_tokens'],
+                    'completion_tokens': r['usage']['completion_tokens'],
+                    'total_tokens': r['usage']['total_tokens'],
+                    'role': 'assistant'
+                })
+            else:  # interpret as function calling
+                return ModelChatResponse(**{
+                    'content': r['choices'][0]['message']['tool_calls'][0]['function']['arguments'],
+                    'prompt_tokens': r['usage']['prompt_tokens'],
+                    'completion_tokens': r['usage']['completion_tokens'],
+                    'total_tokens': r['usage']['total_tokens'],
+                    'role': 'assistant'
+                })
 
     def stram_generate(self, chat: ModelChat, **kwargs):
         # Make the request and read the response.
