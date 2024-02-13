@@ -93,8 +93,9 @@ class EngineGoogle(BaseChat):
         with urllib.request.urlopen(request) as response:
             for chunk in response:
                 t = chunk.decode('utf-8').strip()
+
                 if t.startswith('"text":'):
-                    t = t[7:].strip()
+                    t = json.loads('{' + t + '}')['text']
                     chunk = {
                         'id': '1',
                         'choices':
