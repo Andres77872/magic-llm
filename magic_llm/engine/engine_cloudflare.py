@@ -11,18 +11,12 @@ from magic_llm.model import ModelChat, ModelChatResponse
 class EngineCloudFlare(BaseChat):
     def __init__(self,
                  api_key: str,
-                 model: str,
                  account_id: str,
-                 stream: bool = False,
                  **kwargs) -> None:
-        super().__init__()
+        super().__init__(**kwargs)
 
         self.url = f'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}'
-
         self.api_key = api_key
-        self.model = model
-        self.stream = stream
-        self.kwargs = kwargs
 
     def prepare_data(self, chat: ModelChat, **kwargs):
         headers = {

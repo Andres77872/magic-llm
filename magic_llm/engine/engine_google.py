@@ -11,19 +11,14 @@ from magic_llm.model import ModelChat, ModelChatResponse
 class EngineGoogle(BaseChat):
     def __init__(self,
                  api_key: str,
-                 model: str,
-                 stream: bool = False,
                  **kwargs) -> None:
-        super().__init__()
+        super().__init__(**kwargs)
 
-        if stream:
-            self.url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?key={api_key}'
+        if self.stream:
+            self.url = f'https://generativelanguage.googleapis.com/v1beta/models/{self.model}:streamGenerateContent?key={api_key}'
         else:
-            self.url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}'
+            self.url = f'https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={api_key}'
         self.api_key = api_key
-        self.model = model
-        self.stream = stream
-        self.kwargs = kwargs
 
     def count_tokens(self, json_data: bytes, headers: dict) -> int:
         url_counter = f'https://generativelanguage.googleapis.com/v1beta/models/{self.model}:countTokens?key={self.api_key}'

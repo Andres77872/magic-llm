@@ -9,18 +9,13 @@ from magic_llm.model import ModelChatResponse, ModelChat
 
 class EngineAmazon(BaseChat):
     def __init__(self,
-                 model: str,
                  aws_access_key_id: str,
                  aws_secret_access_key: str,
                  region_name: str = 'us-east-1',
                  service_name: str = 'bedrock-runtime',
-                 stream: bool = False,
                  **kwargs):
-        super().__init__()
+        super().__init__(**kwargs)
 
-        self.model = model
-        self.stream = stream
-        self.kwargs = kwargs
         self.client = boto3.client(
             service_name=service_name,
             region_name=region_name,

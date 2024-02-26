@@ -10,16 +10,11 @@ from magic_llm.model import ModelChat, ModelChatResponse
 class EngineOpenAI(BaseChat):
     def __init__(self,
                  api_key: str,
-                 model: str,
-                 stream: bool = False,
                  base_url: str = "https://api.openai.com/v1",
                  **kwargs) -> None:
-        super().__init__()
+        super().__init__(**kwargs)
         self.base_url = base_url + '/chat/completions'
         self.api_key = api_key
-        self.model = model
-        self.stream = stream
-        self.kwargs = kwargs
 
     def prepare_data(self, chat: ModelChat, **kwargs):
         # Construct the header and data to be sent in the request.
@@ -27,7 +22,8 @@ class EngineOpenAI(BaseChat):
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {self.api_key}',
             'accept': 'application/json',
-            'user-agent': 'arz-magic-llm-engine'
+            'user-agent': 'arz-magic-llm-engine',
+            **self.headers
         }
 
         data = {
