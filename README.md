@@ -6,6 +6,7 @@ Magic LLM is a simplified wrapper designed to facilitate connections with variou
 - [Cloudflare](https://developers.cloudflare.com/workers-ai/models/text-generation/#responses)
 - [AWS Bedrock](https://aws.amazon.com/bedrock/)
 - [Google AI Studio](https://ai.google.dev/tutorials/rest_quickstart)
+- [Cohere](https://docs.cohere.com/reference/chat)
 
 ## Tested LLM Providers with OpenAI Compatibility
 
@@ -17,6 +18,7 @@ The following LLM providers have been tested for compatibility with OpenAI's API
 - [OpenRouter](https://openrouter.ai/docs#requests)
 - [DeepInfra](https://deepinfra.com/docs/advanced/openai_api)
 - [Fireworks.AI](https://readme.fireworks.ai/reference/createchatcompletion)
+- [Mistral](https://docs.mistral.ai/api/#operation/createChatCompletion)
 
 Note: Other LLM providers have not been tested.
 

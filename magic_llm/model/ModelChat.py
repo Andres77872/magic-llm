@@ -2,10 +2,8 @@ from magic_llm.model import ModelChatResponse
 
 
 class ModelChat:
-    def __init__(self, system: str):
-        self.messages = [
-            {"role": "system", "content": system},
-        ]
+    def __init__(self, system: str = None):
+        self.messages = [{"role": "system", "content": system}] if system else []
 
     def add_message(self, role: str, content: str):
         self.messages.append({
