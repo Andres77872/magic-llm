@@ -15,7 +15,7 @@ class EngineCloudFlare(BaseChat):
                  **kwargs) -> None:
         super().__init__(**kwargs)
 
-        self.url = f'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}'
+        self.url = f'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{self.model}'
         self.api_key = api_key
 
     def prepare_data(self, chat: ModelChat, **kwargs):
