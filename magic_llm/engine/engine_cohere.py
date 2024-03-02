@@ -61,7 +61,6 @@ class EngineCohere(BaseChat):
             idx = None
             usage = None
             for chunk in response:
-                print('=>', chunk)
                 if chunk:
                     event = json.loads(chunk)
 
