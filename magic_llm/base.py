@@ -1,4 +1,8 @@
-from magic_llm.engine import EngineOpenAI, EngineGoogle, EngineCloudFlare, EngineAmazon
+from magic_llm.engine import (EngineOpenAI,
+                              EngineGoogle,
+                              EngineCloudFlare,
+                              EngineAmazon,
+                              EngineCohere)
 
 
 class MagicLlmBase:
@@ -29,5 +33,11 @@ class MagicLlmBase:
         elif engine == 'amazon':
             self.llm = EngineAmazon(
                 model=model,
+                **kwargs
+            )
+        elif engine == 'cohere':
+            self.llm = EngineCohere(
+                model=model,
+                api_key=private_key,
                 **kwargs
             )
