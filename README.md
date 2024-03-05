@@ -56,7 +56,8 @@ client = MagicLLM(
     engine='cloudflare',
     model='@cf/mistral/mistral-7b-instruct-v0.1',
     private_key='a...b',
-    account_id='c...1'
+    account_id='c...1',
+    stream=True
 )
 ```
 
@@ -68,7 +69,8 @@ client = MagicLLM(
     model='amazon.titan-text-express-v1',
     aws_access_key_id='A...B',
     aws_secret_access_key='a...b',
-    region_name='us-east-1'
+    region_name='us-east-1',
+    stream=True
 )
 ```
 
@@ -78,7 +80,8 @@ client = MagicLLM(
 client = MagicLLM(
     engine='google',
     model='gemini-pro',
-    private_key='A...B'
+    private_key='A...B',
+    stream=True
 )
 ```
 
