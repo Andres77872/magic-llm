@@ -13,7 +13,7 @@ class EngineOpenAI(BaseChat):
                  base_url: str = "https://api.openai.com/v1",
                  **kwargs) -> None:
         super().__init__(**kwargs)
-        self.base_url = base_url + '/chat/completions'
+        self.base_url = base_url
         self.api_key = api_key
 
     def prepare_data(self, chat: ModelChat, **kwargs):
@@ -37,7 +37,29 @@ class EngineOpenAI(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
 
         # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.base_url, data=json_data, headers=headers)
+        return urllib.request.Request(self.base_url + '/chat/completions', data=json_data, headers=headers)
+
+    def prepare_data_embedding(self, text: list[str] | str, **kwargs):
+        # Construct the header and data to be sent in the request.
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.api_key}',
+            'accept': 'application/json',
+            'user-agent': 'arz-magic-llm-engine',
+            **self.headers
+        }
+
+        data = {
+            "input": text,
+            "model": self.model,
+            "encoding_format": "float",
+            **kwargs
+        }
+        # Convert the data dictionary to a JSON string.
+        json_data = json.dumps(data).encode('utf-8')
+
+        # Create a request object with the URL, data, and headers.
+        return urllib.request.Request(self.base_url + '/embeddings', data=json_data, headers=headers)
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
@@ -70,3 +92,8 @@ class EngineOpenAI(BaseChat):
             for chunk in response:
                 chunk = chunk.decode('utf-8')
                 yield chunk
+
+    def embedding(self, text: list[str] | str, **kwargs):
+        with urllib.request.urlopen(self.prepare_data_embedding(text, **kwargs)) as response:
+            data = response.read().decode('utf-8')
+            return data

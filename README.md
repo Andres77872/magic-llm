@@ -28,6 +28,15 @@ Note: Other LLM providers have not been tested.
 
 - [x] Chat completion
 - [ ] Text completion (Currently not supported)
+- [ ] Embedding
+  - [x] OpenAI
+  - [x] Together.AI
+  - [x] Anyscale
+  - [ ] DeepInfra
+  - [x] Fireworks.AI
+  - [x] Mistral
+  - [ ] Cloudflare
+  - [ ] Cohere
 - [x] No stream response
 - [x] Stream response reforged to map to OpenAI response format
 - [x] Function calling (Only tested with OpenAI)
