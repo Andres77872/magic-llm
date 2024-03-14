@@ -7,6 +7,7 @@ Magic LLM is a simplified wrapper designed to facilitate connections with variou
 - [AWS Bedrock](https://aws.amazon.com/bedrock/)
 - [Google AI Studio](https://ai.google.dev/tutorials/rest_quickstart)
 - [Cohere](https://docs.cohere.com/reference/chat) (Non stream not supported)
+- [Anthropic](https://docs.anthropic.com/claude/reference/getting-started-with-the-api) (Non stream not supported)
 
 ## Tested LLM Providers with OpenAI Compatibility
 
