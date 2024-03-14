@@ -118,7 +118,8 @@ client = MagicLLM(
     engine='openai',
     model='gpt-3.5-turbo-0125',
     private_key='sk-',
-    stream=True
+    stream=True,
+    # base_url='API'
 )
 
 chat = ModelChat(system="You are an assistant who responds sarcastically.")
