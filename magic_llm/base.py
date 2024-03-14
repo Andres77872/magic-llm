@@ -2,7 +2,8 @@ from magic_llm.engine import (EngineOpenAI,
                               EngineGoogle,
                               EngineCloudFlare,
                               EngineAmazon,
-                              EngineCohere)
+                              EngineCohere,
+                              EngineAnthropic)
 
 
 class MagicLlmBase:
@@ -37,6 +38,12 @@ class MagicLlmBase:
             )
         elif engine == 'cohere':
             self.llm = EngineCohere(
+                model=model,
+                api_key=private_key,
+                **kwargs
+            )
+        elif engine == 'anthropic':
+            self.llm = EngineAnthropic(
                 model=model,
                 api_key=private_key,
                 **kwargs
