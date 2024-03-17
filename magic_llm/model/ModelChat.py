@@ -5,6 +5,9 @@ class ModelChat:
     def __init__(self, system: str = None):
         self.messages = [{"role": "system", "content": system}] if system else []
 
+    def set_system(self, system: str):
+        self.messages.insert(0, {"role": "system", "content": system})
+
     def add_message(self, role: str, content: str):
         self.messages.append({
             "role": role,
