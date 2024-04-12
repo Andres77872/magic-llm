@@ -63,7 +63,7 @@ class EngineOpenAI(BaseChat):
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_data(chat, **kwargs)) as response:
+        with urllib.request.urlopen(self.prepare_data(chat, **kwargs), timeout=kwargs.get('timeout')) as response:
             response_data = response.read()
             encoding = response.info().get_content_charset('utf-8')
 
@@ -88,12 +88,13 @@ class EngineOpenAI(BaseChat):
 
     def stram_generate(self, chat: ModelChat, **kwargs):
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_data(chat, **kwargs)) as response:
+        with urllib.request.urlopen(self.prepare_data(chat, **kwargs), timeout=kwargs.get('timeout')) as response:
             for chunk in response:
                 chunk = chunk.decode('utf-8')
                 yield chunk
 
     def embedding(self, text: list[str] | str, **kwargs):
-        with urllib.request.urlopen(self.prepare_data_embedding(text, **kwargs)) as response:
+        with urllib.request.urlopen(self.prepare_data_embedding(text, **kwargs),
+                                    timeout=kwargs.get('timeout')) as response:
             data = response.read().decode('utf-8')
             return data
