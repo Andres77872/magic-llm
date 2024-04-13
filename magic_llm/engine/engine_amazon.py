@@ -90,7 +90,7 @@ class EngineAmazon(BaseChat):
                 'role': 'assistant'
             })
 
-    def stram_generate(self, chat: ModelChat, **kwargs):
+    def stream_generate(self, chat: ModelChat, **kwargs):
         response = self.client.invoke_model_with_response_stream(
             body=self.prepare_data(chat, **kwargs),
             modelId=self.model,

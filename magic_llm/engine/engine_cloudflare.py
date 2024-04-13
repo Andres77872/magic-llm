@@ -53,7 +53,7 @@ class EngineCloudFlare(BaseChat):
                 'role': 'assistant'
             })
 
-    def stram_generate(self, chat: ModelChat, **kwargs):
+    def stream_generate(self, chat: ModelChat, **kwargs):
         with urllib.request.urlopen(self.prepare_data(chat, **kwargs)) as response:
             for event in response:
                 if event != b'\n':

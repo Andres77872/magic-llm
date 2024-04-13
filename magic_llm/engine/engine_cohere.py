@@ -55,7 +55,7 @@ class EngineCohere(BaseChat):
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         raise NotImplementedError
 
-    def stram_generate(self, chat: ModelChat, **kwargs):
+    def stream_generate(self, chat: ModelChat, **kwargs):
         # Make the request and read the response.
         with urllib.request.urlopen(self.prepare_data(chat, **kwargs)) as response:
             idx = None

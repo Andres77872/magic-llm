@@ -83,7 +83,7 @@ class EngineGoogle(BaseChat):
                 'role': 'assistant'
             })
 
-    def stram_generate(self, chat: ModelChat, **kwargs):
+    def stream_generate(self, chat: ModelChat, **kwargs):
         request, json_data, _, _ = self.prepare_data(chat, **kwargs)
         with urllib.request.urlopen(request) as response:
             for chunk in response:

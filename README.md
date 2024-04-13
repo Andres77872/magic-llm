@@ -22,6 +22,7 @@ The following LLM providers have been tested for compatibility with OpenAI's API
 - [Mistral](https://docs.mistral.ai/api/#operation/createChatCompletion)
 - [Deepseek](https://platform.deepseek.com/docs)
 - [Groq](https://console.groq.com/docs/openai)
+- [OctoAI](https://octo.ai/docs/text-gen-solution/rest-api)
 
 Note: Other LLM providers have not been tested.
 

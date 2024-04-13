@@ -15,7 +15,7 @@ class BaseChat:
     def generate(self, chat: ModelChat, **kwargs):
         pass
 
-    def stram_generate(self, chat: ModelChat, **kwargs):
+    def stream_generate(self, chat: ModelChat, **kwargs):
         pass
 
     def embedding(self, text: list[str] | str, **kwargs):
