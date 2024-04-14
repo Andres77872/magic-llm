@@ -22,7 +22,7 @@ The following LLM providers have been tested for compatibility with OpenAI's API
 - [Mistral](https://docs.mistral.ai/api/#operation/createChatCompletion)
 - [Deepseek](https://platform.deepseek.com/docs)
 - [Groq](https://console.groq.com/docs/openai)
-- [leptonAI](https://www.lepton.ai/docs/public_models/model_apis)
+- [LeptonAI](https://www.lepton.ai/docs/public_models/model_apis)
 - [OctoAI](https://octo.ai/docs/text-gen-solution/rest-api)
 
 Note: Other LLM providers have not been tested.
@@ -39,11 +39,11 @@ Note: Other LLM providers have not been tested.
 | provider         | stream | completion | embedding | async stream | async completion |
 |------------------|--------|------------|-----------|--------------|------------------|
 | OpenAI           | ✅      | ✅          | ✅         | ✅            | ❌                |
-| Cloudflare       | ✅      | ✅          | ❌         | ❌            | ❌                |
-| AWS Bedrock      | ✅      | ✅          | ❌         | ❌            | ❌                |
-| Google AI Studio | ✅      | ✅          | ❌         | ❌            | ❌                |
-| Cohere           | ✅      | ❌          | ❌         | ❌            | ❌                |
-| Anthropic        | ✅      | ❌          | ❌         | ❌            | ❌                |
+| Cloudflare       | ✅      | ✅          | ❌         | ✅            | ❌                |
+| AWS Bedrock      | ✅      | ✅          | ❌         | ✅            | ❌                |
+| Google AI Studio | ✅      | ✅          | ❌         | ✅            | ❌                |
+| Cohere           | ✅      | ❌          | ❌         | ✅            | ❌                |
+| Anthropic        | ✅      | ❌          | ❌         | ✅            | ❌                |
 | Perplexity AI    | ✅      | ✅          | ❌         | ✅            | ❌                |
 | Together.AI      | ✅      | ✅          | ✅         | ✅            | ❌                | 
 | OpenRouter       | ✅      | ✅          | ❌         | ✅            | ❌                |
@@ -52,7 +52,7 @@ Note: Other LLM providers have not been tested.
 | Mistral          | ✅      | ✅          | ✅         | ✅            | ❌                |
 | Deepseek         | ✅      | ✅          | ❌         | ✅            | ❌                |
 | Groq             | ✅      | ✅          | ❌         | ✅            | ❌                |
-| leptonAI         | ✅      | ✅          | ❌         | ✅            | ❌                |
+| LeptonAI         | ✅      | ✅          | ❌         | ✅            | ❌                |
 | OctoAI           | ✅      | ✅          | ❌         | ✅            | ❌                |
 
 ## Purpose

@@ -1,5 +1,5 @@
 # https://developers.cloudflare.com/workers-ai/models/text-generation
-
+import aiohttp
 import json
 import urllib.request
 import time
@@ -23,20 +23,21 @@ class EngineCloudFlare(BaseChat):
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json'
         }
-
         data = {
             'messages': chat.messages,
             'stream': self.stream,
             **kwargs
         }
-
         json_data = json.dumps(data).encode('utf-8')
+        return json_data, headers
 
+    def prepare_http_data(self, chat: ModelChat, **kwargs):
+        data, heares = self.prepare_data(chat, **kwargs)
         # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.url, data=json_data, headers=headers, method='POST')
+        return urllib.request.Request(self.url, data=data, headers=headers, method='POST')
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        with urllib.request.urlopen(self.prepare_data(chat, **kwargs)) as response:
+        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs)) as response:
             response_data = response.read()
             encoding = response.info().get_content_charset('utf-8')
 
@@ -54,7 +55,7 @@ class EngineCloudFlare(BaseChat):
             })
 
     def stream_generate(self, chat: ModelChat, **kwargs):
-        with urllib.request.urlopen(self.prepare_data(chat, **kwargs)) as response:
+        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs)) as response:
             for event in response:
                 if event != b'\n':
                     event = event[5:].strip()
@@ -83,3 +84,33 @@ class EngineCloudFlare(BaseChat):
                     chunk = json.dumps(chunk)
                     yield f'data: {chunk}\n'
                     yield f'\n'
+
+    async def async_stream_generate(self, chat: ModelChat, **kwargs):
+        json_data, headers = self.prepare_data(chat, **kwargs)
+        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.url, data=json_data, headers=headers, timeout=timeout) as response:
+                async for event in response.content:
+                    if event != b'\n':
+                        event = event[5:].strip()
+                        if event == b'[DONE]':
+                            yield 'data: {}\n\n'.format(json.dumps({'finished': True}))
+                            return
+                        event = json.loads(event.decode('utf-8'))
+                        chunk = {
+                            'id': '1',
+                            'choices': [{
+                                'delta': {
+                                    'content': event['response'],
+                                    'role': None
+                                },
+                                'finish_reason': None,
+                                'index': 0
+                            }],
+                            'created': int(time.time()),
+                            'model': self.model,
+                            'object': 'chat.completion.chunk'
+                        }
+                        chunk = json.dumps(chunk)
+                        yield 'data: {}\n\n'.format(chunk)

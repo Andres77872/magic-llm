@@ -1,5 +1,5 @@
 # https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini?hl=es-419
-
+import aiohttp
 import json
 import urllib.request
 import time
@@ -30,33 +30,26 @@ class EngineGoogle(BaseChat):
         headers = {
             'Content-Type': 'application/json',
         }
-
         data = {
             "contents": [
-                            {
-                                "role": 'user',
-                                "parts": [{'text': chat.messages[0]['content']}]
-                            },
-                            {
-                                "role": 'model',
-                                "parts": [{'text': 'Ok'}]
-                            }
-                        ] +
-                        [
-                            {
-                                "role": x['role'].replace('assistant', 'model'),
-                                "parts": [{'text': x['content']}]
-                            } for x in chat.messages[1:]],
+                            {"role": 'user', "parts": [{'text': chat.messages[0]['content']}]},
+                            {"role": 'model', "parts": [{'text': 'Ok'}]}
+                        ] + [{"role": x['role'].replace('assistant', 'model'), "parts": [{'text': x['content']}]} for x
+                             in chat.messages[1:]],
             **kwargs
         }
         json_data = json.dumps(data).encode('utf-8')
+        return json_data, headers, data
+
+    def prepare_http_data(self, chat: ModelChat, **kwargs):
+        json_data, headers, data = self.prepare_data(chat, **kwargs)
 
         # Create a request object with the URL, data, and headers.
         return urllib.request.Request(self.url, data=json_data, headers=headers,
                                       method='POST'), json_data, headers, data
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        request, json_data, headers, data = self.prepare_data(chat, **kwargs)
+        request, json_data, headers, data = self.prepare_http_data(chat, **kwargs)
         # Make the request and read the response.
         with urllib.request.urlopen(request) as response:
             response_data = response.read()
@@ -84,7 +77,7 @@ class EngineGoogle(BaseChat):
             })
 
     def stream_generate(self, chat: ModelChat, **kwargs):
-        request, json_data, _, _ = self.prepare_data(chat, **kwargs)
+        request, json_data, _, _ = self.prepare_http_data(chat, **kwargs)
         with urllib.request.urlopen(request) as response:
             for chunk in response:
                 t = chunk.decode('utf-8').strip()
@@ -112,3 +105,28 @@ class EngineGoogle(BaseChat):
                     yield f'\n'
             yield 'data: [DONE]\n'
             yield f'\n'
+
+    async def async_stream_generate(self, chat: ModelChat, **kwargs):
+        json_data, headers, _ = self.prepare_data(chat, **kwargs)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.url, data=json_data, headers=headers) as response:
+                async for chunk in response.content:
+                    t = chunk.decode('utf-8').strip()
+                    if t.startswith('"text":'):
+                        t = json.loads('{' + t + '}')['text']
+                        chunk_data = {
+                            'id': '1',
+                            'choices': [{
+                                'delta': {
+                                    'content': t,
+                                    'role': 'assistant'
+                                },
+                                'finish_reason': None,
+                                'index': 0
+                            }],
+                            'created': int(time.time()),
+                            'model': self.model,
+                            'object': 'chat.completion.chunk'
+                        }
+                        yield f'data: {json.dumps(chunk_data)}\n\n'
+                yield 'data: [DONE]\n\n'

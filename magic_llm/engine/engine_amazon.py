@@ -1,5 +1,6 @@
 import time
 
+import aioboto3
 import boto3
 import json
 
@@ -15,8 +16,16 @@ class EngineAmazon(BaseChat):
                  service_name: str = 'bedrock-runtime',
                  **kwargs):
         super().__init__(**kwargs)
-
+        self.region_name = region_name
+        self.aws_access_key_id = aws_access_key_id
+        self.aws_secret_access_key = aws_secret_access_key
         self.client = boto3.client(
+            service_name=service_name,
+            region_name=region_name,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key
+        )
+        self.aclient = aioboto3.Session().client(
             service_name=service_name,
             region_name=region_name,
             aws_access_key_id=aws_access_key_id,
@@ -98,65 +107,86 @@ class EngineAmazon(BaseChat):
             contentType='application/json')
         for event in response.get("body"):
             event = json.loads(event["chunk"]["bytes"])
-            if self.model.startswith('anthropic'):
-                chunk = {
-                    'id': '1',
-                    'choices':
-                        [{
-                            'delta':
-                                {
-                                    'content': event['completion'],
-                                    'role': None
-                                },
-                            'finish_reason': 'stop' if event['stop_reason'] else None,
-                            'index': 0
-                        }],
-                    'created': int(time.time()),
-                    'model': self.model,
-                    'object': 'chat.completion.chunk'
-                }
-                stop_reason = event['stop_reason']
-            elif self.model.startswith('amazon'):
-                chunk = {
-                    'id': '1',
-                    'choices':
-                        [{
-                            'delta':
-                                {
-                                    'content': event['outputText'],
-                                    'role': None
-                                },
-                            'finish_reason': 'stop' if event['completionReason'] == 'FINISH' else None,
-                            'index': event['index']
-                        }],
-                    'created': int(time.time()),
-                    'model': self.model,
-                    'object': 'chat.completion.chunk'
-                }
-                stop_reason = event['completionReason']
-            elif self.model.startswith('meta'):
-                chunk = {
-                    'id': '1',
-                    'choices':
-                        [{
-                            'delta':
-                                {
-                                    'content': event['generation'],
-                                    'role': None
-                                },
-                            'finish_reason': 'stop' if event['stop_reason'] else None,
-                            'index': 0
-                        }],
-                    'created': int(time.time()),
-                    'model': self.model,
-                    'object': 'chat.completion.chunk'
-                }
-                stop_reason = event['stop_reason']
-            else:
-                raise Exception('Unrecognized')
-            chunk = json.dumps(chunk)
+            chunk, stop_reason = self.format_event_to_chunk(event)
             yield f'data: {chunk}\n'
             yield f'\n'
             if stop_reason:
                 yield 'data: [DONE]\n'
             yield f'\n'
+
+    async def async_stream_generate(self, chat: ModelChat, **kwargs):
+        body = self.prepare_data(chat, **kwargs)
+
+        async with self.aclient as client:
+            response = await client.invoke_model_with_response_stream(
+                body=body,
+                modelId=self.model,
+                accept='application/json',
+                contentType='application/json')
+            async for event in response.get("body"):
+                event = json.loads(event["chunk"]["bytes"])
+                chunk, stop_reason = self.format_event_to_chunk(event)
+                yield f'data: {chunk}\n\n'
+                if stop_reason:
+                    yield 'data: [DONE]\n'
+                yield f'\n'
+
+    def format_event_to_chunk(self, event):
+        if self.model.startswith('anthropic'):
+            chunk = {
+                'id': '1',
+                'choices':
+                    [{
+                        'delta':
+                            {
+                                'content': event['completion'],
+                                'role': None
+                            },
+                        'finish_reason': 'stop' if event['stop_reason'] else None,
+                        'index': 0
+                    }],
+                'created': int(time.time()),
+                'model': self.model,
+                'object': 'chat.completion.chunk'
+            }
+            stop_reason = event['stop_reason']
+        elif self.model.startswith('amazon'):
+            chunk = {
+                'id': '1',
+                'choices':
+                    [{
+                        'delta':
+                            {
+                                'content': event['outputText'],
+                                'role': None
+                            },
+                        'finish_reason': 'stop' if event['completionReason'] == 'FINISH' else None,
+                        'index': event['index']
+                    }],
+                'created': int(time.time()),
+                'model': self.model,
+                'object': 'chat.completion.chunk'
+            }
+            stop_reason = event['completionReason']
+        elif self.model.startswith('meta'):
+            chunk = {
+                'id': '1',
+                'choices':
+                    [{
+                        'delta':
+                            {
+                                'content': event['generation'],
+                                'role': None
+                            },
+                        'finish_reason': 'stop' if event['stop_reason'] else None,
+                        'index': 0
+                    }],
+                'created': int(time.time()),
+                'model': self.model,
+                'object': 'chat.completion.chunk'
+            }
+            stop_reason = event['stop_reason']
+        else:
+            raise Exception('Unrecognized')
+        chunk = json.dumps(chunk)
+        return chunk, stop_reason
