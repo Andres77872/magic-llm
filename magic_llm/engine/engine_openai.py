@@ -1,5 +1,5 @@
 # https://cookbook.openai.com/examples/how_to_format_inputs_to_chatgpt_models
-
+import aiohttp
 import json
 import urllib.request
 
@@ -35,9 +35,12 @@ class EngineOpenAI(BaseChat):
 
         # Convert the data dictionary to a JSON string.
         json_data = json.dumps(data).encode('utf-8')
+        return json_data, headers
 
+    def prepare_http_data(self, chat: ModelChat, **kwargs):
+        data, headers = self.prepare_data(chat, **kwargs)
         # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.base_url + '/chat/completions', data=json_data, headers=headers)
+        return urllib.request.Request(self.base_url + '/chat/completions', data=data, headers=headers)
 
     def prepare_data_embedding(self, text: list[str] | str, **kwargs):
         # Construct the header and data to be sent in the request.
@@ -63,7 +66,7 @@ class EngineOpenAI(BaseChat):
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_data(chat, **kwargs), timeout=kwargs.get('timeout')) as response:
+        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs), timeout=kwargs.get('timeout')) as response:
             response_data = response.read()
             encoding = response.info().get_content_charset('utf-8')
 
@@ -88,10 +91,22 @@ class EngineOpenAI(BaseChat):
 
     def stream_generate(self, chat: ModelChat, **kwargs):
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_data(chat, **kwargs), timeout=kwargs.get('timeout')) as response:
+        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs), timeout=kwargs.get('timeout')) as response:
             for chunk in response:
                 chunk = chunk.decode('utf-8')
                 yield chunk
+
+    async def async_stream_generate(self, chat: ModelChat, **kwargs):
+        json_data, headers = self.prepare_data(chat, **kwargs)
+        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
+
+        async with aiohttp.ClientSession() as sess:
+            async with sess.post(self.base_url + '/chat/completions',
+                                 data=json_data,
+                                 headers=headers,
+                                 timeout=timeout) as response:
+                async for chunk in response.content:
+                    yield chunk.decode('utf-8')
 
     def embedding(self, text: list[str] | str, **kwargs):
         with urllib.request.urlopen(self.prepare_data_embedding(text, **kwargs),
