@@ -22,6 +22,7 @@ The following LLM providers have been tested for compatibility with OpenAI's API
 - [Mistral](https://docs.mistral.ai/api/#operation/createChatCompletion)
 - [Deepseek](https://platform.deepseek.com/docs)
 - [Groq](https://console.groq.com/docs/openai)
+- [leptonAI](https://www.lepton.ai/docs/public_models/model_apis)
 - [OctoAI](https://octo.ai/docs/text-gen-solution/rest-api)
 
 Note: Other LLM providers have not been tested.
@@ -31,25 +32,39 @@ Note: Other LLM providers have not been tested.
 - [x] Chat completion
 - [ ] Text completion (Currently not supported)
 - [ ] Embedding
-  - [x] OpenAI
-  - [x] Together.AI
-  - [x] Anyscale
-  - [ ] DeepInfra
-  - [x] Fireworks.AI
-  - [x] Mistral
-  - [ ] Cloudflare
-  - [ ] Cohere
 - [x] No stream response
 - [x] Stream response reforged to map to OpenAI response format
 - [x] Function calling (Only tested with OpenAI)
 
+| provider         | stream | completion | embedding | async stream | async completion |
+|------------------|--------|------------|-----------|--------------|------------------|
+| OpenAI           | ✅      | ✅          | ✅         | ✅            | ❌                |
+| Cloudflare       | ✅      | ✅          | ❌         | ❌            | ❌                |
+| AWS Bedrock      | ✅      | ✅          | ❌         | ❌            | ❌                |
+| Google AI Studio | ✅      | ✅          | ❌         | ❌            | ❌                |
+| Cohere           | ✅      | ❌          | ❌         | ❌            | ❌                |
+| Anthropic        | ✅      | ❌          | ❌         | ❌            | ❌                |
+| Perplexity AI    | ✅      | ✅          | ❌         | ✅            | ❌                |
+| Together.AI      | ✅      | ✅          | ✅         | ✅            | ❌                | 
+| OpenRouter       | ✅      | ✅          | ❌         | ✅            | ❌                |
+| DeepInfra        | ✅      | ✅          | ✅         | ✅            | ❌                |
+| Fireworks.AI     | ✅      | ✅          | ✅         | ✅            | ❌                |
+| Mistral          | ✅      | ✅          | ✅         | ✅            | ❌                |
+| Deepseek         | ✅      | ✅          | ❌         | ✅            | ❌                |
+| Groq             | ✅      | ✅          | ❌         | ✅            | ❌                |
+| leptonAI         | ✅      | ✅          | ❌         | ✅            | ❌                |
+| OctoAI           | ✅      | ✅          | ❌         | ✅            | ❌                |
+
 ## Purpose
 
-This client is not intended to replace the full functionality of the OpenAI client. Instead, it has been developed as the core component for another project, [Magic UI](https://magic-ui.arz.ai/), which is currently under development. The goal of Magic UI is to create a robust application generator (RAG).
+This client is not intended to replace the full functionality of the OpenAI client. Instead, it has been developed as
+the core component for another project, [Magic UI](https://magic-ui.arz.ai/), which is currently under development. The
+goal of Magic UI is to create a robust application generator (RAG).
 
 # Clients
 
-This client is built to be compatible with OpenAI's client, aiming to unify multiple LLM providers under the same framework.
+This client is built to be compatible with OpenAI's client, aiming to unify multiple LLM providers under the same
+framework.
 
 ## OpenAI and any other with the same API compatibility
 

@@ -18,5 +18,8 @@ class BaseChat:
     def stream_generate(self, chat: ModelChat, **kwargs):
         pass
 
+    def async_stream_generate(self, chat: ModelChat, **kwargs):
+        pass
+
     def embedding(self, text: list[str] | str, **kwargs):
         pass
