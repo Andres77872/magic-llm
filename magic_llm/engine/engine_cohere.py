@@ -36,10 +36,9 @@ class EngineCohere(BaseChat):
             "model": self.model,
             "messages": chat.messages,
             "message": message,
-            "stream": self.stream,
             "preamble": preamble,
             "prompt_truncation": 'AUTO',
-            **self.kwargs
+            **kwargs
         }
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
@@ -50,7 +49,19 @@ class EngineCohere(BaseChat):
         return urllib.request.Request(self.base_url, data=json_data, headers=headers)
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        raise NotImplementedError
+        # Make the request and read the response.
+        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs)) as response:
+            response_data = response.read()
+            encoding = response.info().get_content_charset('utf-8')
+            r = json.loads(response_data.decode(encoding))
+
+            return ModelChatResponse(**{
+                'content': r['text'],
+                'prompt_tokens': r['meta']['tokens']['input_tokens'],
+                'completion_tokens': r['meta']['tokens']['input_tokens'] + r['meta']['tokens']['output_tokens'],
+                'total_tokens': r['meta']['tokens']['output_tokens'],
+                'role': 'assistant'
+            })
 
     def stream_generate(self, chat: ModelChat, **kwargs):
         # Make the request and read the response.

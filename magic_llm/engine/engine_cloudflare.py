@@ -21,12 +21,13 @@ class EngineCloudFlare(BaseChat):
     def prepare_data(self, chat: ModelChat, **kwargs):
         headers = {
             'Authorization': f'Bearer {self.api_key}',
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            **self.headers
         }
         data = {
             'messages': chat.messages,
-            'stream': self.stream,
-            **kwargs
+            **kwargs,
+            **self.kwargs
         }
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers

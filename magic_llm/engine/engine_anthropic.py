@@ -34,7 +34,7 @@ class EngineAnthropic(BaseChat):
         data = {
             "model": self.model,
             "messages": chat.messages,
-            "stream": self.stream,
+            **kwargs,
             **self.kwargs
         }
         if preamble:
@@ -49,11 +49,21 @@ class EngineAnthropic(BaseChat):
         return urllib.request.Request(self.base_url, data=json_data, headers=headers)
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        raise NotImplementedError
+        with urllib.request.urlopen(self.prepare_http_data(chat, stream=False, **kwargs)) as response:
+            response_data = response.read()
+            encoding = response.info().get_content_charset('utf-8')
+            r = json.loads(response_data.decode(encoding))
+            return ModelChatResponse(**{
+                'content': r['content'][0]['text'],
+                'prompt_tokens': r['usage']['input_tokens'],
+                'completion_tokens': r['usage']['input_tokens'] + r['usage']['output_tokens'],
+                'total_tokens': r['usage']['output_tokens'],
+                'role': 'assistant'
+            })
 
     def stream_generate(self, chat: ModelChat, **kwargs):
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs)) as response:
+        with urllib.request.urlopen(self.prepare_http_data(chat, stream=True, **kwargs)) as response:
             idx = None
             usage = None
             for chunk in response:
@@ -91,7 +101,7 @@ class EngineAnthropic(BaseChat):
             yield f'\n'
 
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
-        json_data, headers = self.prepare_data(chat, **kwargs)
+        json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
         async with aiohttp.ClientSession() as session:
             async with session.post(self.base_url, data=json_data, headers=headers) as response:
                 idx = None

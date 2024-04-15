@@ -13,11 +13,9 @@ class EngineGoogle(BaseChat):
                  api_key: str,
                  **kwargs) -> None:
         super().__init__(**kwargs)
-
-        if self.stream:
-            self.url = f'https://generativelanguage.googleapis.com/v1beta/models/{self.model}:streamGenerateContent?key={api_key}'
-        else:
-            self.url = f'https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={api_key}'
+        base = 'https://generativelanguage.googleapis.com/v1beta/models/'
+        self.url_stream = f'{base}{self.model}:streamGenerateContent?key={api_key}'
+        self.url = f'{base}{self.model}:generateContent?key={api_key}'
         self.api_key = api_key
 
     def count_tokens(self, json_data: bytes, headers: dict) -> int:
@@ -29,6 +27,7 @@ class EngineGoogle(BaseChat):
         # Construct the header and data to be sent in the request.
         headers = {
             'Content-Type': 'application/json',
+            **self.headers
         }
         data = {
             "contents": [
@@ -36,16 +35,17 @@ class EngineGoogle(BaseChat):
                             {"role": 'model', "parts": [{'text': 'Ok'}]}
                         ] + [{"role": x['role'].replace('assistant', 'model'), "parts": [{'text': x['content']}]} for x
                              in chat.messages[1:]],
-            **kwargs
+            **kwargs,
+            **self.kwargs
         }
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers, data
 
-    def prepare_http_data(self, chat: ModelChat, **kwargs):
+    def prepare_http_data(self, chat: ModelChat, stream: bool, **kwargs):
         json_data, headers, data = self.prepare_data(chat, **kwargs)
 
         # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.url, data=json_data, headers=headers,
+        return urllib.request.Request(self.url_stream if stream else self.url, data=json_data, headers=headers,
                                       method='POST'), json_data, headers, data
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:

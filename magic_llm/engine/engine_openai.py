@@ -29,7 +29,7 @@ class EngineOpenAI(BaseChat):
         data = {
             "model": self.model,
             "messages": chat.messages,
-            "stream": self.stream,
+            **kwargs,
             **self.kwargs
         }
 
@@ -66,7 +66,8 @@ class EngineOpenAI(BaseChat):
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs), timeout=kwargs.get('timeout')) as response:
+        with urllib.request.urlopen(self.prepare_http_data(chat, stream=False, **kwargs),
+                                    timeout=kwargs.get('timeout')) as response:
             response_data = response.read()
             encoding = response.info().get_content_charset('utf-8')
 
@@ -91,13 +92,14 @@ class EngineOpenAI(BaseChat):
 
     def stream_generate(self, chat: ModelChat, **kwargs):
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs), timeout=kwargs.get('timeout')) as response:
+        with urllib.request.urlopen(self.prepare_http_data(chat, stream=True, **kwargs),
+                                    timeout=kwargs.get('timeout')) as response:
             for chunk in response:
                 chunk = chunk.decode('utf-8')
                 yield chunk
 
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
-        json_data, headers = self.prepare_data(chat, **kwargs)
+        json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
 
         async with aiohttp.ClientSession() as sess:

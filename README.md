@@ -24,6 +24,7 @@ The following LLM providers have been tested for compatibility with OpenAI's API
 - [Groq](https://console.groq.com/docs/openai)
 - [LeptonAI](https://www.lepton.ai/docs/public_models/model_apis)
 - [OctoAI](https://octo.ai/docs/text-gen-solution/rest-api)
+- [NovitaAI](https://novita.ai/get-started/llm.html)
 
 Note: Other LLM providers have not been tested.
 
@@ -36,24 +37,25 @@ Note: Other LLM providers have not been tested.
 - [x] Stream response reforged to map to OpenAI response format
 - [x] Function calling (Only tested with OpenAI)
 
-| provider         | stream | completion | embedding | async stream | async completion |
-|------------------|--------|------------|-----------|--------------|------------------|
-| OpenAI           | ✅      | ✅          | ✅         | ✅            | ❌                |
-| Cloudflare       | ✅      | ✅          | ❌         | ✅            | ❌                |
-| AWS Bedrock      | ✅      | ✅          | ❌         | ✅            | ❌                |
-| Google AI Studio | ✅      | ✅          | ❌         | ✅            | ❌                |
-| Cohere           | ✅      | ❌          | ❌         | ✅            | ❌                |
-| Anthropic        | ✅      | ❌          | ❌         | ✅            | ❌                |
-| Perplexity AI    | ✅      | ✅          | ❌         | ✅            | ❌                |
-| Together.AI      | ✅      | ✅          | ✅         | ✅            | ❌                | 
-| OpenRouter       | ✅      | ✅          | ❌         | ✅            | ❌                |
-| DeepInfra        | ✅      | ✅          | ✅         | ✅            | ❌                |
-| Fireworks.AI     | ✅      | ✅          | ✅         | ✅            | ❌                |
-| Mistral          | ✅      | ✅          | ✅         | ✅            | ❌                |
-| Deepseek         | ✅      | ✅          | ❌         | ✅            | ❌                |
-| Groq             | ✅      | ✅          | ❌         | ✅            | ❌                |
-| LeptonAI         | ✅      | ✅          | ❌         | ✅            | ❌                |
-| OctoAI           | ✅      | ✅          | ❌         | ✅            | ❌                |
+| provider         | chat stream completion | chat completion | embedding | async chat stream completion | async chat completion |
+|------------------|------------------------|-----------------|-----------|------------------------------|-----------------------|
+| OpenAI           | ✅                      | ✅               | ✅         | ✅                            | ❌                     |
+| Cloudflare       | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| AWS Bedrock      | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| Google AI Studio | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| Cohere           | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| Anthropic        | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| Perplexity AI    | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| Together.AI      | ✅                      | ✅               | ✅         | ✅                            | ❌                     | 
+| OpenRouter       | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| DeepInfra        | ✅                      | ✅               | ✅         | ✅                            | ❌                     |
+| Fireworks.AI     | ✅                      | ✅               | ✅         | ✅                            | ❌                     |
+| Mistral          | ✅                      | ✅               | ✅         | ✅                            | ❌                     |
+| Deepseek         | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| Groq             | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| LeptonAI         | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| OctoAI           | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| NovitaAI         | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
 
 ## Purpose
 
@@ -73,7 +75,6 @@ client = MagicLLM(
     engine='openai',
     model='gpt-3.5-turbo-0125',
     private_key='sk-',
-    stream=True
 )
 ```
 
@@ -85,7 +86,6 @@ client = MagicLLM(
     model='@cf/mistral/mistral-7b-instruct-v0.1',
     private_key='a...b',
     account_id='c...1',
-    stream=True
 )
 ```
 
@@ -98,7 +98,6 @@ client = MagicLLM(
     aws_access_key_id='A...B',
     aws_secret_access_key='a...b',
     region_name='us-east-1',
-    stream=True
 )
 ```
 
@@ -109,7 +108,6 @@ client = MagicLLM(
     engine='google',
     model='gemini-pro',
     private_key='A...B',
-    stream=True
 )
 ```
 
@@ -120,7 +118,6 @@ client = MagicLLM(
     engine='cohere',
     model='command-light',
     private_key='a...b',
-    stream=True
 )
 ```
 
@@ -134,7 +131,6 @@ client = MagicLLM(
     engine='openai',
     model='gpt-3.5-turbo-0125',
     private_key='sk-',
-    stream=True,
     # base_url='API'
 )
 
