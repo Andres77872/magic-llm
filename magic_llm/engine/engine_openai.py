@@ -113,6 +113,8 @@ class EngineOpenAI(BaseChat):
             chunk = json.loads(chunk[5:])
             if self.base_url == 'https://api.groq.com/openai/v1':
                 chunk['usage'] = chunk.get('x_groq', {}).get('usage')
+            else:
+                chunk['usage'] = c if (c := chunk.get('usage', {})) else {}
             if len(chunk['choices']) == 0:
                 chunk['choices'] = [{}]
             chunk = ChatCompletionModel(**chunk)
