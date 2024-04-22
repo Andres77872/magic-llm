@@ -1,6 +1,6 @@
 from magic_llm.base import MagicLlmBase
 
-__version__ = '0.0.28'
+__version__ = '0.0.29'
 
 
 class MagicLLM(MagicLlmBase):
