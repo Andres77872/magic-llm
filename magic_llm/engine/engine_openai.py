@@ -141,6 +141,7 @@ class EngineOpenAI(BaseChat):
             id_generation = ''
             last_chunk = ''
             openai_usage_input = 0
+            openai_usage_output = 0
             if self.base_url == 'https://api.openai.com/v1':
                 openai_usage_input = num_tokens_from_messages(chat.messages)
 
@@ -151,7 +152,8 @@ class EngineOpenAI(BaseChat):
                         id_generation = c.id
                     last_chunk = c
                     if self.base_url == 'https://api.openai.com/v1':
-                        c.usage.completion_tokens += 1
+                        openai_usage_output += 1
+                        c.usage.completion_tokens += openai_usage_output
                         c.usage.prompt_tokens = openai_usage_input
                     yield c
 
@@ -167,6 +169,7 @@ class EngineOpenAI(BaseChat):
                 id_generation = ''
                 last_chunk = ''
                 openai_usage_input = 0
+                openai_usage_output = 0
                 if self.base_url == 'https://api.openai.com/v1':
                     openai_usage_input = num_tokens_from_messages(chat.messages)
                 async for chunk in response.content:
@@ -176,7 +179,8 @@ class EngineOpenAI(BaseChat):
                             id_generation = c.id
                         last_chunk = c
                         if self.base_url == 'https://api.openai.com/v1':
-                            c.usage.completion_tokens += 1
+                            openai_usage_output += 1
+                            c.usage.completion_tokens += openai_usage_output
                             c.usage.prompt_tokens = openai_usage_input
                         yield c
 
