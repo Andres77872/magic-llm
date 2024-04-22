@@ -6,6 +6,7 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelChatStream import ChatCompletionModel
 
 
 class EngineCohere(BaseChat):
@@ -65,15 +66,16 @@ class EngineCohere(BaseChat):
 
     def stream_generate(self, chat: ModelChat, **kwargs):
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs)) as response:
+        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs, stream=True)) as response:
             idx = None
             usage = None
             for chunk in response:
                 if chunk:
-                    event = json.loads(chunk)
-                    chunk_data, idx, usage = self.chunk_process(event, idx, usage)
-                    if chunk_data:
-                        yield f'data: {json.dumps(chunk_data)}\n\n'
+                    if c := self.process_chunk(chunk.strip(), idx, usage):
+                        idx = c[1]
+                        usage = c[2]
+                        if c[0]:
+                            yield c[0]
             chunk = {
                 'id': idx,
                 'choices':
@@ -91,23 +93,21 @@ class EngineCohere(BaseChat):
                 'usage': usage,
                 'object': 'chat.completion.chunk'
             }
-            chunk = json.dumps(chunk)
-            yield f'data: {chunk}\n'
-            yield f'\n'
-            yield f'[DONE]'
-            yield f'\n'
+            yield ChatCompletionModel(**chunk)
 
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
-        json_data, headers = self.prepare_data(chat, **kwargs)
+        json_data, headers = self.prepare_data(chat, **kwargs, stream=True)
         async with aiohttp.ClientSession() as session:
             async with session.post(self.base_url, data=json_data, headers=headers) as response:
                 idx = None
                 usage = None
                 async for chunk in response.content:
-                    event = json.loads(chunk)
-                    chunk_data, idx, usage = self.chunk_process(event, idx, usage)
-                    if chunk_data:
-                        yield f'data: {json.dumps(chunk_data)}\n\n'
+                    if chunk:
+                        if c := self.process_chunk(chunk.decode().strip(), idx, usage):
+                            idx = c[1]
+                            usage = c[2]
+                            if c[0]:
+                                yield c[0]
                 chunk = {
                     'id': idx,
                     'choices':
@@ -125,13 +125,13 @@ class EngineCohere(BaseChat):
                     'usage': usage,
                     'object': 'chat.completion.chunk'
                 }
-                chunk = json.dumps(chunk)
-                yield f'data: {chunk}\n'
-                yield f'\n'
-                yield f'[DONE]'
-                yield f'\n'
+                yield ChatCompletionModel(**chunk)
 
-    def chunk_process(self, event: dict, idx, usage):
+    def process_chunk(self, chunk: str, idx, usage):
+        chunk, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage)
+        return ChatCompletionModel(**chunk) if chunk else None, idx, usage
+
+    def prepare_chunk(self, event: dict, idx, usage):
         chunk_data = None
         if event['event_type'] == 'stream-start':
             idx = event['generation_id']
@@ -155,8 +155,11 @@ class EngineCohere(BaseChat):
                 }],
                 'created': int(time.time()),
                 'model': self.model,
-                'usage': usage,
                 'object': 'chat.completion.chunk'
             }
+            if usage:
+                chunk_data['usage'] = usage.update({
+                    'usage': usage
+                })
 
         return chunk_data, idx, usage
