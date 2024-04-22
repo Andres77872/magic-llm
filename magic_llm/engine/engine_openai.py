@@ -1,10 +1,12 @@
 # https://cookbook.openai.com/examples/how_to_format_inputs_to_chatgpt_models
-import aiohttp
 import json
 import urllib.request
 
+import aiohttp
+
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class EngineOpenAI(BaseChat):
@@ -15,16 +17,16 @@ class EngineOpenAI(BaseChat):
         super().__init__(**kwargs)
         self.base_url = base_url
         self.api_key = api_key
-
-    def prepare_data(self, chat: ModelChat, **kwargs):
-        # Construct the header and data to be sent in the request.
-        headers = {
+        self.headers = {
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {self.api_key}',
             'accept': 'application/json',
             'user-agent': 'arz-magic-llm-engine',
             **self.headers
         }
+
+    def prepare_data(self, chat: ModelChat, **kwargs):
+        # Construct the header and data to be sent in the request.
 
         data = {
             "model": self.model,
@@ -35,7 +37,7 @@ class EngineOpenAI(BaseChat):
 
         # Convert the data dictionary to a JSON string.
         json_data = json.dumps(data).encode('utf-8')
-        return json_data, headers
+        return json_data, self.headers
 
     def prepare_http_data(self, chat: ModelChat, **kwargs):
         data, headers = self.prepare_data(chat, **kwargs)
@@ -44,13 +46,6 @@ class EngineOpenAI(BaseChat):
 
     def prepare_data_embedding(self, text: list[str] | str, **kwargs):
         # Construct the header and data to be sent in the request.
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {self.api_key}',
-            'accept': 'application/json',
-            'user-agent': 'arz-magic-llm-engine',
-            **self.headers
-        }
 
         data = {
             "input": text,
@@ -62,7 +57,7 @@ class EngineOpenAI(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
 
         # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.base_url + '/embeddings', data=json_data, headers=headers)
+        return urllib.request.Request(self.base_url + '/embeddings', data=json_data, headers=self.headers)
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
@@ -90,13 +85,49 @@ class EngineOpenAI(BaseChat):
                     'role': 'assistant'
                 })
 
+    def process_chunk(
+            self, chunk: str,
+            id_generation: str = '',
+            last_chunk: ChatCompletionModel = None
+    ) -> ChatCompletionModel:
+        if chunk.startswith('data: ') and not chunk.endswith('[DONE]'):
+            chunk = json.loads(chunk[5:])
+            if self.base_url == 'https://api.groq.com/openai/v1':
+                chunk['usage'] = chunk.get('x_groq', {}).get('usage')
+            if len(chunk['choices']) == 0:
+                chunk['choices'] = [{}]
+            chunk = ChatCompletionModel(**chunk)
+            return chunk
+        else:
+            if c := chunk.strip():
+                if c == 'data: [DONE]' and self.base_url == 'https://openrouter.ai/api/v1':
+                    for i in range(3):
+                        request = urllib.request.Request(f'https://openrouter.ai/api/v1/generation?id={id_generation}',
+                                                         headers=self.headers)
+                        with urllib.request.urlopen(request, timeout=2) as ses:
+                            response = ses.read().decode('utf-8')
+                            response = json.loads(response)
+                            u = response['data']
+                            usage = {
+                                'completion_tokens': u['native_tokens_completion'],
+                                'prompt_tokens': u['native_tokens_prompt']
+                            }
+                            last_chunk.usage = UsageModel(**usage)
+                            last_chunk.choices[0].delta.content = ''
+                            return last_chunk
+
     def stream_generate(self, chat: ModelChat, **kwargs):
-        # Make the request and read the response.
         with urllib.request.urlopen(self.prepare_http_data(chat, stream=True, **kwargs),
                                     timeout=kwargs.get('timeout')) as response:
+            id_generation = ''
+            last_chunk = ''
             for chunk in response:
                 chunk = chunk.decode('utf-8')
-                yield chunk
+                if c := self.process_chunk(chunk.strip(), id_generation, last_chunk):
+                    if c.id:
+                        id_generation = c.id
+                    last_chunk = c
+                    yield c
 
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
@@ -107,8 +138,15 @@ class EngineOpenAI(BaseChat):
                                  data=json_data,
                                  headers=headers,
                                  timeout=timeout) as response:
+                id_generation = ''
+                last_chunk = ''
                 async for chunk in response.content:
-                    yield chunk.decode('utf-8')
+                    chunk = chunk.decode('utf-8')
+                    if c := self.process_chunk(chunk.strip(), id_generation, last_chunk):
+                        if c.id:
+                            id_generation = c.id
+                        last_chunk = c
+                        yield c
 
     def embedding(self, text: list[str] | str, **kwargs):
         with urllib.request.urlopen(self.prepare_data_embedding(text, **kwargs),
