@@ -6,6 +6,7 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelChatStream import ChatCompletionModel
 
 
 class EngineGoogle(BaseChat):
@@ -14,7 +15,7 @@ class EngineGoogle(BaseChat):
                  **kwargs) -> None:
         super().__init__(**kwargs)
         base = 'https://generativelanguage.googleapis.com/v1beta/models/'
-        self.url_stream = f'{base}{self.model}:streamGenerateContent?key={api_key}'
+        self.url_stream = f'{base}{self.model}:streamGenerateContent?alt=sse&key={api_key}'
         self.url = f'{base}{self.model}:generateContent?key={api_key}'
         self.api_key = api_key
 
@@ -38,6 +39,9 @@ class EngineGoogle(BaseChat):
             **kwargs,
             **self.kwargs
         }
+        if 'max_tokens' in data:
+            data.pop('max_tokens')
+
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers, data
 
@@ -49,7 +53,7 @@ class EngineGoogle(BaseChat):
                                       method='POST'), json_data, headers, data
 
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        request, json_data, headers, data = self.prepare_http_data(chat, **kwargs)
+        request, json_data, headers, data = self.prepare_http_data(chat, **kwargs, stream=False)
         # Make the request and read the response.
         with urllib.request.urlopen(request) as response:
             response_data = response.read()
@@ -77,48 +81,41 @@ class EngineGoogle(BaseChat):
             })
 
     def stream_generate(self, chat: ModelChat, **kwargs):
-        request, json_data, _, _ = self.prepare_http_data(chat, **kwargs)
+        request, json_data, _, _ = self.prepare_http_data(chat, **kwargs, stream=True)
         with urllib.request.urlopen(request) as response:
             for chunk in response:
-                t = chunk.decode('utf-8').strip()
-
-                if t.startswith('"text":'):
-                    t = json.loads('{' + t + '}')['text']
+                if chunk.strip():
+                    chunk = chunk.strip()
+                    chunk = json.loads(chunk[5:].strip())
                     chunk = {
                         'id': '1',
-                        'choices':
-                            [{
-                                'delta':
-                                    {
-                                        'content': t,
-                                        'role': 'assistant'
-                                    },
-                                'finish_reason': None,
-                                'index': 0
-                            }],
+                        'choices': [{
+                            'delta': {
+                                'content': chunk['candidates'][0]['content']['parts'][0]['text'],
+                                'role': 'assistant'
+                            },
+                            'finish_reason': None,
+                            'index': 0
+                        }],
                         'created': int(time.time()),
                         'model': self.model,
                         'object': 'chat.completion.chunk'
                     }
-                    chunk = json.dumps(chunk)
-                    yield f'data: {chunk}\n'
-                    yield f'\n'
-            yield 'data: [DONE]\n'
-            yield f'\n'
+                    yield ChatCompletionModel(**chunk)
 
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers, _ = self.prepare_data(chat, **kwargs)
         async with aiohttp.ClientSession() as session:
-            async with session.post(self.url, data=json_data, headers=headers) as response:
+            async with session.post(self.url_stream, data=json_data, headers=headers) as response:
                 async for chunk in response.content:
-                    t = chunk.decode('utf-8').strip()
-                    if t.startswith('"text":'):
-                        t = json.loads('{' + t + '}')['text']
-                        chunk_data = {
+                    if chunk.strip():
+                        chunk = chunk.strip()
+                        chunk = json.loads(chunk[5:].strip())
+                        chunk = {
                             'id': '1',
                             'choices': [{
                                 'delta': {
-                                    'content': t,
+                                    'content': chunk['candidates'][0]['content']['parts'][0]['text'],
                                     'role': 'assistant'
                                 },
                                 'finish_reason': None,
@@ -128,5 +125,4 @@ class EngineGoogle(BaseChat):
                             'model': self.model,
                             'object': 'chat.completion.chunk'
                         }
-                        yield f'data: {json.dumps(chunk_data)}\n\n'
-                yield 'data: [DONE]\n\n'
+                        yield ChatCompletionModel(**chunk)
