@@ -6,6 +6,7 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelChatStream import ChatCompletionModel
 
 
 class EngineCloudFlare(BaseChat):
@@ -33,7 +34,7 @@ class EngineCloudFlare(BaseChat):
         return json_data, headers
 
     def prepare_http_data(self, chat: ModelChat, **kwargs):
-        data, heares = self.prepare_data(chat, **kwargs)
+        data, headers = self.prepare_data(chat, **kwargs)
         # Create a request object with the URL, data, and headers.
         return urllib.request.Request(self.url, data=data, headers=headers, method='POST')
 
@@ -56,38 +57,33 @@ class EngineCloudFlare(BaseChat):
             })
 
     def stream_generate(self, chat: ModelChat, **kwargs):
-        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs)) as response:
+        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs, stream=True)) as response:
             for event in response:
                 if event != b'\n':
                     event = event[5:].strip()
-                    if event == b'[DONE]':
-                        yield f'data: {chunk}\n'
-                        yield f'\n'
-                        return
-                    event = json.loads(event.decode('utf-8'))
-                    # print(event)
-                    chunk = {
-                        'id': '1',
-                        'choices':
-                            [{
-                                'delta':
-                                    {
-                                        'content': event['response'],
-                                        'role': None
-                                    },
-                                'finish_reason': None,
-                                'index': 0
-                            }],
-                        'created': int(time.time()),
-                        'model': self.model,
-                        'object': 'chat.completion.chunk'
-                    }
-                    chunk = json.dumps(chunk)
-                    yield f'data: {chunk}\n'
-                    yield f'\n'
+                    if event != b'[DONE]':
+                        event = json.loads(event.decode('utf-8'))
+                        # print(event)
+                        chunk = {
+                            'id': '1',
+                            'choices':
+                                [{
+                                    'delta':
+                                        {
+                                            'content': event['response'],
+                                            'role': None
+                                        },
+                                    'finish_reason': None,
+                                    'index': 0
+                                }],
+                            'created': int(time.time()),
+                            'model': self.model,
+                            'object': 'chat.completion.chunk'
+                        }
+                        yield ChatCompletionModel(**chunk)
 
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
-        json_data, headers = self.prepare_data(chat, **kwargs)
+        json_data, headers = self.prepare_data(chat, **kwargs, stream=True)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
 
         async with aiohttp.ClientSession() as session:
@@ -95,23 +91,20 @@ class EngineCloudFlare(BaseChat):
                 async for event in response.content:
                     if event != b'\n':
                         event = event[5:].strip()
-                        if event == b'[DONE]':
-                            yield 'data: {}\n\n'.format(json.dumps({'finished': True}))
-                            return
-                        event = json.loads(event.decode('utf-8'))
-                        chunk = {
-                            'id': '1',
-                            'choices': [{
-                                'delta': {
-                                    'content': event['response'],
-                                    'role': None
-                                },
-                                'finish_reason': None,
-                                'index': 0
-                            }],
-                            'created': int(time.time()),
-                            'model': self.model,
-                            'object': 'chat.completion.chunk'
-                        }
-                        chunk = json.dumps(chunk)
-                        yield 'data: {}\n\n'.format(chunk)
+                        if event != b'[DONE]':
+                            event = json.loads(event.decode('utf-8'))
+                            chunk = {
+                                'id': '1',
+                                'choices': [{
+                                    'delta': {
+                                        'content': event['response'],
+                                        'role': None
+                                    },
+                                    'finish_reason': None,
+                                    'index': 0
+                                }],
+                                'created': int(time.time()),
+                                'model': self.model,
+                                'object': 'chat.completion.chunk'
+                            }
+                            yield ChatCompletionModel(**chunk)
