@@ -158,7 +158,7 @@ class EngineCohere(BaseChat):
                 'object': 'chat.completion.chunk'
             }
             if usage:
-                chunk_data['usage'] = usage.update({
+                chunk_data.update({
                     'usage': usage
                 })
 
