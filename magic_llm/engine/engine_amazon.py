@@ -6,6 +6,7 @@ import json
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChatResponse, ModelChat
+from magic_llm.model.ModelChatStream import ChatCompletionModel
 
 
 class EngineAmazon(BaseChat):
@@ -107,12 +108,8 @@ class EngineAmazon(BaseChat):
             contentType='application/json')
         for event in response.get("body"):
             event = json.loads(event["chunk"]["bytes"])
-            chunk, stop_reason = self.format_event_to_chunk(event)
-            yield f'data: {chunk}\n'
-            yield f'\n'
-            if stop_reason:
-                yield 'data: [DONE]\n'
-            yield f'\n'
+            chunk = self.format_event_to_chunk(event)
+            yield chunk
 
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         body = self.prepare_data(chat, **kwargs)
@@ -125,11 +122,8 @@ class EngineAmazon(BaseChat):
                 contentType='application/json')
             async for event in response.get("body"):
                 event = json.loads(event["chunk"]["bytes"])
-                chunk, stop_reason = self.format_event_to_chunk(event)
-                yield f'data: {chunk}\n\n'
-                if stop_reason:
-                    yield 'data: [DONE]\n'
-                yield f'\n'
+                chunk = self.format_event_to_chunk(event)
+                yield chunk
 
     def format_event_to_chunk(self, event):
         if self.model.startswith('anthropic'):
@@ -149,7 +143,6 @@ class EngineAmazon(BaseChat):
                 'model': self.model,
                 'object': 'chat.completion.chunk'
             }
-            stop_reason = event['stop_reason']
         elif self.model.startswith('amazon'):
             chunk = {
                 'id': '1',
@@ -167,7 +160,6 @@ class EngineAmazon(BaseChat):
                 'model': self.model,
                 'object': 'chat.completion.chunk'
             }
-            stop_reason = event['completionReason']
         elif self.model.startswith('meta'):
             chunk = {
                 'id': '1',
@@ -185,8 +177,6 @@ class EngineAmazon(BaseChat):
                 'model': self.model,
                 'object': 'chat.completion.chunk'
             }
-            stop_reason = event['stop_reason']
         else:
             raise Exception('Unrecognized')
-        chunk = json.dumps(chunk)
-        return chunk, stop_reason
+        return ChatCompletionModel(**chunk)

@@ -36,26 +36,28 @@ Note: Other LLM providers have not been tested.
 - [x] No stream response
 - [x] Stream response reforged to map to OpenAI response format
 - [x] Function calling (Only tested with OpenAI)
+- [x] Stream yields a [chunk object](https://platform.openai.com/docs/api-reference/chat/streaming)
+- [ ] Usage in response
 
-| provider         | chat stream completion | chat completion | embedding | async chat stream completion | async chat completion |
-|------------------|------------------------|-----------------|-----------|------------------------------|-----------------------|
-| OpenAI           | ✅                      | ✅               | ✅         | ✅                            | ❌                     |
-| Cloudflare       | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| AWS Bedrock      | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| Google AI Studio | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| Cohere           | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| Anthropic        | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| Perplexity AI    | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| Together.AI      | ✅                      | ✅               | ✅         | ✅                            | ❌                     | 
-| OpenRouter       | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| DeepInfra        | ✅                      | ✅               | ✅         | ✅                            | ❌                     |
-| Fireworks.AI     | ✅                      | ✅               | ✅         | ✅                            | ❌                     |
-| Mistral          | ✅                      | ✅               | ✅         | ✅                            | ❌                     |
-| Deepseek         | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| Groq             | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| LeptonAI         | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| OctoAI           | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
-| NovitaAI         | ✅                      | ✅               | ❌         | ✅                            | ❌                     |
+| provider         | Streaming | completion | embedding | async streaming | async completion | async embedding |
+|------------------|-----------|------------|-----------|-----------------|------------------|-----------------|
+| OpenAI           | ✅         | ✅          | ✅         | ✅               | ❌                | ❌               |
+| Cloudflare       | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| AWS Bedrock      | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| Google AI Studio | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| Cohere           | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| Anthropic        | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| Perplexity AI    | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| Together.AI      | ✅         | ✅          | ✅         | ✅               | ❌                | ❌               | 
+| OpenRouter       | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| DeepInfra        | ✅         | ✅          | ✅         | ✅               | ❌                | ❌               |
+| Fireworks.AI     | ✅         | ✅          | ✅         | ✅               | ❌                | ❌               |
+| Mistral          | ✅         | ✅          | ✅         | ✅               | ❌                | ❌               |
+| Deepseek         | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| Groq             | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| LeptonAI         | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| OctoAI           | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| NovitaAI         | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
 
 ## Purpose
 
