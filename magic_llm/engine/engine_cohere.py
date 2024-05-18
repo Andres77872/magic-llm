@@ -49,6 +49,27 @@ class EngineCohere(BaseChat):
         # Create a request object with the URL, data, and headers.
         return urllib.request.Request(self.base_url, data=json_data, headers=headers)
 
+    async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        json_data, headers = self.prepare_data(chat, **kwargs)
+        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.base_url,
+                                    data=json_data,
+                                    headers=headers,
+                                    timeout=timeout) as response:
+                response_data = await response.read()
+                encoding = response.charset or 'utf-8'
+                r = json.loads(response_data.decode(encoding))
+
+                return ModelChatResponse(**{
+                    'content': r['text'],
+                    'prompt_tokens': r['meta']['tokens']['input_tokens'],
+                    'completion_tokens': r['meta']['tokens']['input_tokens'] + r['meta']['tokens']['output_tokens'],
+                    'total_tokens': r['meta']['tokens']['output_tokens'],
+                    'role': 'assistant'
+                })
+
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
         with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs)) as response:
