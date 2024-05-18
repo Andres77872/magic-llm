@@ -38,6 +38,30 @@ class EngineCloudFlare(BaseChat):
         # Create a request object with the URL, data, and headers.
         return urllib.request.Request(self.url, data=data, headers=headers, method='POST')
 
+    async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        json_data, headers = self.prepare_data(chat, **kwargs)
+        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.url,
+                                    data=json_data,
+                                    headers=headers,
+                                    timeout=timeout) as response:
+                response_data = await response.read()
+                encoding = response.charset or 'utf-8'
+
+                # Decode the response.
+                r = json.loads(response_data.decode(encoding))
+                r = r['result']['response']
+
+                return ModelChatResponse(**{
+                    'content': r,
+                    'prompt_tokens': 0,
+                    'completion_tokens': 0,
+                    'total_tokens': 0,
+                    'role': 'assistant'
+                })
+
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs)) as response:
             response_data = response.read()
