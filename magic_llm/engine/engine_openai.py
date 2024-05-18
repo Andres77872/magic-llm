@@ -78,6 +78,39 @@ class EngineOpenAI(BaseChat):
         # Create a request object with the URL, data, and headers.
         return urllib.request.Request(self.base_url + '/embeddings', data=json_data, headers=self.headers)
 
+    def prepare_response(self, r):
+        if r['choices'][0]['message']['content']:
+            return ModelChatResponse(**{
+                'content': r['choices'][0]['message']['content'],
+                'prompt_tokens': r['usage']['prompt_tokens'],
+                'completion_tokens': r['usage']['completion_tokens'],
+                'total_tokens': r['usage']['total_tokens'],
+                'role': 'assistant'
+            })
+        else:  # interpret as function calling
+            return ModelChatResponse(**{
+                'content': r['choices'][0]['message']['tool_calls'][0]['function']['arguments'],
+                'prompt_tokens': r['usage']['prompt_tokens'],
+                'completion_tokens': r['usage']['completion_tokens'],
+                'total_tokens': r['usage']['total_tokens'],
+                'role': 'assistant'
+            })
+
+    async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        json_data, headers = self.prepare_data(chat, **kwargs)
+        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.base_url + '/chat/completions',
+                                    data=json_data,
+                                    headers=headers,
+                                    timeout=timeout) as response:
+                response_data = await response.read()
+                encoding = response.charset or 'utf-8'
+
+                r = json.loads(response_data.decode(encoding))
+                return self.prepare_response(r)
+
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
         with urllib.request.urlopen(self.prepare_http_data(chat, stream=False, **kwargs),
@@ -87,22 +120,8 @@ class EngineOpenAI(BaseChat):
 
             # Decode and print the response.
             r = json.loads(response_data.decode(encoding))
-            if r['choices'][0]['message']['content']:
-                return ModelChatResponse(**{
-                    'content': r['choices'][0]['message']['content'],
-                    'prompt_tokens': r['usage']['prompt_tokens'],
-                    'completion_tokens': r['usage']['completion_tokens'],
-                    'total_tokens': r['usage']['total_tokens'],
-                    'role': 'assistant'
-                })
-            else:  # interpret as function calling
-                return ModelChatResponse(**{
-                    'content': r['choices'][0]['message']['tool_calls'][0]['function']['arguments'],
-                    'prompt_tokens': r['usage']['prompt_tokens'],
-                    'completion_tokens': r['usage']['completion_tokens'],
-                    'total_tokens': r['usage']['total_tokens'],
-                    'role': 'assistant'
-                })
+
+            return self.prepare_response(r)
 
     def process_chunk(
             self, chunk: str,
