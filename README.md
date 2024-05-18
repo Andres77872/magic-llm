@@ -6,8 +6,8 @@ Magic LLM is a simplified wrapper designed to facilitate connections with variou
 - [Cloudflare](https://developers.cloudflare.com/workers-ai/models/text-generation/#responses)
 - [AWS Bedrock](https://aws.amazon.com/bedrock/)
 - [Google AI Studio](https://ai.google.dev/tutorials/rest_quickstart)
-- [Cohere](https://docs.cohere.com/reference/chat) (Non stream not supported)
-- [Anthropic](https://docs.anthropic.com/claude/reference/getting-started-with-the-api) (Non stream not supported)
+- [Cohere](https://docs.cohere.com/reference/chat)
+- [Anthropic](https://docs.anthropic.com/claude/reference/getting-started-with-the-api)
 
 ## Tested LLM Providers with OpenAI Compatibility
 
@@ -31,8 +31,8 @@ Note: Other LLM providers have not been tested.
 ## Features
 
 - [x] Chat completion
-- [ ] Text completion (Currently not supported)
-- [ ] Embedding
+- [x] Text completion
+- [x] Embedding
 - [x] No stream response
 - [x] Stream response reforged to map to OpenAI response format
 - [x] Function calling (Only tested with OpenAI)
@@ -41,28 +41,28 @@ Note: Other LLM providers have not been tested.
 
 | provider         | Streaming | completion | embedding | async streaming | async completion | async embedding |
 |------------------|-----------|------------|-----------|-----------------|------------------|-----------------|
-| OpenAI           | ✅         | ✅          | ✅         | ✅               | ❌                | ❌               |
-| Cloudflare       | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| AWS Bedrock      | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| Google AI Studio | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| Cohere           | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| Anthropic        | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| Perplexity AI    | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| Together.AI      | ✅         | ✅          | ✅         | ✅               | ❌                | ❌               | 
-| OpenRouter       | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| DeepInfra        | ✅         | ✅          | ✅         | ✅               | ❌                | ❌               |
-| Fireworks.AI     | ✅         | ✅          | ✅         | ✅               | ❌                | ❌               |
-| Mistral          | ✅         | ✅          | ✅         | ✅               | ❌                | ❌               |
-| Deepseek         | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| Groq             | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| LeptonAI         | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| OctoAI           | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
-| NovitaAI         | ✅         | ✅          | ❌         | ✅               | ❌                | ❌               |
+| OpenAI           | ✅         | ✅          | ✅         | ✅               | ✅                | ❌               |
+| Cloudflare       | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| AWS Bedrock      | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| Google AI Studio | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| Cohere           | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| Anthropic        | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| Perplexity AI    | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| Together.AI      | ✅         | ✅          | ✅         | ✅               | ✅                | ❌               |
+| OpenRouter       | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| DeepInfra        | ✅         | ✅          | ✅         | ✅               | ✅                | ❌               |
+| Fireworks.AI     | ✅         | ✅          | ✅         | ✅               | ✅                | ❌               |
+| Mistral          | ✅         | ✅          | ✅         | ✅               | ✅                | ❌               |
+| Deepseek         | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| Groq             | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| LeptonAI         | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| OctoAI           | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| NovitaAI         | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
 
 ## Purpose
 
 This client is not intended to replace the full functionality of the OpenAI client. Instead, it has been developed as
-the core component for another project, [Magic UI](https://magic-ui.arz.ai/), which is currently under development. The
+the core component for another project, [Magic UI](https://talk.novus.chat/), which is currently under development. The
 goal of Magic UI is to create a robust application generator (RAG).
 
 # Clients
