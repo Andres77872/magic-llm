@@ -3,29 +3,10 @@ import json
 import urllib.request
 
 import aiohttp
-import tiktoken
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
-
-
-def num_tokens_from_messages(messages, model="gpt-3.5-turbo-0125") -> int:
-    """Return the number of tokens used by a list of messages."""
-
-    encoding = tiktoken.encoding_for_model(model)
-    tokens_per_message = 3
-    tokens_per_name = 1
-
-    num_tokens = 0
-    for message in messages:
-        num_tokens += tokens_per_message
-        for key, value in message.items():
-            num_tokens += len(encoding.encode(value))
-            if key == "name":
-                num_tokens += tokens_per_name
-    num_tokens += 3  # every reply is primed with <|start|>assistant<|message|>
-    return num_tokens
 
 
 class EngineOpenAI(BaseChat):
@@ -53,6 +34,13 @@ class EngineOpenAI(BaseChat):
             **kwargs,
             **self.kwargs
         }
+
+        if self.base_url == 'https://api.openai.com/v1':
+            data.update({
+                "stream_options": {
+                    "include_usage": True
+                }
+            })
 
         # Convert the data dictionary to a JSON string.
         json_data = json.dumps(data).encode('utf-8')
@@ -161,10 +149,6 @@ class EngineOpenAI(BaseChat):
                                     timeout=kwargs.get('timeout')) as response:
             id_generation = ''
             last_chunk = ''
-            openai_usage_input = 0
-            openai_usage_output = 0
-            if self.base_url == 'https://api.openai.com/v1':
-                openai_usage_input = num_tokens_from_messages(chat.messages)
 
             for chunk in response:
                 chunk = chunk.decode('utf-8')
@@ -172,10 +156,6 @@ class EngineOpenAI(BaseChat):
                     if c.id:
                         id_generation = c.id
                     last_chunk = c
-                    if self.base_url == 'https://api.openai.com/v1':
-                        openai_usage_output += 1
-                        c.usage.completion_tokens += openai_usage_output
-                        c.usage.prompt_tokens = openai_usage_input
                     yield c
 
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
@@ -189,20 +169,12 @@ class EngineOpenAI(BaseChat):
                                  timeout=timeout) as response:
                 id_generation = ''
                 last_chunk = ''
-                openai_usage_input = 0
-                openai_usage_output = 0
-                if self.base_url == 'https://api.openai.com/v1':
-                    openai_usage_input = num_tokens_from_messages(chat.messages)
                 async for chunk in response.content:
                     chunk = chunk.decode('utf-8')
                     if c := self.process_chunk(chunk.strip(), id_generation, last_chunk):
                         if c.id:
                             id_generation = c.id
                         last_chunk = c
-                        if self.base_url == 'https://api.openai.com/v1':
-                            openai_usage_output += 1
-                            c.usage.completion_tokens += openai_usage_output
-                            c.usage.prompt_tokens = openai_usage_input
                         yield c
 
     def embedding(self, text: list[str] | str, **kwargs):
