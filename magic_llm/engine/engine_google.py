@@ -52,6 +52,39 @@ class EngineGoogle(BaseChat):
         return urllib.request.Request(self.url_stream if stream else self.url, data=json_data, headers=headers,
                                       method='POST'), json_data, headers, data
 
+    async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        request, json_data, headers, data = self.prepare_http_data(chat, stream=False, **kwargs)
+        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.url,
+                                    data=json_data,
+                                    headers=headers,
+                                    timeout=timeout) as response:
+                response_data = await response.read()
+                encoding = response.charset or 'utf-8'
+
+                # Decode the response.
+                r = json.loads(response_data.decode(encoding))
+                r = r['candidates'][0]['content']['parts'][0]['text']
+                prompt_tokens = self.count_tokens(json_data, headers)
+                data['contents'].append(
+                    {
+                        "role": 'model',
+                        "parts": [{'text': r}]
+                    }
+                )
+                json_data = json.dumps(data).encode('utf-8')
+                completion_tokens = self.count_tokens(json_data, headers)
+
+                return ModelChatResponse(**{
+                    'content': r,
+                    'prompt_tokens': prompt_tokens,
+                    'completion_tokens': completion_tokens - prompt_tokens,
+                    'total_tokens': completion_tokens,
+                    'role': 'assistant'
+                })
+
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         request, json_data, headers, data = self.prepare_http_data(chat, **kwargs, stream=False)
         # Make the request and read the response.
