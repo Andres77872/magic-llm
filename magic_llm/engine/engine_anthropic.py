@@ -86,6 +86,27 @@ class EngineAnthropic(BaseChat):
         chunk, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage)
         return ChatCompletionModel(**chunk) if chunk else None, idx, usage
 
+    async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        json_data, headers = self.prepare_data(chat, **kwargs)
+        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.base_url,
+                                    data=json_data,
+                                    headers=headers,
+                                    timeout=timeout) as response:
+                response_data = await response.read()
+                encoding = response.charset or 'utf-8'
+
+                r = json.loads(response_data.decode(encoding))
+                return ModelChatResponse(**{
+                    'content': r['content'][0]['text'],
+                    'prompt_tokens': r['usage']['input_tokens'],
+                    'completion_tokens': r['usage']['input_tokens'] + r['usage']['output_tokens'],
+                    'total_tokens': r['usage']['output_tokens'],
+                    'role': 'assistant'
+                })
+
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         with urllib.request.urlopen(self.prepare_http_data(chat, stream=False, **kwargs)) as response:
             response_data = response.read()
