@@ -16,6 +16,9 @@ class BaseChat:
     def generate(self, chat: ModelChat, **kwargs):
         pass
 
+    def async_generate(self, chat: ModelChat, **kwargs):
+        pass
+
     def stream_generate(self, chat: ModelChat, **kwargs) -> Iterator[ChatCompletionModel]:
         pass
 
