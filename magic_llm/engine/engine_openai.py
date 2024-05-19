@@ -57,7 +57,6 @@ class EngineOpenAI(BaseChat):
         data = {
             "input": text,
             "model": self.model,
-            "encoding_format": "float",
             **kwargs
         }
         # Convert the data dictionary to a JSON string.
@@ -178,7 +177,11 @@ class EngineOpenAI(BaseChat):
                         yield c
 
     def embedding(self, text: list[str] | str, **kwargs):
-        with urllib.request.urlopen(self.prepare_data_embedding(text, **kwargs),
-                                    timeout=kwargs.get('timeout')) as response:
-            data = response.read().decode('utf-8')
-            return data
+        try:
+            with urllib.request.urlopen(self.prepare_data_embedding(text, **kwargs),
+                                        timeout=kwargs.get('timeout')) as response:
+                data = response.read().decode('utf-8')
+                return data
+        except urllib.request.HTTPError as e:
+            print(e.read())
+            raise e
