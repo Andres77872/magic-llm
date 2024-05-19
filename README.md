@@ -55,7 +55,7 @@ Note: Other LLM providers have not been tested.
 | Mistral          | ✅         | ✅          | ✅         | ✅               | ✅                | ❌               |
 | Deepseek         | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
 | Groq             | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
-| LeptonAI         | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
+| LeptonAI         | ✅         | ✅          | ❌         | ⁉               | ✅                | ❌               |
 | OctoAI           | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
 | NovitaAI         | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
 
