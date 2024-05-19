@@ -35,7 +35,7 @@ class EngineOpenAI(BaseChat):
             **self.kwargs
         }
 
-        if self.base_url == 'https://api.openai.com/v1':
+        if self.base_url == 'https://api.openai.com/v1' and data.get("stram"):
             data.update({
                 "stream_options": {
                     "include_usage": True
