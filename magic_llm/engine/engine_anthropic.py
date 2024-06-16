@@ -61,13 +61,14 @@ class EngineAnthropic(BaseChat):
             'user-agent': 'arz-magic-llm-engine',
             **self.headers
         }
-        preamble = chat.messages[0]['content'] if chat.messages[0]['role'] == 'system' else None
+        messages = chat.get_messages()
+        preamble = messages[0]['content'] if messages[0]['role'] == 'system' else None
         if preamble:
-            chat.messages.pop(0)
+            messages.pop(0)
 
         data = {
             "model": self.model,
-            "messages": chat.messages,
+            "messages": messages,
             **kwargs,
             **self.kwargs
         }

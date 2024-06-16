@@ -30,12 +30,13 @@ class EngineGoogle(BaseChat):
             'Content-Type': 'application/json',
             **self.headers
         }
+        messages = chat.get_messages()
         data = {
             "contents": [
-                            {"role": 'user', "parts": [{'text': chat.messages[0]['content']}]},
+                            {"role": 'user', "parts": [{'text': messages[0]['content']}]},
                             {"role": 'model', "parts": [{'text': 'Ok'}]}
                         ] + [{"role": x['role'].replace('assistant', 'model'), "parts": [{'text': x['content']}]} for x
-                             in chat.messages[1:]],
+                             in messages[1:]],
             **kwargs,
             **self.kwargs
         }

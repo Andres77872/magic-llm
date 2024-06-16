@@ -25,17 +25,18 @@ class EngineCohere(BaseChat):
             'user-agent': 'arz-magic-llm-engine',
             **self.headers
         }
+        messages = chat.get_messages()
         mp = {'user': 'User', 'assistant': 'Chatbot'}
-        if 'system' in chat.messages[0]['role']:
-            preamble = chat.messages.pop(0)['content']
+        if 'system' in messages[0]['role']:
+            preamble = messages.pop(0)['content']
         else:
             preamble = None
-        message = chat.messages.pop(-1)['content']
-        for i in chat.messages:
+        message = messages.pop(-1)['content']
+        for i in messages:
             i['role'] = mp[i['role']]
         data = {
             "model": self.model,
-            "messages": chat.messages,
+            "messages": messages,
             "message": message,
             "preamble": preamble,
             "prompt_truncation": 'AUTO',

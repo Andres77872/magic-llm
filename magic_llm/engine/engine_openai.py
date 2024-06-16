@@ -30,7 +30,7 @@ class EngineOpenAI(BaseChat):
 
         data = {
             "model": self.model,
-            "messages": chat.messages,
+            "messages": chat.get_messages(),
             **kwargs,
             **self.kwargs
         }

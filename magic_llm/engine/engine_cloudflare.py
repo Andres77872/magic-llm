@@ -26,7 +26,7 @@ class EngineCloudFlare(BaseChat):
             **self.headers
         }
         data = {
-            'messages': chat.messages,
+            'messages': chat.get_messages(),
             **kwargs,
             **self.kwargs
         }
