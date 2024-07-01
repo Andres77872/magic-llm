@@ -66,9 +66,29 @@ class EngineAnthropic(BaseChat):
         if preamble:
             messages.pop(0)
 
+        anthropic_chat = []
+        for i in messages:
+            if type(i['content']) is str:
+                anthropic_chat.append(i)
+            else:
+                k = []
+                for j in i['content']:
+                    if j['type'] == 'text':
+                        k.append(j)
+                    else:
+                        k.append({
+                            'type': 'image',
+                            'source': {
+                                "type": "base64",
+                                'media_type': j['image_url']['url'].split(',')[0].split(';')[0][5:],
+                                'data': j['image_url']['url'].split(',')[1]
+                            }
+                        })
+                i['content'] = k
+                anthropic_chat.append(i)
         data = {
             "model": self.model,
-            "messages": messages,
+            "messages": anthropic_chat,
             **kwargs,
             **self.kwargs
         }

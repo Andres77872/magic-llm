@@ -37,7 +37,11 @@ Note: Other LLM providers have not been tested.
 - [x] Stream response reforged to map to OpenAI response format
 - [x] Function calling (Only tested with OpenAI)
 - [x] Stream yields a [chunk object](https://platform.openai.com/docs/api-reference/chat/streaming)
-- [ ] Usage in response
+- [x] Usage in response
+- [ ] Vision adapter to OpenAI schema
+  - [x] OpenAI
+  - [x] Anthropic
+  - [ ] Google AI Studio
 
 | provider         | Streaming | completion | embedding | async streaming | async completion | async embedding |
 |------------------|-----------|------------|-----------|-----------------|------------------|-----------------|
