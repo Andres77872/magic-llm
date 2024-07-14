@@ -31,17 +31,25 @@ class EngineGoogle(BaseChat):
             **self.headers
         }
         messages = chat.get_messages()
+
+        if 'system' in messages[0]['role']:
+            preamble = messages.pop(0)['content']
+        else:
+            preamble = None
+
         data = {
             "contents": [
-                            {"role": 'user', "parts": [{'text': messages[0]['content']}]},
-                            {"role": 'model', "parts": [{'text': 'Ok'}]}
-                        ] + [{"role": x['role'].replace('assistant', 'model'), "parts": [{'text': x['content']}]} for x
-                             in messages[1:]],
+                {
+                    "role": x['role'].replace('assistant', 'model'),
+                    "parts": [{'text': x['content']}]
+                } for x in messages],
+            "generationConfig": {**self.kwargs},
             **kwargs,
-            **self.kwargs
         }
-        if 'max_tokens' in data:
-            data.pop('max_tokens')
+        if preamble is not None:
+            data['systemInstruction'] = {
+                    "parts": [{'text': preamble}]
+                }
 
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers, data
