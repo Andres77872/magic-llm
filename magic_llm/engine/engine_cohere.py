@@ -50,6 +50,7 @@ class EngineCohere(BaseChat):
         # Create a request object with the URL, data, and headers.
         return urllib.request.Request(self.base_url, data=json_data, headers=headers)
 
+    @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self.prepare_data(chat, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))

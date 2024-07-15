@@ -2,8 +2,8 @@ from typing import Iterator, AsyncIterator, Callable, Awaitable
 import abc
 import functools
 
-from magic_llm.model import ModelChat
-from magic_llm.model.ModelChatStream import ChatCompletionModel
+from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class BaseChat(abc.ABC):
@@ -31,9 +31,26 @@ class BaseChat(abc.ABC):
 
         return wrapper
 
+    @staticmethod
+    def async_intercept_generate(func: Callable[..., Awaitable[ModelChatResponse]]):
+        @functools.wraps(func)
+        async def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+            item = await func(self, chat, **kwargs)
+            usage = UsageModel(**{
+                'prompt_tokens': item.prompt_tokens,
+                'completion_tokens': item.completion_tokens,
+                'total_tokens': item.total_tokens,
+            })
+            if self.callback:
+                self.callback(chat, usage)
+            return item
+
+        return wrapper
+
     def generate(self, chat: ModelChat, **kwargs):
         pass
 
+    @abc.abstractmethod
     def async_generate(self, chat: ModelChat, **kwargs):
         pass
 

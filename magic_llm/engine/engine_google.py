@@ -61,6 +61,7 @@ class EngineGoogle(BaseChat):
         return urllib.request.Request(self.url_stream if stream else self.url, data=json_data, headers=headers,
                                       method='POST'), json_data, headers, data
 
+    @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         request, json_data, headers, data = self.prepare_http_data(chat, stream=False, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))

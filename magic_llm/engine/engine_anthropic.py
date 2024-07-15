@@ -107,6 +107,7 @@ class EngineAnthropic(BaseChat):
         chunk, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage)
         return ChatCompletionModel(**chunk) if chunk else None, idx, usage
 
+    @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self.prepare_data(chat, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))

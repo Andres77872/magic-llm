@@ -91,6 +91,7 @@ class EngineOpenAI(BaseChat):
                 'role': 'assistant'
             })
 
+    @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self.prepare_data(chat, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))

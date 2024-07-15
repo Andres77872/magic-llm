@@ -65,6 +65,7 @@ class EngineAmazon(BaseChat):
             raise Exception("Unknown model")
         return body
 
+    @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         async with self.aclient as client:
             response = await client.invoke_model(
