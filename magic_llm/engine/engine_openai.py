@@ -27,10 +27,18 @@ class EngineOpenAI(BaseChat):
 
     def prepare_data(self, chat: ModelChat, **kwargs):
         # Construct the header and data to be sent in the request.
+        messages = chat.get_messages()
+        for message in messages:
+            if message['role'] == 'user' and isinstance(message['content'], list):
+                for item in message['content']:
+                    if item.get('type') == 'text':
+                        item.pop('image_url', None)
+                    if item.get('type') == 'image_url':
+                        item.pop('text', None)
 
         data = {
             "model": self.model,
-            "messages": chat.get_messages(),
+            "messages": messages,
             **kwargs,
             **self.kwargs
         }
