@@ -175,6 +175,7 @@ class EngineAnthropic(BaseChat):
             }
             yield ChatCompletionModel(**chunk)
 
+    @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
         async with aiohttp.ClientSession() as session:

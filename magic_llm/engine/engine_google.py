@@ -48,8 +48,8 @@ class EngineGoogle(BaseChat):
         }
         if preamble is not None:
             data['systemInstruction'] = {
-                    "parts": [{'text': preamble}]
-                }
+                "parts": [{'text': preamble}]
+            }
 
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers, data
@@ -145,6 +145,7 @@ class EngineGoogle(BaseChat):
                     }
                     yield ChatCompletionModel(**chunk)
 
+    @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers, _ = self.prepare_data(chat, **kwargs)
         async with aiohttp.ClientSession() as session:

@@ -106,6 +106,7 @@ class EngineCloudFlare(BaseChat):
                         }
                         yield ChatCompletionModel(**chunk)
 
+    @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self.prepare_data(chat, **kwargs, stream=True)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))

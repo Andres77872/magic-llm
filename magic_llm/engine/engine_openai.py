@@ -165,6 +165,7 @@ class EngineOpenAI(BaseChat):
                     last_chunk = c
                     yield c
 
+    @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))

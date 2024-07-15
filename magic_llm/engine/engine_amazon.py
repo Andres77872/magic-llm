@@ -147,6 +147,7 @@ class EngineAmazon(BaseChat):
             chunk = self.format_event_to_chunk(event)
             yield chunk
 
+    @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         body = self.prepare_data(chat, **kwargs)
 
