@@ -141,7 +141,12 @@ class EngineGoogle(BaseChat):
                         }],
                         'created': int(time.time()),
                         'model': self.model,
-                        'object': 'chat.completion.chunk'
+                        'object': 'chat.completion.chunk',
+                        'usage': {
+                            'prompt_tokens': chunk['usageMetadata']['promptTokenCount'],
+                            'completion_tokens': chunk['usageMetadata']['candidatesTokenCount'],
+                            'total_tokens': chunk['usageMetadata']['totalTokenCount']
+                        }
                     }
                     yield ChatCompletionModel(**chunk)
 
@@ -166,6 +171,11 @@ class EngineGoogle(BaseChat):
                             }],
                             'created': int(time.time()),
                             'model': self.model,
-                            'object': 'chat.completion.chunk'
+                            'object': 'chat.completion.chunk',
+                            'usage': {
+                                'prompt_tokens': chunk['usageMetadata']['promptTokenCount'],
+                                'completion_tokens': chunk['usageMetadata']['candidatesTokenCount'],
+                                'total_tokens': chunk['usageMetadata']['totalTokenCount']
+                            }
                         }
                         yield ChatCompletionModel(**chunk)

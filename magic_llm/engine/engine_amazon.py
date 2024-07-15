@@ -6,7 +6,7 @@ import json
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChatResponse, ModelChat
-from magic_llm.model.ModelChatStream import ChatCompletionModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class EngineAmazon(BaseChat):
@@ -145,6 +145,13 @@ class EngineAmazon(BaseChat):
         for event in response.get("body"):
             event = json.loads(event["chunk"]["bytes"])
             chunk = self.format_event_to_chunk(event)
+            prompt_tokens = event.get('amazon-bedrock-invocationMetrics', {}).get('inputTokenCount', 0)
+            completion_tokens = event.get('amazon-bedrock-invocationMetrics', {}).get('outputTokenCount', 0)
+            chunk.usage = UsageModel(**{
+                'prompt_tokens': prompt_tokens,
+                'completion_tokens': completion_tokens,
+                'total_tokens': prompt_tokens + completion_tokens,
+            })
             yield chunk
 
     @BaseChat.async_intercept_stream_generate
@@ -160,6 +167,13 @@ class EngineAmazon(BaseChat):
             async for event in response.get("body"):
                 event = json.loads(event["chunk"]["bytes"])
                 chunk = self.format_event_to_chunk(event)
+                prompt_tokens = event.get('amazon-bedrock-invocationMetrics', {}).get('inputTokenCount', 0)
+                completion_tokens = event.get('amazon-bedrock-invocationMetrics', {}).get('outputTokenCount', 0)
+                chunk.usage = UsageModel(**{
+                    'prompt_tokens': prompt_tokens,
+                    'completion_tokens': completion_tokens,
+                    'total_tokens': prompt_tokens + completion_tokens,
+                })
                 yield chunk
 
     def format_event_to_chunk(self, event):

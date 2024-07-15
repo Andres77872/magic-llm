@@ -43,7 +43,7 @@ class EngineOpenAI(BaseChat):
             **self.kwargs
         }
 
-        if self.base_url == 'https://api.openai.com/v1' and data.get("stream"):
+        if self.base_url in {'https://api.openai.com/v1', 'https://text.octoai.run/v1'} and data.get("stream"):
             data.update({
                 "stream_options": {
                     "include_usage": True
@@ -126,7 +126,7 @@ class EngineOpenAI(BaseChat):
         if chunk.startswith('data: ') and not chunk.endswith('[DONE]'):
             chunk = json.loads(chunk[5:])
             if self.base_url == 'https://api.groq.com/openai/v1':
-                chunk['usage'] = chunk.get('x_groq', {}).get('usage')
+                chunk['usage'] = chunk.get('x_groq', {}).get('usage', {})
             else:
                 chunk['usage'] = c if (c := chunk.get('usage', {})) else {}
             if len(chunk['choices']) == 0:
@@ -169,7 +169,6 @@ class EngineOpenAI(BaseChat):
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
-
         async with aiohttp.ClientSession() as sess:
             async with sess.post(self.base_url + '/chat/completions',
                                  data=json_data,
