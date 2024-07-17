@@ -42,6 +42,8 @@ Note: Other LLM providers have not been tested.
   - [x] OpenAI
   - [x] Anthropic
   - [ ] Google AI Studio
+- [ ] Text to Speech
+  - [x] OpenAI
 
 | provider         | Streaming | completion | embedding | async streaming | async completion | async embedding |
 |------------------|-----------|------------|-----------|-----------------|------------------|-----------------|

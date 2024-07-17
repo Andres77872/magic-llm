@@ -6,6 +6,7 @@ import aiohttp
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
@@ -194,3 +195,15 @@ class EngineOpenAI(BaseChat):
         except urllib.request.HTTPError as e:
             print(e.read())
             raise e
+
+    async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
+
+        payload = {
+            **data.model_dump(),
+            **kwargs
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.base_url + '/audio/speech',
+                                    headers=self.headers,
+                                    json=payload) as response:
+                return await response.read()

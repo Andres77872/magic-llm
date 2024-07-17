@@ -3,6 +3,7 @@ import abc
 import functools
 
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
@@ -62,4 +63,8 @@ class BaseChat(abc.ABC):
         pass
 
     def embedding(self, text: list[str] | str, **kwargs):
+        pass
+
+    def async_audio_speech(self, data: AudioSpeechRequest,
+                           **kwargs):
         pass
