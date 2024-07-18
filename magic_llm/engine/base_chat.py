@@ -68,3 +68,7 @@ class BaseChat(abc.ABC):
     def async_audio_speech(self, data: AudioSpeechRequest,
                            **kwargs):
         pass
+
+    def audio_speech(self, data: AudioSpeechRequest,
+                     **kwargs):
+        pass

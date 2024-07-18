@@ -6,6 +6,7 @@ import json
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChatResponse, ModelChat
+from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
@@ -232,3 +233,12 @@ class EngineAmazon(BaseChat):
         else:
             raise Exception('Unrecognized')
         return ChatCompletionModel(**chunk)
+
+    def audio_speech(self, data: AudioSpeechRequest, **kwargs):
+        response = self.client.synthesize_speech(
+            VoiceId=data.voice,
+            OutputFormat=data.response_format,
+            Text=data.input,
+            Engine=data.model,
+        )
+        return response['AudioStream']
