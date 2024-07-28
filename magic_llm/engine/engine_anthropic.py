@@ -74,6 +74,7 @@ class EngineAnthropic(BaseChat):
                 k = []
                 for j in i['content']:
                     if j['type'] == 'text':
+                        j.pop('image_url', None)
                         k.append(j)
                     else:
                         k.append({
