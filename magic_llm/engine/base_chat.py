@@ -27,16 +27,18 @@ class BaseChat(abc.ABC):
         async def wrapper(self, chat: ModelChat, **kwargs) -> AsyncIterator[ChatCompletionModel]:
             try:
                 usage = None
+                response_content = ''
                 async for item in func(self, chat, **kwargs):
                     if item.usage.total_tokens != 0:
                         usage = item.usage
+                    response_content += item.choices[0].delta.content
                     yield item
                 if self.callback:
                     if asyncio.iscoroutinefunction(self.callback):
-                        await self.callback(chat, usage, self.model)
+                        await self.callback(chat, response_content, usage, self.model)
                     else:
                         loop = asyncio.get_event_loop()
-                        await loop.run_in_executor(None, self.callback, chat, usage, self.model)
+                        await loop.run_in_executor(None, self.callback, chat, response_content, usage, self.model)
             except:
                 if self.fallback:
                     if self.callback:
@@ -46,10 +48,10 @@ class BaseChat(abc.ABC):
                 else:
                     if self.callback:
                         if asyncio.iscoroutinefunction(self.callback):
-                            await self.callback(chat, usage, self.model)
+                            await self.callback(chat, response_content, usage, self.model)
                         else:
                             loop = asyncio.get_event_loop()
-                            await loop.run_in_executor(None, self.callback, chat, usage, self.model)
+                            await loop.run_in_executor(None, self.callback, chat, response_content, usage, self.model)
 
         return wrapper
 
@@ -59,12 +61,14 @@ class BaseChat(abc.ABC):
         def wrapper(self, chat: ModelChat, **kwargs) -> AsyncIterator[ChatCompletionModel]:
             try:
                 usage = None
+                response_content = ''
                 for item in func(self, chat, **kwargs):
                     if item.usage.total_tokens != 0:
                         usage = item.usage
+                    response_content += item.choices[0].delta.content
                     yield item
                 if self.callback:
-                    self.callback(chat, usage, self.model)
+                    self.callback(chat, response_content, usage, self.model)
             except:
                 if self.fallback:
                     if self.callback:
@@ -72,7 +76,7 @@ class BaseChat(abc.ABC):
                     for i in self.fallback.llm.stream_generate(chat):
                         yield i
                 else:
-                    self.callback(chat, None, self.model)
+                    self.callback(chat, response_content, None, self.model)
 
         return wrapper
 
@@ -86,12 +90,13 @@ class BaseChat(abc.ABC):
                 'completion_tokens': item.completion_tokens,
                 'total_tokens': item.total_tokens,
             })
+            response_content = item.content
             if self.callback:
                 if asyncio.iscoroutinefunction(self.callback):
-                    await self.callback(chat, usage, self.model)
+                    await self.callback(chat, response_content, usage, self.model)
                 else:
                     loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, self.callback, chat, usage, self.model)
+                    await loop.run_in_executor(None, self.callback, chat, response_content, usage, self.model)
             return item
 
         return wrapper
