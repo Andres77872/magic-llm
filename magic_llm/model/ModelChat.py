@@ -2,9 +2,12 @@ from magic_llm.model import ModelChatResponse
 
 
 class ModelChat:
-    def __init__(self, system: str = None, max_input_length: int = None):
+    def __init__(self, system: str = None,
+                 max_input_length: int = None,
+                 extra_args=None) -> None:
         self.messages = [{"role": "system", "content": system}] if system else []
         self.max_input_length = max_input_length
+        self.extra_args = extra_args
 
     def set_system(self, system: str, index: int = 0):
         self.messages.insert(index, {"role": "system", "content": system})
