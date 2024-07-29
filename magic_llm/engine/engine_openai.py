@@ -108,6 +108,7 @@ class EngineOpenAI(BaseChat):
                 r = json.loads(response_data.decode(encoding))
                 return self.prepare_response(r)
 
+    @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
         with urllib.request.urlopen(self.prepare_http_data(chat, stream=False, **kwargs),

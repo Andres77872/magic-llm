@@ -103,6 +103,7 @@ class EngineAmazon(BaseChat):
                     'role': 'assistant'
                 })
 
+    @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         response = self.client.invoke_model(body=self.prepare_data(chat, **kwargs),
                                             modelId=self.model,

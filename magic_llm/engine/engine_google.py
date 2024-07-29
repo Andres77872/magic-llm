@@ -95,6 +95,7 @@ class EngineGoogle(BaseChat):
                     'role': 'assistant'
                 })
 
+    @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         request, json_data, headers, data = self.prepare_http_data(chat, **kwargs, stream=False)
         # Make the request and read the response.

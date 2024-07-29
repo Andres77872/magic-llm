@@ -130,6 +130,7 @@ class EngineAnthropic(BaseChat):
                     'role': 'assistant'
                 })
 
+    @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         with urllib.request.urlopen(self.prepare_http_data(chat, stream=False, **kwargs)) as response:
             response_data = response.read()

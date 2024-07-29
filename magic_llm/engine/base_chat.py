@@ -101,6 +101,25 @@ class BaseChat(abc.ABC):
 
         return wrapper
 
+    @staticmethod
+    def sync_intercept_generate(func: Callable[..., ModelChatResponse]):
+        @functools.wraps(func)
+        def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+            item = func(self, chat, **kwargs)
+            usage = UsageModel(**{
+                'prompt_tokens': item.prompt_tokens,
+                'completion_tokens': item.completion_tokens,
+                'total_tokens': item.total_tokens,
+            })
+            response_content = item.content
+            if self.callback:
+                self.callback(chat, response_content, usage, self.model)
+
+            return item
+
+        return wrapper
+
+    @abc.abstractmethod
     def generate(self, chat: ModelChat, **kwargs):
         pass
 
