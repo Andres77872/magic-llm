@@ -153,6 +153,7 @@ class EngineOpenAI(BaseChat):
                             last_chunk.choices[0].delta.content = ''
                             return last_chunk
 
+    @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
         with urllib.request.urlopen(self.prepare_http_data(chat, stream=True, **kwargs),
                                     timeout=kwargs.get('timeout')) as response:

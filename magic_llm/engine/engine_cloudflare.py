@@ -81,6 +81,7 @@ class EngineCloudFlare(BaseChat):
                 'role': 'assistant'
             })
 
+    @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
         with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs, stream=True)) as response:
             for event in response:

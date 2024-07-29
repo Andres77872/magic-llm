@@ -138,6 +138,7 @@ class EngineAmazon(BaseChat):
                 'role': 'assistant'
             })
 
+    @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
         response = self.client.invoke_model_with_response_stream(
             body=self.prepare_data(chat, **kwargs),

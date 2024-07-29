@@ -123,6 +123,7 @@ class EngineGoogle(BaseChat):
                 'role': 'assistant'
             })
 
+    @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
         request, json_data, _, _ = self.prepare_http_data(chat, **kwargs, stream=True)
         with urllib.request.urlopen(request) as response:
