@@ -1,6 +1,7 @@
 from typing import Iterator, AsyncIterator, Callable, Awaitable
 import abc
 import functools
+import asyncio
 
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
@@ -31,7 +32,11 @@ class BaseChat(abc.ABC):
                         usage = item.usage
                     yield item
                 if self.callback:
-                    self.callback(chat, usage, self.model)
+                    if asyncio.iscoroutinefunction(self.callback):
+                        await self.callback(chat, usage, self.model)
+                    else:
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(None, self.callback, chat, usage, self.model)
             except:
                 if self.fallback:
                     if self.callback:
@@ -40,7 +45,11 @@ class BaseChat(abc.ABC):
                         yield i
                 else:
                     if self.callback:
-                        self.callback(chat, None, self.model)
+                        if asyncio.iscoroutinefunction(self.callback):
+                            await self.callback(chat, usage, self.model)
+                        else:
+                            loop = asyncio.get_event_loop()
+                            await loop.run_in_executor(None, self.callback, chat, usage, self.model)
 
         return wrapper
 
@@ -78,7 +87,11 @@ class BaseChat(abc.ABC):
                 'total_tokens': item.total_tokens,
             })
             if self.callback:
-                self.callback(chat, usage, self.model)
+                if asyncio.iscoroutinefunction(self.callback):
+                    await self.callback(chat, usage, self.model)
+                else:
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self.callback, chat, usage, self.model)
             return item
 
         return wrapper
