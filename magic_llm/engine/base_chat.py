@@ -31,7 +31,7 @@ class BaseChat(abc.ABC):
                         usage = item.usage
                     yield item
                 if self.callback:
-                    self.callback(chat, usage)
+                    self.callback(chat, usage, self.model)
             except:
                 if self.fallback:
                     if self.callback:
@@ -40,7 +40,7 @@ class BaseChat(abc.ABC):
                         yield i
                 else:
                     if self.callback:
-                        self.callback(chat, None)
+                        self.callback(chat, None, self.model)
 
         return wrapper
 
@@ -55,7 +55,7 @@ class BaseChat(abc.ABC):
                         usage = item.usage
                     yield item
                 if self.callback:
-                    self.callback(chat, usage)
+                    self.callback(chat, usage, self.model)
             except:
                 if self.fallback:
                     if self.callback:
@@ -63,7 +63,7 @@ class BaseChat(abc.ABC):
                     for i in self.fallback.llm.stream_generate(chat):
                         yield i
                 else:
-                    self.callback(chat, None)
+                    self.callback(chat, None, self.model)
 
         return wrapper
 
@@ -78,7 +78,7 @@ class BaseChat(abc.ABC):
                 'total_tokens': item.total_tokens,
             })
             if self.callback:
-                self.callback(chat, usage)
+                self.callback(chat, usage, self.model)
             return item
 
         return wrapper
