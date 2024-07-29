@@ -138,11 +138,19 @@ client = MagicLLM(
 from magic_llm import MagicLLM
 from magic_llm.model import ModelChat
 
-client = MagicLLM(
+client_fallback = MagicLLM(
     engine='openai',
     model='gpt-3.5-turbo-0125',
     private_key='sk-',
     # base_url='API'
+)
+
+client = MagicLLM(
+    engine='openai',
+    model='model_fail',
+    private_key='sk-',
+    # base_url='API',
+    fallback=client_fallback
 )
 
 chat = ModelChat(system="You are an assistant who responds sarcastically.")
