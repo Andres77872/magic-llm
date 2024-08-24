@@ -135,7 +135,9 @@ class BaseChat(abc.ABC):
     def async_intercept_generate(func: Callable[..., Awaitable[ModelChatResponse]]):
         @functools.wraps(func)
         async def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+            TTF = time.time()
             item = await func(self, chat, **kwargs)
+            TTF = time.time() - TTF
             usage = UsageModel(**{
                 'prompt_tokens': item.prompt_tokens,
                 'completion_tokens': item.completion_tokens,
@@ -144,10 +146,26 @@ class BaseChat(abc.ABC):
             response_content = item.content
             if self.callback:
                 if asyncio.iscoroutinefunction(self.callback):
-                    await self.callback(chat, response_content, usage, self.model)
+                    await self.callback(chat,
+                                        response_content,
+                                        usage,
+                                        self.model,
+                                        ChatMetaModel(**{
+                                            'TTF': TTF,
+                                            'TPS': usage.completion_tokens / TTF
+                                        }))
                 else:
                     loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, self.callback, chat, response_content, usage, self.model)
+                    await loop.run_in_executor(None,
+                                               self.callback,
+                                               chat,
+                                               response_content,
+                                               usage,
+                                               self.model,
+                                               ChatMetaModel(**{
+                                                   'TTF': TTF,
+                                                   'TPS': usage.completion_tokens / TTF
+                                               }))
             return item
 
         return wrapper
@@ -156,15 +174,25 @@ class BaseChat(abc.ABC):
     def sync_intercept_generate(func: Callable[..., ModelChatResponse]):
         @functools.wraps(func)
         def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+            TTF = time.time()
             item = func(self, chat, **kwargs)
+            TTF = time.time() - TTF
             usage = UsageModel(**{
                 'prompt_tokens': item.prompt_tokens,
                 'completion_tokens': item.completion_tokens,
                 'total_tokens': item.total_tokens,
             })
             response_content = item.content
+
             if self.callback:
-                self.callback(chat, response_content, usage, self.model)
+                self.callback(chat,
+                              response_content,
+                              usage,
+                              self.model,
+                              ChatMetaModel(**{
+                                  'TTF': TTF,
+                                  'TPS': usage.completion_tokens / TTF
+                              }))
 
             return item
 
