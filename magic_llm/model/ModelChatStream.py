@@ -28,3 +28,9 @@ class ChatCompletionModel(BaseModel):
     system_fingerprint: Optional[Any] = None
     choices: List[ChoiceModel]
     usage: Optional[UsageModel] = UsageModel()
+
+
+class ChatMetaModel(BaseModel):
+    TTFB: float
+    TTF: float
+    TPS: float
