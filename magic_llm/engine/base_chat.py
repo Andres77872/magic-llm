@@ -8,6 +8,7 @@ from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChatMetaModel
 
+DELAY_TIME_BEFORE_RETRY = 1
 
 class BaseChat(abc.ABC):
     def __init__(
@@ -16,12 +17,14 @@ class BaseChat(abc.ABC):
             headers: Optional[dict] = None,
             callback: Optional[Callable] = None,
             fallback: Optional[Callable] = None,
+            retries: int = 3,
             **kwargs
     ):
         self.model = model
         self.headers = headers or {}
         self.callback = callback
         self.fallback = fallback
+        self.retries = retries
         self.kwargs = kwargs
 
     @staticmethod
@@ -50,37 +53,42 @@ class BaseChat(abc.ABC):
     def async_intercept_stream_generate(func: Callable[..., Awaitable[AsyncIterator[ChatCompletionModel]]]):
         @functools.wraps(func)
         async def wrapper(self, chat: ModelChat, **kwargs) -> AsyncIterator[ChatCompletionModel]:
-            try:
-                usage = None
-                response_content = ''
-                start_time = time.time()
-                first_token_received = False
-                ttfb = 0
+            for attempt in range(self.retries):
+                try:
+                    usage = None
+                    response_content = ''
+                    start_time = time.time()
+                    first_token_received = False
+                    ttfb = 0
 
-                async for item in func(self, chat, **kwargs):
-                    if not first_token_received:
-                        ttfb = time.time() - start_time
-                        first_token_received = True
+                    async for item in func(self, chat, **kwargs):
+                        if not first_token_received:
+                            ttfb = time.time() - start_time
+                            first_token_received = True
 
-                    if item.usage.total_tokens != 0:
-                        usage = item.usage
-                    response_content += item.choices[0].delta.content
-                    yield item
+                        if item.usage.total_tokens != 0:
+                            usage = item.usage
+                        response_content += item.choices[0].delta.content
+                        yield item
 
-                ttf = time.time() - start_time - ttfb
-                meta = self._create_chat_meta_model(ttfb, ttf, usage)
+                    ttf = time.time() - start_time - ttfb
+                    meta = self._create_chat_meta_model(ttfb, ttf, usage)
 
-                if self.callback:
-                    await self._execute_callback(self.callback, chat, response_content, usage, self.model, meta)
-
-            except Exception:
-                if self.fallback:
                     if self.callback:
-                        self.fallback.llm.callback = self.callback
-                    async for i in self.fallback.llm.async_stream_generate(chat):
-                        yield i
-                elif self.callback:
-                    await self._execute_callback(self.callback, chat, response_content, usage, self.model, None)
+                        await self._execute_callback(self.callback, chat, response_content, usage, self.model, meta)
+
+                    break
+                except Exception as e:
+                    if attempt == self.retries - 1:
+                        if self.fallback:
+                            if self.callback:
+                                self.fallback.llm.callback = self.callback
+                            async for i in self.fallback.llm.async_stream_generate(chat):
+                                yield i
+                        elif self.callback:
+                            await self._execute_callback(self.callback, chat, response_content, usage, self.model, None)
+                    else:
+                        await asyncio.sleep(DELAY_TIME_BEFORE_RETRY)
 
         return wrapper
 
@@ -88,36 +96,41 @@ class BaseChat(abc.ABC):
     def sync_intercept_stream_generate(func: Callable[..., Iterator[ChatCompletionModel]]):
         @functools.wraps(func)
         def wrapper(self, chat: ModelChat, **kwargs) -> Iterator[ChatCompletionModel]:
-            try:
-                usage = None
-                response_content = ''
-                start_time = time.time()
-                first_token_received = False
-                ttfb = 0
+            for attempt in range(self.retries):
+                try:
+                    usage = None
+                    response_content = ''
+                    start_time = time.time()
+                    first_token_received = False
+                    ttfb = 0
 
-                for item in func(self, chat, **kwargs):
-                    if not first_token_received:
-                        ttfb = time.time() - start_time
-                        first_token_received = True
+                    for item in func(self, chat, **kwargs):
+                        if not first_token_received:
+                            ttfb = time.time() - start_time
+                            first_token_received = True
 
-                    if item.usage.total_tokens != 0:
-                        usage = item.usage
-                    response_content += item.choices[0].delta.content
-                    yield item
+                        if item.usage.total_tokens != 0:
+                            usage = item.usage
+                        response_content += item.choices[0].delta.content
+                        yield item
 
-                ttf = time.time() - start_time - ttfb
-                meta = self._create_chat_meta_model(ttfb, ttf, usage)
+                    ttf = time.time() - start_time - ttfb
+                    meta = self._create_chat_meta_model(ttfb, ttf, usage)
 
-                if self.callback:
-                    self.callback(chat, response_content, usage, self.model, meta)
-
-            except Exception:
-                if self.fallback:
                     if self.callback:
-                        self.fallback.llm.callback = self.callback
-                    yield from self.fallback.llm.stream_generate(chat)
-                elif self.callback:
-                    self.callback(chat, response_content, None, self.model, None)
+                        self.callback(chat, response_content, usage, self.model, meta)
+
+                    break
+                except Exception as e:
+                    if attempt == self.retries - 1:
+                        if self.fallback:
+                            if self.callback:
+                                self.fallback.llm.callback = self.callback
+                            yield from self.fallback.llm.stream_generate(chat)
+                        elif self.callback:
+                            self.callback(chat, response_content, None, self.model, None)
+                    else:
+                        time.sleep(DELAY_TIME_BEFORE_RETRY)
 
         return wrapper
 
@@ -125,21 +138,27 @@ class BaseChat(abc.ABC):
     def async_intercept_generate(func: Callable[..., Awaitable[ModelChatResponse]]):
         @functools.wraps(func)
         async def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-            start_time = time.time()
-            item = await func(self, chat, **kwargs)
-            ttf = time.time() - start_time
+            for attempt in range(self.retries):
+                try:
+                    start_time = time.time()
+                    item = await func(self, chat, **kwargs)
+                    ttf = time.time() - start_time
 
-            usage = UsageModel(
-                prompt_tokens=item.prompt_tokens,
-                completion_tokens=item.completion_tokens,
-                total_tokens=item.total_tokens,
-            )
-            meta = self._create_chat_meta_model(0, ttf, usage)
+                    usage = UsageModel(
+                        prompt_tokens=item.prompt_tokens,
+                        completion_tokens=item.completion_tokens,
+                        total_tokens=item.total_tokens,
+                    )
+                    meta = self._create_chat_meta_model(0, ttf, usage)
 
-            if self.callback:
-                await self._execute_callback(self.callback, chat, item.content, usage, self.model, meta)
+                    if self.callback:
+                        await self._execute_callback(self.callback, chat, item.content, usage, self.model, meta)
 
-            return item
+                    return item
+                except Exception as e:
+                    if attempt == self.retries - 1:
+                        raise
+                    await asyncio.sleep(DELAY_TIME_BEFORE_RETRY)
 
         return wrapper
 
@@ -147,21 +166,27 @@ class BaseChat(abc.ABC):
     def sync_intercept_generate(func: Callable[..., ModelChatResponse]):
         @functools.wraps(func)
         def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-            start_time = time.time()
-            item = func(self, chat, **kwargs)
-            ttf = time.time() - start_time
+            for attempt in range(self.retries):
+                try:
+                    start_time = time.time()
+                    item = func(self, chat, **kwargs)
+                    ttf = time.time() - start_time
 
-            usage = UsageModel(
-                prompt_tokens=item.prompt_tokens,
-                completion_tokens=item.completion_tokens,
-                total_tokens=item.total_tokens,
-            )
-            meta = self._create_chat_meta_model(0, ttf, usage)
+                    usage = UsageModel(
+                        prompt_tokens=item.prompt_tokens,
+                        completion_tokens=item.completion_tokens,
+                        total_tokens=item.total_tokens,
+                    )
+                    meta = self._create_chat_meta_model(0, ttf, usage)
 
-            if self.callback:
-                self.callback(chat, item.content, usage, self.model, meta)
+                    if self.callback:
+                        self.callback(chat, item.content, usage, self.model, meta)
 
-            return item
+                    return item
+                except Exception as e:
+                    if attempt == self.retries - 1:
+                        raise
+                    time.sleep(DELAY_TIME_BEFORE_RETRY)
 
         return wrapper
 
