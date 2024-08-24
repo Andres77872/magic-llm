@@ -157,6 +157,12 @@ class BaseChat(abc.ABC):
                     return item
                 except Exception as e:
                     if attempt == self.retries - 1:
+                        if self.fallback:
+                            if self.callback:
+                                self.fallback.llm.callback = self.callback
+                            return await self.fallback.llm.async_generate(chat)
+                        elif self.callback:
+                            await self._execute_callback(self.callback, chat, "", None, self.model, None)
                         raise
                     await asyncio.sleep(DELAY_TIME_BEFORE_RETRY)
 
@@ -185,6 +191,12 @@ class BaseChat(abc.ABC):
                     return item
                 except Exception as e:
                     if attempt == self.retries - 1:
+                        if self.fallback:
+                            if self.callback:
+                                self.fallback.llm.callback = self.callback
+                            return self.fallback.llm.generate(chat)
+                        elif self.callback:
+                            self.callback(chat, "", None, self.model, None)
                         raise
                     time.sleep(DELAY_TIME_BEFORE_RETRY)
 
