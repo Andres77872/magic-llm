@@ -2,10 +2,11 @@ from typing import Iterator, AsyncIterator, Callable, Awaitable
 import abc
 import functools
 import asyncio
+import time
 
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChatMetaModel
 
 
 class BaseChat(abc.ABC):
@@ -28,17 +29,41 @@ class BaseChat(abc.ABC):
             try:
                 usage = None
                 response_content = ''
+                TTFB = time.time()
+                TTF = time.time()
+                FTR = False
                 async for item in func(self, chat, **kwargs):
+                    if not FTR:
+                        TTFB = time.time() - TTFB
+                        FTR = True
                     if item.usage.total_tokens != 0:
                         usage = item.usage
                     response_content += item.choices[0].delta.content
                     yield item
                 if self.callback:
                     if asyncio.iscoroutinefunction(self.callback):
-                        await self.callback(chat, response_content, usage, self.model)
+                        await self.callback(chat,
+                                            response_content,
+                                            usage,
+                                            self.model,
+                                            ChatMetaModel(**{
+                                                'TTFB': TTFB,
+                                                'TTF': TTF,
+                                                'TPS': usage.completion_tokens / TTF
+                                            }))
                     else:
                         loop = asyncio.get_event_loop()
-                        await loop.run_in_executor(None, self.callback, chat, response_content, usage, self.model)
+                        await loop.run_in_executor(None,
+                                                   self.callback,
+                                                   chat,
+                                                   response_content,
+                                                   usage,
+                                                   self.model,
+                                                   ChatMetaModel(**{
+                                                       'TTFB': TTFB,
+                                                       'TTF': TTF,
+                                                       'TPS': usage.completion_tokens / TTF
+                                                   }))
             except:
                 if self.fallback:
                     if self.callback:
@@ -48,10 +73,20 @@ class BaseChat(abc.ABC):
                 else:
                     if self.callback:
                         if asyncio.iscoroutinefunction(self.callback):
-                            await self.callback(chat, response_content, usage, self.model)
+                            await self.callback(chat,
+                                                response_content,
+                                                usage,
+                                                self.model,
+                                                None)
                         else:
                             loop = asyncio.get_event_loop()
-                            await loop.run_in_executor(None, self.callback, chat, response_content, usage, self.model)
+                            await loop.run_in_executor(None,
+                                                       self.callback,
+                                                       chat,
+                                                       response_content,
+                                                       usage,
+                                                       self.model,
+                                                       None)
 
         return wrapper
 
@@ -62,21 +97,36 @@ class BaseChat(abc.ABC):
             try:
                 usage = None
                 response_content = ''
+                TTFB = time.time()
+                TTF = time.time()
+                FTR = False
                 for item in func(self, chat, **kwargs):
+                    if not FTR:
+                        TTFB = time.time() - TTFB
+                        FTR = True
                     if item.usage.total_tokens != 0:
                         usage = item.usage
                     response_content += item.choices[0].delta.content
                     yield item
+                TTF = time.time() - TTF - TTFB
                 if self.callback:
-                    self.callback(chat, response_content, usage, self.model)
-            except:
+                    self.callback(chat,
+                                  response_content,
+                                  usage,
+                                  self.model,
+                                  ChatMetaModel(**{
+                                      'TTFB': TTFB,
+                                      'TTF': TTF,
+                                      'TPS': usage.completion_tokens / TTF
+                                  }))
+            except:  # Fallback
                 if self.fallback:
                     if self.callback:
                         self.fallback.llm.callback = self.callback
                     for i in self.fallback.llm.stream_generate(chat):
                         yield i
                 else:
-                    self.callback(chat, response_content, None, self.model)
+                    self.callback(chat, response_content, None, self.model, None)
 
         return wrapper
 
