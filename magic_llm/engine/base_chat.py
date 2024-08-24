@@ -40,6 +40,7 @@ class BaseChat(abc.ABC):
                         usage = item.usage
                     response_content += item.choices[0].delta.content
                     yield item
+                TTF = time.time() - TTF - TTFB
                 if self.callback:
                     if asyncio.iscoroutinefunction(self.callback):
                         await self.callback(chat,
