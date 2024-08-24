@@ -31,6 +31,6 @@ class ChatCompletionModel(BaseModel):
 
 
 class ChatMetaModel(BaseModel):
-    TTFB: float
+    TTFB: float = 0
     TTF: float
     TPS: float
