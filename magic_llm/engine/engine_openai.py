@@ -148,7 +148,8 @@ class EngineOpenAI(BaseChat):
                             u = response['data']
                             usage = {
                                 'completion_tokens': u['native_tokens_completion'],
-                                'prompt_tokens': u['native_tokens_prompt']
+                                'prompt_tokens': u['native_tokens_prompt'],
+                                'total_tokens': u['native_tokens_prompt'] + u['native_tokens_completion']
                             }
                             last_chunk.usage = UsageModel(**usage)
                             last_chunk.choices[0].delta.content = ''
