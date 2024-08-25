@@ -10,6 +10,7 @@ from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, Cha
 
 DELAY_TIME_BEFORE_RETRY = 1
 
+
 class BaseChat(abc.ABC):
     def __init__(
             self,
@@ -68,7 +69,8 @@ class BaseChat(abc.ABC):
 
                         if item.usage.total_tokens != 0:
                             usage = item.usage
-                        response_content += item.choices[0].delta.content
+                        if c := item.choices[0].delta.content:
+                            response_content += c
                         yield item
 
                     ttf = time.time() - start_time - ttfb
@@ -111,7 +113,8 @@ class BaseChat(abc.ABC):
 
                         if item.usage.total_tokens != 0:
                             usage = item.usage
-                        response_content += item.choices[0].delta.content
+                        if c := item.choices[0].delta.content:
+                            response_content += c
                         yield item
 
                     ttf = time.time() - start_time - ttfb
