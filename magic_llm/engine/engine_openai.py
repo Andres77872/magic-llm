@@ -75,7 +75,7 @@ class EngineOpenAI(BaseChat):
         return urllib.request.Request(self.base_url + '/embeddings', data=json_data, headers=self.headers)
 
     def prepare_response(self, r):
-        if r['choices'][0]['message']['content']:
+        if r['choices'][0]['message'].get('content'):
             return ModelChatResponse(**{
                 'content': r['choices'][0]['message']['content'],
                 'prompt_tokens': r['usage']['prompt_tokens'],
