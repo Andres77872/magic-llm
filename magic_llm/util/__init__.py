@@ -1,0 +1,1 @@
+from magic_llm.util.moa import run as run_moa
