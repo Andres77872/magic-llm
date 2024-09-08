@@ -125,8 +125,8 @@ class EngineAnthropic(BaseChat):
                 return ModelChatResponse(**{
                     'content': r['content'][0]['text'],
                     'prompt_tokens': r['usage']['input_tokens'],
-                    'completion_tokens': r['usage']['input_tokens'] + r['usage']['output_tokens'],
-                    'total_tokens': r['usage']['output_tokens'],
+                    'completion_tokens': r['usage']['output_tokens'],
+                    'total_tokens': r['usage']['input_tokens'] + r['usage']['output_tokens'],
                     'role': 'assistant'
                 })
 
@@ -139,8 +139,8 @@ class EngineAnthropic(BaseChat):
             return ModelChatResponse(**{
                 'content': r['content'][0]['text'],
                 'prompt_tokens': r['usage']['input_tokens'],
-                'completion_tokens': r['usage']['input_tokens'] + r['usage']['output_tokens'],
-                'total_tokens': r['usage']['output_tokens'],
+                'completion_tokens': r['usage']['output_tokens'],
+                'total_tokens': r['usage']['input_tokens'] + r['usage']['output_tokens'],
                 'role': 'assistant'
             })
 
