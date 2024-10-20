@@ -1,7 +1,7 @@
 # https://cookbook.openai.com/examples/how_to_format_inputs_to_chatgpt_models
 import json
 import urllib.request
-
+import time
 import aiohttp
 
 from magic_llm.engine.base_chat import BaseChat
@@ -44,7 +44,13 @@ class EngineOpenAI(BaseChat):
             **self.kwargs
         }
 
-        if self.base_url in {
+        if self.base_url.endswith('lepton.run/api/v1'):
+            data.update({
+                "stream_options": {
+                    "include_usage": True
+                }
+            })
+        elif self.base_url in {
             'https://api.openai.com/v1',
             'https://text.octoai.run/v1',
             'https://fast-api.snova.ai/v1'
@@ -143,6 +149,8 @@ class EngineOpenAI(BaseChat):
         else:
             if c := chunk.strip():
                 if c == 'data: [DONE]' and self.base_url == 'https://openrouter.ai/api/v1':
+                    # delay
+                    time.sleep(3)
                     for i in range(3):
                         request = urllib.request.Request(f'https://openrouter.ai/api/v1/generation?id={id_generation}',
                                                          headers=self.headers)
