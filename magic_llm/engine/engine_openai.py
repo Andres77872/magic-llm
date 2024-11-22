@@ -1,78 +1,53 @@
 # https://cookbook.openai.com/examples/how_to_format_inputs_to_chatgpt_models
 import json
 import urllib.request
-import time
+from typing import Callable
+
 import aiohttp
 
 from magic_llm.engine.base_chat import BaseChat
+from magic_llm.engine.openai_adapters import (ProviderOpenAI,
+                                              ProviderGroq,
+                                              ProviderSambaNova,
+                                              ProviderLepton,
+                                              ProviderOpenRouter,
+                                              ProviderMistral,
+                                              OpenAiBaseProvider)
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class EngineOpenAI(BaseChat):
     def __init__(self,
                  api_key: str,
-                 base_url: str = "https://api.openai.com/v1",
+                 openai_adapter: Callable = None,
+                 base_url: str = None,
                  **kwargs) -> None:
         super().__init__(**kwargs)
-        self.base_url = base_url
-        self.api_key = api_key
-        self.headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {self.api_key}',
-            'accept': 'application/json',
-            'user-agent': 'arz-magic-llm-engine',
-            **self.headers
-        }
-
-    def prepare_data(self, chat: ModelChat, **kwargs):
-        # Construct the header and data to be sent in the request.
-        messages = chat.get_messages()
-        for message in messages:
-            if message['role'] == 'user' and isinstance(message['content'], list):
-                for item in message['content']:
-                    if item.get('type') == 'text':
-                        item.pop('image_url', None)
-                    if item.get('type') == 'image_url':
-                        item.pop('text', None)
-
-        data = {
-            "model": self.model,
-            "messages": messages,
-            **kwargs,
-            **self.kwargs
-        }
-
-        if self.base_url.endswith('lepton.run/api/v1'):
-            data.update({
-                "stream_options": {
-                    "include_usage": True
-                }
-            })
-        elif self.base_url in {
-            'https://api.openai.com/v1',
-            'https://text.octoai.run/v1',
-            'https://api.sambanova.ai/v1'
-        } and data.get("stream"):
-            data.update({
-                "stream_options": {
-                    "include_usage": True
-                }
-            })
-
-        # Convert the data dictionary to a JSON string.
-        json_data = json.dumps(data).encode('utf-8')
-        return json_data, self.headers
+        if openai_adapter is None and base_url is None:
+            self.base: OpenAiBaseProvider = ProviderOpenAI(api_key=api_key, **kwargs)
+        elif base_url:
+            if 'api.groq.com' in base_url.lower():
+                self.base: OpenAiBaseProvider = ProviderGroq(api_key=api_key, **kwargs)
+            elif 'api.sambanova.ai' in base_url.lower():
+                self.base: OpenAiBaseProvider = ProviderSambaNova(api_key=api_key, **kwargs)
+            elif 'lepton.run' in base_url.lower():
+                self.base: OpenAiBaseProvider = ProviderLepton(api_key=api_key, **kwargs)
+            elif 'openrouter.ai' in base_url.lower():
+                self.base: OpenAiBaseProvider = ProviderOpenRouter(api_key=api_key, **kwargs)
+            elif 'api.mistral.ai' in base_url.lower():
+                self.base: OpenAiBaseProvider = ProviderMistral(api_key=api_key, **kwargs)
+            else:
+                self.base: OpenAiBaseProvider = ProviderOpenAI(api_key=api_key, base_url=base_url, **kwargs)
+        elif type(openai_adapter) is OpenAiBaseProvider:
+            self.base: OpenAiBaseProvider = openai_adapter(api_key=api_key, **kwargs)
 
     def prepare_http_data(self, chat: ModelChat, **kwargs):
-        data, headers = self.prepare_data(chat, **kwargs)
-        # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.base_url + '/chat/completions', data=data, headers=headers)
+        data, headers = self.base.prepare_data(chat, **kwargs)
+        return urllib.request.Request(self.base.base_url + '/chat/completions', data=data, headers=headers)
 
     def prepare_data_embedding(self, text: list[str] | str, **kwargs):
         # Construct the header and data to be sent in the request.
-
         data = {
             "input": text,
             "model": self.model,
@@ -82,7 +57,7 @@ class EngineOpenAI(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
 
         # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.base_url + '/embeddings', data=json_data, headers=self.headers)
+        return urllib.request.Request(self.base.base_url + '/embeddings', data=json_data, headers=self.headers)
 
     def prepare_response(self, r):
         if r['choices'][0]['message'].get('content'):
@@ -104,11 +79,11 @@ class EngineOpenAI(BaseChat):
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        json_data, headers = self.prepare_data(chat, **kwargs)
+        json_data, headers = self.base.prepare_data(chat, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(self.base_url + '/chat/completions',
+            async with session.post(self.base.base_url + '/chat/completions',
                                     data=json_data,
                                     headers=headers,
                                     timeout=timeout) as response:
@@ -137,10 +112,9 @@ class EngineOpenAI(BaseChat):
                                     timeout=kwargs.get('timeout')) as response:
             id_generation = ''
             last_chunk = ''
-
             for chunk in response:
                 chunk = chunk.decode('utf-8')
-                if c := self.process_chunk(chunk.strip(), id_generation, last_chunk):
+                if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
                     if c.id:
                         id_generation = c.id
                     last_chunk = c
@@ -148,10 +122,10 @@ class EngineOpenAI(BaseChat):
 
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
-        json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
+        json_data, headers = self.base.prepare_data(chat, stream=True, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
         async with aiohttp.ClientSession() as sess:
-            async with sess.post(self.base_url + '/chat/completions',
+            async with sess.post(self.base.base_url + '/chat/completions',
                                  data=json_data,
                                  headers=headers,
                                  timeout=timeout) as response:
@@ -159,7 +133,7 @@ class EngineOpenAI(BaseChat):
                 last_chunk = ''
                 async for chunk in response.content:
                     chunk = chunk.decode('utf-8')
-                    if c := self.process_chunk(chunk.strip(), id_generation, last_chunk):
+                    if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
                         if c.id:
                             id_generation = c.id
                         last_chunk = c
@@ -182,7 +156,7 @@ class EngineOpenAI(BaseChat):
             **kwargs
         }
         async with aiohttp.ClientSession() as session:
-            async with session.post(self.base_url + '/audio/speech',
+            async with session.post(self.base.base_url + '/audio/speech',
                                     headers=self.headers,
                                     json=payload) as response:
                 return await response.read()
