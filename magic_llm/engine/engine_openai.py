@@ -53,7 +53,7 @@ class EngineOpenAI(BaseChat):
         elif self.base_url in {
             'https://api.openai.com/v1',
             'https://text.octoai.run/v1',
-            'https://fast-api.snova.ai/v1'
+            'https://api.sambanova.ai/v1'
         } and data.get("stream"):
             data.update({
                 "stream_options": {

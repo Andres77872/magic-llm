@@ -177,7 +177,7 @@ class EngineGoogle(BaseChat):
                             'object': 'chat.completion.chunk',
                             'usage': {
                                 'prompt_tokens': chunk['usageMetadata']['promptTokenCount'],
-                                'completion_tokens': chunk['usageMetadata']['candidatesTokenCount'],
+                                'completion_tokens': chunk['usageMetadata'].get('candidatesTokenCount', 0),
                                 'total_tokens': chunk['usageMetadata']['totalTokenCount']
                             }
                         }
