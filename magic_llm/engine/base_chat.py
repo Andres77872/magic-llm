@@ -61,10 +61,13 @@ class BaseChat(abc.ABC):
                     start_time = time.time()
                     first_token_received = False
                     ttfb = 0
+                    generation_time = 0
+                    item = None
 
                     async for item in func(self, chat, **kwargs):
                         if not first_token_received:
                             ttfb = time.time() - start_time
+                            generation_time = time.time()
                             first_token_received = True
 
                         if item.usage.total_tokens != 0:
@@ -72,9 +75,16 @@ class BaseChat(abc.ABC):
                         if c := item.choices[0].delta.content:
                             response_content += c
                         yield item
-
+                    generation_time = time.time() - generation_time
                     ttf = time.time() - start_time - ttfb
                     meta = self._create_chat_meta_model(ttfb, ttf, usage)
+
+                    if item:
+                        item.usage.ttft = ttfb
+                        item.usage.ttf = ttf
+                        if generation_time:
+                            item.usage.tps = item.usage.completion_tokens / generation_time
+                        yield item
 
                     if self.callback:
                         await self._execute_callback(self.callback, chat, response_content, usage, self.model, meta)
@@ -105,6 +115,8 @@ class BaseChat(abc.ABC):
                     start_time = time.time()
                     first_token_received = False
                     ttfb = 0
+                    generation_time = 0
+                    item = None
 
                     for item in func(self, chat, **kwargs):
                         if not first_token_received:
@@ -116,9 +128,15 @@ class BaseChat(abc.ABC):
                         if c := item.choices[0].delta.content:
                             response_content += c
                         yield item
-
+                    generation_time = time.time() - generation_time
                     ttf = time.time() - start_time - ttfb
                     meta = self._create_chat_meta_model(ttfb, ttf, usage)
+                    if item:
+                        item.usage.ttft = ttfb
+                        item.usage.ttf = ttf
+                        if generation_time:
+                            item.usage.tps = item.usage.completion_tokens / generation_time
+                        yield item
 
                     if self.callback:
                         self.callback(chat, response_content, usage, self.model, meta)

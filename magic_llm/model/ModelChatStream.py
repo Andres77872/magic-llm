@@ -18,6 +18,9 @@ class UsageModel(BaseModel):
     prompt_tokens: Optional[int] = 0
     completion_tokens: Optional[int] = 0
     total_tokens: Optional[int] = 0
+    ttft: Optional[float] = 0
+    ttf: Optional[float] = 0
+    tps: Optional[float] = 0
 
 
 class ChatCompletionModel(BaseModel):
