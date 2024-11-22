@@ -131,42 +131,6 @@ class EngineOpenAI(BaseChat):
 
             return self.prepare_response(r)
 
-    def process_chunk(
-            self, chunk: str,
-            id_generation: str = '',
-            last_chunk: ChatCompletionModel = None
-    ) -> ChatCompletionModel:
-        if chunk.startswith('data: ') and not chunk.endswith('[DONE]'):
-            chunk = json.loads(chunk[5:])
-            if self.base_url == 'https://api.groq.com/openai/v1':
-                chunk['usage'] = chunk.get('x_groq', {}).get('usage', {})
-            else:
-                chunk['usage'] = c if (c := chunk.get('usage', {})) else {}
-            if len(chunk['choices']) == 0:
-                chunk['choices'] = [{}]
-            chunk = ChatCompletionModel(**chunk)
-            return chunk
-        else:
-            if c := chunk.strip():
-                if c == 'data: [DONE]' and self.base_url == 'https://openrouter.ai/api/v1':
-                    # delay
-                    time.sleep(3)
-                    for i in range(3):
-                        request = urllib.request.Request(f'https://openrouter.ai/api/v1/generation?id={id_generation}',
-                                                         headers=self.headers)
-                        with urllib.request.urlopen(request, timeout=2) as ses:
-                            response = ses.read().decode('utf-8')
-                            response = json.loads(response)
-                            u = response['data']
-                            usage = {
-                                'completion_tokens': u['native_tokens_completion'],
-                                'prompt_tokens': u['native_tokens_prompt'],
-                                'total_tokens': u['native_tokens_prompt'] + u['native_tokens_completion']
-                            }
-                            last_chunk.usage = UsageModel(**usage)
-                            last_chunk.choices[0].delta.content = ''
-                            return last_chunk
-
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
         with urllib.request.urlopen(self.prepare_http_data(chat, stream=True, **kwargs),
