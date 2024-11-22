@@ -4,4 +4,5 @@ from magic_llm.engine.openai_adapters.openai_sambanova import ProviderSambaNova
 from magic_llm.engine.openai_adapters.openai_lepton import ProviderLepton
 from magic_llm.engine.openai_adapters.openai_openrouter import ProviderOpenRouter
 from magic_llm.engine.openai_adapters.openai_mistral import ProviderMistral
+from magic_llm.engine.openai_adapters.openai_fireworks import ProviderFireworks
 from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
