@@ -70,3 +70,16 @@ class OpenAiBaseProvider(ABC):
                 chunk['choices'] = [{}]
             chunk = ChatCompletionModel(**chunk)
             return chunk
+        else:
+            if not chunk.endswith('[DONE]'):
+                return ChatCompletionModel(**{
+                    'id': '0',
+                    'model': 'dummy',
+                    'choices': [
+                        {
+                            'delta': {
+                                'content': chunk
+                            }
+                        }
+                    ]
+                })
