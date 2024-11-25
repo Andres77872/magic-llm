@@ -37,3 +37,4 @@ class ChatMetaModel(BaseModel):
     TTFB: float = 0
     TTF: float
     TPS: float
+    status: str = 'success'

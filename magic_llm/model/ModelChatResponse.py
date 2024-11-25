@@ -1,9 +1,9 @@
 from pydantic import BaseModel
 
+from magic_llm.model.ModelChatStream import UsageModel
+
 
 class ModelChatResponse(BaseModel):
     content: str
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
+    usage: UsageModel
     role: str
