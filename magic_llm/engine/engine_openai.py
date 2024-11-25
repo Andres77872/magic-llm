@@ -16,6 +16,7 @@ from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               OpenAiBaseProvider)
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
+from magic_llm.model.ModelChatStream import UsageModel
 
 
 class EngineOpenAI(BaseChat):
@@ -66,18 +67,22 @@ class EngineOpenAI(BaseChat):
         if r['choices'][0]['message'].get('content'):
             return ModelChatResponse(**{
                 'content': r['choices'][0]['message']['content'],
-                'prompt_tokens': r['usage']['prompt_tokens'],
-                'completion_tokens': r['usage']['completion_tokens'],
-                'total_tokens': r['usage']['total_tokens'],
-                'role': 'assistant'
+                'role': 'assistant',
+                'usage': UsageModel(
+                    prompt_tokens=r['usage']['prompt_tokens'],
+                    completion_tokens=r['usage']['completion_tokens'],
+                    total_tokens=r['usage']['total_tokens']
+                )
             })
         else:  # interpret as function calling
             return ModelChatResponse(**{
                 'content': r['choices'][0]['message']['tool_calls'][0]['function']['arguments'],
-                'prompt_tokens': r['usage']['prompt_tokens'],
-                'completion_tokens': r['usage']['completion_tokens'],
-                'total_tokens': r['usage']['total_tokens'],
-                'role': 'assistant'
+                'role': 'assistant',
+                'usage': UsageModel(
+                    prompt_tokens=r['usage']['prompt_tokens'],
+                    completion_tokens=r['usage']['completion_tokens'],
+                    total_tokens=r['usage']['total_tokens']
+                )
             })
 
     @BaseChat.async_intercept_generate
@@ -90,9 +95,9 @@ class EngineOpenAI(BaseChat):
                                     data=json_data,
                                     headers=headers,
                                     timeout=timeout) as response:
+                response.raise_for_status()
                 response_data = await response.read()
                 encoding = response.charset or 'utf-8'
-
                 r = json.loads(response_data.decode(encoding))
                 return self.prepare_response(r)
 
@@ -132,6 +137,7 @@ class EngineOpenAI(BaseChat):
                                  data=json_data,
                                  headers=headers,
                                  timeout=timeout) as response:
+                response.raise_for_status()
                 id_generation = ''
                 last_chunk = ''
                 async for chunk in response.content:

@@ -6,7 +6,7 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatStream import ChatCompletionModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class EngineCohere(BaseChat):
@@ -25,7 +25,7 @@ class EngineCohere(BaseChat):
             'user-agent': 'arz-magic-llm-engine',
             **self.headers
         }
-        messages = chat.get_messages()
+        messages = chat.get_messages().copy()
         mp = {'user': 'User', 'assistant': 'Chatbot'}
         if 'system' in messages[0]['role']:
             preamble = messages.pop(0)['content']
@@ -66,10 +66,12 @@ class EngineCohere(BaseChat):
 
                 return ModelChatResponse(**{
                     'content': r['text'],
-                    'prompt_tokens': r['meta']['tokens']['input_tokens'],
-                    'completion_tokens': r['meta']['tokens']['input_tokens'] + r['meta']['tokens']['output_tokens'],
-                    'total_tokens': r['meta']['tokens']['output_tokens'],
-                    'role': 'assistant'
+                    'role': 'assistant',
+                    'usage': UsageModel(
+                        prompt_tokens=r['meta']['tokens']['input_tokens'],
+                        completion_tokens=r['meta']['tokens']['output_tokens'],
+                        total_tokens=r['meta']['tokens']['input_tokens'] + r['meta']['tokens']['output_tokens'],
+                    )
                 })
 
     @BaseChat.sync_intercept_generate
@@ -82,10 +84,12 @@ class EngineCohere(BaseChat):
 
             return ModelChatResponse(**{
                 'content': r['text'],
-                'prompt_tokens': r['meta']['tokens']['input_tokens'],
-                'completion_tokens': r['meta']['tokens']['input_tokens'] + r['meta']['tokens']['output_tokens'],
-                'total_tokens': r['meta']['tokens']['output_tokens'],
-                'role': 'assistant'
+                'role': 'assistant',
+                'usage': UsageModel(
+                    prompt_tokens=r['meta']['tokens']['input_tokens'],
+                    completion_tokens=r['meta']['tokens']['output_tokens'],
+                    total_tokens=r['meta']['tokens']['input_tokens'] + r['meta']['tokens']['output_tokens'],
+                )
             })
 
     @BaseChat.sync_intercept_stream_generate

@@ -6,7 +6,7 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatStream import ChatCompletionModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class EngineCloudFlare(BaseChat):
@@ -57,10 +57,12 @@ class EngineCloudFlare(BaseChat):
 
                 return ModelChatResponse(**{
                     'content': r,
-                    'prompt_tokens': 0,
-                    'completion_tokens': 0,
-                    'total_tokens': 0,
-                    'role': 'assistant'
+                    'role': 'assistant',
+                    'usage': UsageModel(
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        total_tokens=0,
+                    )
                 })
 
     @BaseChat.sync_intercept_generate
@@ -76,10 +78,12 @@ class EngineCloudFlare(BaseChat):
 
             return ModelChatResponse(**{
                 'content': r,
-                'prompt_tokens': 0,
-                'completion_tokens': 0,
-                'total_tokens': 0,
-                'role': 'assistant'
+                'role': 'assistant',
+                'usage': UsageModel(
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                )
             })
 
     @BaseChat.sync_intercept_stream_generate
@@ -90,7 +94,6 @@ class EngineCloudFlare(BaseChat):
                     event = event[5:].strip()
                     if event != b'[DONE]':
                         event = json.loads(event.decode('utf-8'))
-                        # print(event)
                         chunk = {
                             'id': '1',
                             'choices':

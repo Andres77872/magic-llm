@@ -6,7 +6,7 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatStream import ChatCompletionModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class EngineGoogle(BaseChat):
@@ -18,11 +18,6 @@ class EngineGoogle(BaseChat):
         self.url_stream = f'{base}{self.model}:streamGenerateContent?alt=sse&key={api_key}'
         self.url = f'{base}{self.model}:generateContent?key={api_key}'
         self.api_key = api_key
-
-    def count_tokens(self, json_data: bytes, headers: dict) -> int:
-        url_counter = f'https://generativelanguage.googleapis.com/v1beta/models/{self.model}:countTokens?key={self.api_key}'
-        request = urllib.request.Request(url_counter, data=json_data, headers=headers, method='POST')
-        return json.loads(urllib.request.urlopen(request).read().decode('utf'))['totalTokens']
 
     def prepare_data(self, chat: ModelChat, **kwargs):
         # Construct the header and data to be sent in the request.
@@ -75,24 +70,16 @@ class EngineGoogle(BaseChat):
                 encoding = response.charset or 'utf-8'
 
                 # Decode the response.
-                r = json.loads(response_data.decode(encoding))
-                r = r['candidates'][0]['content']['parts'][0]['text']
-                prompt_tokens = self.count_tokens(json_data, headers)
-                data['contents'].append(
-                    {
-                        "role": 'model',
-                        "parts": [{'text': r}]
-                    }
-                )
-                json_data = json.dumps(data).encode('utf-8')
-                completion_tokens = self.count_tokens(json_data, headers)
-
+                data = json.loads(response_data.decode(encoding))
+                content = data['candidates'][0]['content']['parts'][0]['text']
                 return ModelChatResponse(**{
-                    'content': r,
-                    'prompt_tokens': prompt_tokens,
-                    'completion_tokens': completion_tokens - prompt_tokens,
-                    'total_tokens': completion_tokens,
-                    'role': 'assistant'
+                    'content': content,
+                    'role': 'assistant',
+                    'usage': UsageModel(
+                        prompt_tokens=data['usageMetadata']['promptTokenCount'],
+                        completion_tokens=data['usageMetadata']['candidatesTokenCount'],
+                        total_tokens=data['usageMetadata']['totalTokenCount']
+                    )
                 })
 
     @BaseChat.sync_intercept_generate
@@ -104,24 +91,16 @@ class EngineGoogle(BaseChat):
             encoding = response.info().get_content_charset('utf-8')
 
             # Decode the response.
-            r = json.loads(response_data.decode(encoding))
-            r = r['candidates'][0]['content']['parts'][0]['text']
-            prompt_tokens = self.count_tokens(json_data, headers)
-            data['contents'].append(
-                {
-                    "role": 'model',
-                    "parts": [{'text': r}]
-                }
-            )
-            json_data = json.dumps(data).encode('utf-8')
-            completion_tokens = self.count_tokens(json_data, headers)
-
+            data = json.loads(response_data.decode(encoding))
+            content = data['candidates'][0]['content']['parts'][0]['text']
             return ModelChatResponse(**{
-                'content': r,
-                'prompt_tokens': prompt_tokens,
-                'completion_tokens': completion_tokens - prompt_tokens,
-                'total_tokens': completion_tokens,
-                'role': 'assistant'
+                'content': content,
+                'role': 'assistant',
+                'usage': UsageModel(
+                    prompt_tokens=data['usageMetadata']['promptTokenCount'],
+                    completion_tokens=data['usageMetadata']['candidatesTokenCount'],
+                    total_tokens=data['usageMetadata']['totalTokenCount']
+                )
             })
 
     @BaseChat.sync_intercept_stream_generate
@@ -147,7 +126,7 @@ class EngineGoogle(BaseChat):
                         'object': 'chat.completion.chunk',
                         'usage': {
                             'prompt_tokens': chunk['usageMetadata']['promptTokenCount'],
-                            'completion_tokens': chunk['usageMetadata']['candidatesTokenCount'],
+                            'completion_tokens': chunk['usageMetadata'].get('candidatesTokenCount', 0),
                             'total_tokens': chunk['usageMetadata']['totalTokenCount']
                         }
                     }
@@ -158,6 +137,7 @@ class EngineGoogle(BaseChat):
         json_data, headers, _ = self.prepare_data(chat, **kwargs)
         async with aiohttp.ClientSession() as session:
             async with session.post(self.url_stream, data=json_data, headers=headers) as response:
+                response.raise_for_status()
                 async for chunk in response.content:
                     if chunk.strip():
                         chunk = chunk.strip()

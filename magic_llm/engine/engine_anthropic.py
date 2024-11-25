@@ -6,7 +6,7 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatStream import ChatCompletionModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class EngineAnthropic(BaseChat):
@@ -93,6 +93,9 @@ class EngineAnthropic(BaseChat):
             **kwargs,
             **self.kwargs
         }
+        if 'max_tokens' not in data:
+            data['max_tokens'] = 4096
+
         if preamble:
             data['system'] = preamble
 
@@ -124,10 +127,12 @@ class EngineAnthropic(BaseChat):
                 r = json.loads(response_data.decode(encoding))
                 return ModelChatResponse(**{
                     'content': r['content'][0]['text'],
-                    'prompt_tokens': r['usage']['input_tokens'],
-                    'completion_tokens': r['usage']['output_tokens'],
-                    'total_tokens': r['usage']['input_tokens'] + r['usage']['output_tokens'],
-                    'role': 'assistant'
+                    'role': 'assistant',
+                    'usage': UsageModel(
+                        prompt_tokens=r['usage']['input_tokens'],
+                        completion_tokens=r['usage']['output_tokens'],
+                        total_tokens=r['usage']['input_tokens'] + r['usage']['output_tokens'],
+                    )
                 })
 
     @BaseChat.sync_intercept_generate
@@ -138,10 +143,12 @@ class EngineAnthropic(BaseChat):
             r = json.loads(response_data.decode(encoding))
             return ModelChatResponse(**{
                 'content': r['content'][0]['text'],
-                'prompt_tokens': r['usage']['input_tokens'],
-                'completion_tokens': r['usage']['output_tokens'],
-                'total_tokens': r['usage']['input_tokens'] + r['usage']['output_tokens'],
-                'role': 'assistant'
+                'role': 'assistant',
+                'usage': UsageModel(
+                    prompt_tokens=r['usage']['input_tokens'],
+                    completion_tokens=r['usage']['output_tokens'],
+                    total_tokens=r['usage']['input_tokens'] + r['usage']['output_tokens'],
+                )
             })
 
     @BaseChat.sync_intercept_stream_generate

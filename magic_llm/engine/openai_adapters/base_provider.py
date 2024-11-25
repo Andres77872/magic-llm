@@ -71,15 +71,16 @@ class OpenAiBaseProvider(ABC):
             chunk = ChatCompletionModel(**chunk)
             return chunk
         else:
-            if not chunk.endswith('[DONE]') and not chunk.lower().startswith(': ping'):
-                return ChatCompletionModel(**{
-                    'id': '0',
-                    'model': 'dummy',
-                    'choices': [
-                        {
-                            'delta': {
-                                'content': chunk
+            if chunk.strip():
+                if not chunk.endswith('[DONE]') and not chunk.lower().startswith(': ping'):
+                    return ChatCompletionModel(**{
+                        'id': '0',
+                        'model': 'dummy',
+                        'choices': [
+                            {
+                                'delta': {
+                                    'content': chunk
+                                }
                             }
-                        }
-                    ]
-                })
+                        ]
+                    })

@@ -81,26 +81,32 @@ class EngineAmazon(BaseChat):
             if self.model.startswith('amazon'):
                 return ModelChatResponse(**{
                     'content': r['results'][0]['outputText'],
-                    'prompt_tokens': r['inputTextTokenCount'],
-                    'completion_tokens': r['results'][0]['tokenCount'],
-                    'total_tokens': r['inputTextTokenCount'] + r['results'][0]['tokenCount'],
-                    'role': 'assistant'
+                    'role': 'assistant',
+                    'usage': UsageModel(
+                        prompt_tokens=r['inputTextTokenCount'],
+                        completion_tokens=r['results'][0]['tokenCount'],
+                        total_tokens=r['inputTextTokenCount'] + r['results'][0]['tokenCount'],
+                    )
                 })
             elif self.model.startswith('anthropic'):
                 return ModelChatResponse(**{
                     'content': r['completion'],
-                    'prompt_tokens': len(chat.generic_chat(format='claude')),
-                    'completion_tokens': len(r['completion']),
-                    'total_tokens': len(chat.generic_chat(format='claude')) + len(r['completion']),
-                    'role': 'assistant'
+                    'role': 'assistant',
+                    'usage': UsageModel(
+                        prompt_tokens=len(chat.generic_chat(format='claude')),
+                        completion_tokens=len(r['completion']),
+                        total_tokens=len(chat.generic_chat(format='claude')) + len(r['completion'])
+                    )
                 })
             elif self.model.startswith('meta'):
                 return ModelChatResponse(**{
                     'content': r['generation'],
-                    'prompt_tokens': r['prompt_token_count'],
-                    'completion_tokens': r['generation_token_count'],
-                    'total_tokens': r['prompt_token_count'] + r['generation_token_count'],
-                    'role': 'assistant'
+                    'role': 'assistant',
+                    'usage': UsageModel(
+                        prompt_tokens=r['prompt_token_count'],
+                        completion_tokens=r['generation_token_count'],
+                        total_tokens=r['prompt_token_count'] + r['generation_token_count']
+                    )
                 })
 
     @BaseChat.sync_intercept_generate
@@ -112,31 +118,35 @@ class EngineAmazon(BaseChat):
 
         r = json.loads(response.get('body').read())
 
-        # print(r)
-
         if self.model.startswith('amazon'):
             return ModelChatResponse(**{
                 'content': r['results'][0]['outputText'],
-                'prompt_tokens': r['inputTextTokenCount'],
-                'completion_tokens': r['results'][0]['tokenCount'],
-                'total_tokens': r['inputTextTokenCount'] + r['results'][0]['tokenCount'],
-                'role': 'assistant'
+                'role': 'assistant',
+                'usage': UsageModel(
+                    prompt_tokens=r['inputTextTokenCount'],
+                    completion_tokens=r['results'][0]['tokenCount'],
+                    total_tokens=r['inputTextTokenCount'] + r['results'][0]['tokenCount'],
+                )
             })
         elif self.model.startswith('anthropic'):
             return ModelChatResponse(**{
                 'content': r['completion'],
-                'prompt_tokens': len(chat.generic_chat(format='claude')),
-                'completion_tokens': len(r['completion']),
-                'total_tokens': len(chat.generic_chat(format='claude')) + len(r['completion']),
-                'role': 'assistant'
+                'role': 'assistant',
+                'usage': UsageModel(
+                    prompt_tokens=len(chat.generic_chat(format='claude')),
+                    completion_tokens=len(r['completion']),
+                    total_tokens=len(chat.generic_chat(format='claude')) + len(r['completion'])
+                )
             })
         elif self.model.startswith('meta'):
             return ModelChatResponse(**{
                 'content': r['generation'],
-                'prompt_tokens': r['prompt_token_count'],
-                'completion_tokens': r['generation_token_count'],
-                'total_tokens': r['prompt_token_count'] + r['generation_token_count'],
-                'role': 'assistant'
+                'role': 'assistant',
+                'usage': UsageModel(
+                    prompt_tokens=r['prompt_token_count'],
+                    completion_tokens=r['generation_token_count'],
+                    total_tokens=r['prompt_token_count'] + r['generation_token_count']
+                )
             })
 
     @BaseChat.sync_intercept_stream_generate

@@ -154,14 +154,38 @@ class BaseChat(abc.ABC):
                     break
 
                 except Exception as e:
-                    logger.error(f"Stream generation attempt {attempt + 1} failed: {e}")
+                    er = f"Stream generation attempt {attempt + 1} failed: {e}"
+                    logger.error(er)
+                    await self._execute_callback(chat,
+                                                 response_content,
+                                                 usage,
+                                                 ChatMetaModel(
+                                                     TTFB=time.time() - metrics.start_time,
+                                                     TTF=0,
+                                                     TPS=0,
+                                                     status='ERROR: ' + er))
+
                     if attempt == self.retry_config.attempts - 1:
                         fallback = self._handle_fallback(is_async=True)
                         if fallback:
                             async for i in fallback(chat):
                                 yield i
                         else:
-                            await self._execute_callback(chat, response_content, usage, None)
+                            yield ChatCompletionModel(**{
+                                'model': self.model,
+                                'id': 'id',
+                                'choices': [
+                                    {
+                                        'delta': {
+                                            'content': er,
+                                            'role': None
+                                        },
+                                        'finish_reason': None,
+                                        'index': 0
+                                    }
+                                ]
+                            }
+                                                      )
                     else:
                         await asyncio.sleep(self.retry_config.delay)
 
@@ -207,13 +231,21 @@ class BaseChat(abc.ABC):
                     break
 
                 except Exception as e:
-                    logger.error(f"Sync stream generation attempt {attempt + 1} failed: {e}")
+                    er = f"Sync stream generation attempt {attempt + 1} failed: {e}"
+                    logger.error(er)
+                    asyncio.run(self._execute_callback(chat,
+                                                       response_content,
+                                                       usage,
+                                                       ChatMetaModel(
+                                                           TTFB=time.time() - metrics.start_time,
+                                                           TTF=0,
+                                                           TPS=0,
+                                                           status='ERROR: ' + er)))
+
                     if attempt == self.retry_config.attempts - 1:
                         fallback = self._handle_fallback(is_async=False)
                         if fallback:
                             yield from fallback(chat)
-                        else:
-                            asyncio.run(self._execute_callback(chat, response_content, usage, None))
                     else:
                         time.sleep(self.retry_config.delay)
 
@@ -224,27 +256,35 @@ class BaseChat(abc.ABC):
         @functools.wraps(func)
         async def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
             for attempt in range(self.retry_config.attempts):
+                start_time = time.time()
+                usage = None
                 try:
-                    start_time = time.time()
                     response = await func(self, chat, **kwargs)
                     ttf = time.time() - start_time
 
-                    usage = UsageModel(
-                        prompt_tokens=response.prompt_tokens,
-                        completion_tokens=response.completion_tokens,
-                        total_tokens=response.total_tokens,
-                    )
+                    usage = response.usage
                     meta = self._create_chat_meta_model(0, ttf, usage)
+                    usage.tps = meta.TPS
+                    usage.ttf = meta.TTF
+                    usage.ttft = meta.TTFB
+
                     await self._execute_callback(chat, response.content, usage, meta)
                     return response
 
                 except Exception as e:
-                    logger.error(f"Async generation attempt {attempt + 1} failed: {e}")
+                    er = f"Async generation attempt {attempt + 1} failed: {e}"
+                    logger.error(er)
+                    await self._execute_callback(chat,
+                                                 None,
+                                                 usage,
+                                                 ChatMetaModel(
+                                                     TTFB=time.time() - start_time,
+                                                     TTF=0,
+                                                     TPS=0,
+                                                     status='ERROR: ' + er))
                     if attempt == self.retry_config.attempts - 1:
                         if self.fallback:
                             return await self.fallback.llm.async_generate(chat)
-                        await self._execute_callback(chat, "", None, None)
-                        raise ChatException("All retry attempts failed") from e
                     await asyncio.sleep(self.retry_config.delay)
 
         return wrapper
@@ -254,27 +294,35 @@ class BaseChat(abc.ABC):
         @functools.wraps(func)
         def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
             for attempt in range(self.retry_config.attempts):
+                usage = None
+                start_time = time.time()
                 try:
-                    start_time = time.time()
                     response = func(self, chat, **kwargs)
                     ttf = time.time() - start_time
 
-                    usage = UsageModel(
-                        prompt_tokens=response.prompt_tokens,
-                        completion_tokens=response.completion_tokens,
-                        total_tokens=response.total_tokens,
-                    )
+                    usage = response.usage
                     meta = self._create_chat_meta_model(0, ttf, usage)
+                    usage.tps = meta.TPS
+                    usage.ttf = meta.TTF
+                    usage.ttft = meta.TTFB
                     asyncio.run(self._execute_callback(chat, response.content, usage, meta))
                     return response
 
                 except Exception as e:
-                    logger.error(f"Sync generation attempt {attempt + 1} failed: {e}")
+                    er = f"Sync generation attempt {attempt + 1} failed: {e}"
+                    logger.error(er)
+                    asyncio.run(self._execute_callback(chat,
+                                                       None,
+                                                       usage,
+                                                       ChatMetaModel(
+                                                           TTFB=time.time() - start_time,
+                                                           TTF=0,
+                                                           TPS=0,
+                                                           status='ERROR: ' + er)))
+
                     if attempt == self.retry_config.attempts - 1:
                         if self.fallback:
                             return self.fallback.llm.generate(chat)
-                        asyncio.run(self._execute_callback(chat, "", None, None))
-                        raise ChatException("All retry attempts failed") from e
                     time.sleep(self.retry_config.delay)
 
         return wrapper
