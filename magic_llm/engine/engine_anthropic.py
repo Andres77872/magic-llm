@@ -56,7 +56,7 @@ class EngineAnthropic(BaseChat):
             'Content-Type': 'application/json',
             'x-api-key': self.api_key,
             'anthropic-version': '2023-06-01',
-            'anthropic-beta': 'messages-2023-12-15',
+            'anthropic-beta': 'messages-2023-12-15,pdfs-2024-09-25',
             'accept': 'application/json',
             'user-agent': 'arz-magic-llm-engine',
             **self.headers
@@ -75,8 +75,9 @@ class EngineAnthropic(BaseChat):
                 for j in i['content']:
                     if j['type'] == 'text':
                         j.pop('image_url', None)
+                        j.pop('document', None)
                         k.append(j)
-                    else:
+                    elif j['type'] == 'image':
                         k.append({
                             'type': 'image',
                             'source': {
@@ -85,6 +86,8 @@ class EngineAnthropic(BaseChat):
                                 'data': j['image_url']['url'].split(',')[1]
                             }
                         })
+                    else:
+                        k.append(j)
                 i['content'] = k
                 anthropic_chat.append(i)
         data = {
