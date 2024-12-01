@@ -9,8 +9,8 @@ from magic_llm.engine import (EngineOpenAI,
 class MagicLlmBase:
     def __init__(self,
                  engine: str,
-                 model: str,
                  private_key: str | None,
+                 model: str | None = None,
                  **kwargs):
         self.private_key = private_key
         if engine == 'openai':

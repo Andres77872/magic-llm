@@ -37,7 +37,7 @@ class ChatException(Exception):
 class BaseChat(abc.ABC):
     def __init__(
             self,
-            model: str,
+            model: str | None,
             headers: Optional[dict] = None,
             callback: Optional[Callable] = None,
             fallback: Optional[Callable] = None,
@@ -68,6 +68,7 @@ class BaseChat(abc.ABC):
             chat: ModelChat,
             response_content: str,
             usage: Optional[UsageModel],
+            model: str,
             meta: Optional[ChatMetaModel]
     ) -> None:
         """Execute callback with proper async/sync handling."""
@@ -76,7 +77,7 @@ class BaseChat(abc.ABC):
 
         try:
             if asyncio.iscoroutinefunction(self.callback):
-                await self.callback(chat, response_content, usage, self.model, meta)
+                await self.callback(chat, response_content, usage, model, meta)
             else:
                 await asyncio.get_event_loop().run_in_executor(
                     self.executor,
@@ -84,7 +85,7 @@ class BaseChat(abc.ABC):
                     chat,
                     response_content,
                     usage,
-                    self.model,
+                    model,
                     meta
                 )
         except Exception as e:
@@ -118,6 +119,7 @@ class BaseChat(abc.ABC):
     def async_intercept_stream_generate(func: Callable[..., Awaitable[AsyncIterator[ChatCompletionModel]]]):
         @functools.wraps(func)
         async def wrapper(self, chat: ModelChat, **kwargs) -> AsyncIterator[ChatCompletionModel]:
+            model = self.model or kwargs.get('model')
             usage = None
             response_content = ''
             metrics = Metrics()
@@ -150,7 +152,7 @@ class BaseChat(abc.ABC):
                             metrics.calculate_ttf(),
                             usage
                         )
-                        await self._execute_callback(chat, response_content, usage, meta)
+                        await self._execute_callback(chat, response_content, usage, model, meta)
                     break
 
                 except Exception as e:
@@ -159,6 +161,7 @@ class BaseChat(abc.ABC):
                     await self._execute_callback(chat,
                                                  response_content,
                                                  usage,
+                                                 model,
                                                  ChatMetaModel(
                                                      TTFB=time.time() - metrics.start_time,
                                                      TTF=0,
@@ -195,6 +198,7 @@ class BaseChat(abc.ABC):
     def sync_intercept_stream_generate(func: Callable[..., Iterator[ChatCompletionModel]]):
         @functools.wraps(func)
         def wrapper(self, chat: ModelChat, **kwargs) -> Iterator[ChatCompletionModel]:
+            model = self.model or kwargs.get('model')
             usage = None
             response_content = ''
             metrics = Metrics()
@@ -227,7 +231,7 @@ class BaseChat(abc.ABC):
                             metrics.calculate_ttf(),
                             usage
                         )
-                        asyncio.run(self._execute_callback(chat, response_content, usage, meta))
+                        asyncio.run(self._execute_callback(chat, response_content, usage, model, meta))
                     break
 
                 except Exception as e:
@@ -236,6 +240,7 @@ class BaseChat(abc.ABC):
                     asyncio.run(self._execute_callback(chat,
                                                        response_content,
                                                        usage,
+                                                       model,
                                                        ChatMetaModel(
                                                            TTFB=time.time() - metrics.start_time,
                                                            TTF=0,
@@ -255,6 +260,7 @@ class BaseChat(abc.ABC):
     def async_intercept_generate(func: Callable[..., Awaitable[ModelChatResponse]]):
         @functools.wraps(func)
         async def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+            model = self.model or kwargs.get('model')
             for attempt in range(self.retry_config.attempts):
                 start_time = time.time()
                 usage = None
@@ -268,7 +274,7 @@ class BaseChat(abc.ABC):
                     usage.ttf = meta.TTF
                     usage.ttft = meta.TTFB
 
-                    await self._execute_callback(chat, response.content, usage, meta)
+                    await self._execute_callback(chat, response.content, usage, model, meta)
                     return response
 
                 except Exception as e:
@@ -277,6 +283,7 @@ class BaseChat(abc.ABC):
                     await self._execute_callback(chat,
                                                  None,
                                                  usage,
+                                                 model,
                                                  ChatMetaModel(
                                                      TTFB=time.time() - start_time,
                                                      TTF=0,
@@ -293,6 +300,7 @@ class BaseChat(abc.ABC):
     def sync_intercept_generate(func: Callable[..., ModelChatResponse]):
         @functools.wraps(func)
         def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+            model = self.model or kwargs.get('model')
             for attempt in range(self.retry_config.attempts):
                 usage = None
                 start_time = time.time()
@@ -305,7 +313,7 @@ class BaseChat(abc.ABC):
                     usage.tps = meta.TPS
                     usage.ttf = meta.TTF
                     usage.ttft = meta.TTFB
-                    asyncio.run(self._execute_callback(chat, response.content, usage, meta))
+                    asyncio.run(self._execute_callback(chat, response.content, usage, model, meta))
                     return response
 
                 except Exception as e:
@@ -314,6 +322,7 @@ class BaseChat(abc.ABC):
                     asyncio.run(self._execute_callback(chat,
                                                        None,
                                                        usage,
+                                                       model,
                                                        ChatMetaModel(
                                                            TTFB=time.time() - start_time,
                                                            TTF=0,

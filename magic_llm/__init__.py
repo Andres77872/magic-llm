@@ -1,14 +1,14 @@
 from magic_llm.base import MagicLlmBase
 from typing import Callable, Optional
 
-__version__ = '0.0.76'
+__version__ = '0.0.77'
 
 
 class MagicLLM(MagicLlmBase):
 
     def __init__(self,
                  engine: str,
-                 model: str,
+                 model: str | None = None,
                  private_key: str | None = None,
                  callback: Optional[Callable] = None,
                  **kwargs):
