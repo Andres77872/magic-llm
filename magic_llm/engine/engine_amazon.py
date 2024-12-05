@@ -35,7 +35,22 @@ class EngineAmazon(BaseChat):
         )
 
     def prepare_data(self, chat: ModelChat, **kwargs):
-        if self.model.startswith('amazon'):
+        if self.model.startswith('amazon.nova'):
+            m = chat.get_messages()
+            for i in m:
+                i['content'] = [{
+                    "text": i['content']
+                }]
+            body = json.dumps({
+                "messages": m,
+                "inferenceConfig": {
+                    "max_new_tokens": kwargs.get('max_new_tokens', 4096),
+                    "temperature": kwargs.get('temperature', 1),
+                    "topP": kwargs.get('topP', 1)
+                }
+            })
+
+        elif self.model.startswith('amazon'):
             body = json.dumps({
                 "inputText": chat.generic_chat(format='titan'),
                 "textGenerationConfig": {
@@ -61,6 +76,7 @@ class EngineAmazon(BaseChat):
                 "max_gen_len": kwargs.get('max_gen_len', 1024),
                 "temperature": kwargs.get('temperature', 0.2),
                 "top_p": kwargs.get('top_p', 1),
+                # "stop_sequences": kwargs.get('stop_sequences', ["[/INST]"]),
             })
         else:
             raise Exception("Unknown model")
@@ -208,6 +224,29 @@ class EngineAmazon(BaseChat):
                 'model': self.model,
                 'object': 'chat.completion.chunk'
             }
+        elif self.model.startswith('amazon.nova'):
+            chunk = {
+                'id': '1',
+                'choices':
+                    [{
+                        'delta':
+                            {
+                                'content': event.get('contentBlockDelta', {}).get('delta', {}).get('text'),
+                                'role': None
+                            },
+                        'finish_reason': 'stop' if event.get('messageStop', {}).get(
+                            'stopReason') == 'end_turn' else None,
+                        'index': event.get('index')
+                    }],
+                'created': int(time.time()),
+                'model': self.model,
+                'object': 'chat.completion.chunk'
+            }
+            if c := chunk.get('metadata', {}).get('usage'):
+                chunk['usage'] = UsageModel(prompt_tokens=c['inputTokens'],
+                                            completion_tokens=c['outputTokens'],
+                                            total_tokens=c['inputTokens'] + c['outputTokens'])
+
         elif self.model.startswith('amazon'):
             chunk = {
                 'id': '1',
