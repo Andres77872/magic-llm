@@ -14,10 +14,24 @@ class ChoiceModel(BaseModel):
     finish_reason: Optional[Any] = None
 
 
+class PromptTokensDetailsModel(BaseModel):
+    cached_tokens: Optional[int] = 0
+    audio_tokens: Optional[int] = 0
+
+
+class CompletionsTokensDetailsModel(BaseModel):
+    reasoning_tokens: Optional[int] = 0
+    audio_tokens: Optional[int] = 0
+    accepted_prediction_tokens: Optional[int] = 0
+    rejected_prediction_tokens: Optional[int] = 0
+
+
 class UsageModel(BaseModel):
     prompt_tokens: Optional[int] = 0
     completion_tokens: Optional[int] = 0
     total_tokens: Optional[int] = 0
+    prompt_tokens_details: Optional[PromptTokensDetailsModel] = PromptTokensDetailsModel()
+    completion_tokens_details: Optional[CompletionsTokensDetailsModel] = CompletionsTokensDetailsModel()
     ttft: Optional[float] = 0
     ttf: Optional[float] = 0
     tps: Optional[float] = 0
