@@ -24,7 +24,7 @@ class EngineAnthropic(BaseChat):
             idx = event['message']['id']
             meta = event['message']['usage']
             usage = {
-                "prompt_tokens": meta['input_tokens'],
+                "prompt_tokens": meta['input_tokens'] + meta.get('cache_read_input_tokens', 0),
                 "completion_tokens": meta['output_tokens'],
                 "total_tokens": meta['input_tokens'] + meta['output_tokens'],
                 "prompt_tokens_details": {'cached_tokens': meta['cache_read_input_tokens']}
