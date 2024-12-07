@@ -26,7 +26,8 @@ class EngineAnthropic(BaseChat):
             usage = {
                 "prompt_tokens": meta['input_tokens'],
                 "completion_tokens": meta['output_tokens'],
-                "total_tokens": meta['input_tokens'] + meta['output_tokens']
+                "total_tokens": meta['input_tokens'] + meta['output_tokens'],
+                "prompt_tokens_details": {'cached_tokens': meta['cache_read_input_tokens']}
             }
         if event['type'] == 'message_delta':
             finish_reason = event['delta']['stop_reason']
@@ -56,7 +57,7 @@ class EngineAnthropic(BaseChat):
             'Content-Type': 'application/json',
             'x-api-key': self.api_key,
             'anthropic-version': '2023-06-01',
-            'anthropic-beta': 'messages-2023-12-15,pdfs-2024-09-25',
+            'anthropic-beta': 'messages-2023-12-15,pdfs-2024-09-25, prompt-caching-2024-07-31',
             'accept': 'application/json',
             'user-agent': 'arz-magic-llm-engine',
             **self.headers
@@ -69,7 +70,11 @@ class EngineAnthropic(BaseChat):
         anthropic_chat = []
         for i in messages:
             if type(i['content']) is str:
-                anthropic_chat.append(i)
+                i['content'] = [{
+                    "type": "text",
+                    "text": i['content']
+                }]
+                t = i
             else:
                 k = []
                 for j in i['content']:
@@ -89,7 +94,28 @@ class EngineAnthropic(BaseChat):
                     else:
                         k.append(j)
                 i['content'] = k
-                anthropic_chat.append(i)
+                t = i
+            anthropic_chat.append(t)
+        ###
+        result = []
+        user_turns_processed = 0
+        for turn in reversed(anthropic_chat):
+            if turn["role"] == "user" and user_turns_processed < 2:
+                result.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": turn["content"][0]["text"],
+                            "cache_control": {"type": "ephemeral"}
+                        }
+                    ]
+                })
+                user_turns_processed += 1
+            else:
+                result.append(turn)
+        anthropic_chat = list(reversed(result))
+        ###
         data = {
             "model": self.model,
             "messages": anthropic_chat,
