@@ -24,9 +24,14 @@ class EngineAnthropic(BaseChat):
             idx = event['message']['id']
             meta = event['message']['usage']
             usage = {
-                "prompt_tokens": meta['input_tokens'] + meta.get('cache_read_input_tokens', 0) + meta.get('cache_creation_input_tokens', 0),
+                "prompt_tokens": meta['input_tokens'] +
+                                 meta.get('cache_read_input_tokens', 0) +
+                                 meta.get('cache_creation_input_tokens', 0),
                 "completion_tokens": meta['output_tokens'],
-                "total_tokens": meta['input_tokens'] + meta['output_tokens'],
+                "total_tokens": meta['input_tokens'] +
+                                meta['output_tokens'] +
+                                meta.get('cache_read_input_tokens', 0) +
+                                meta.get('cache_creation_input_tokens', 0),
                 "prompt_tokens_details": {'cached_tokens': meta['cache_read_input_tokens']}
             }
         if event['type'] == 'message_delta':
@@ -100,7 +105,7 @@ class EngineAnthropic(BaseChat):
         result = []
         user_turns_processed = 0
         for turn in reversed(anthropic_chat):
-            if turn["role"] == "user" and user_turns_processed < 2:
+            if turn["role"] == "user" and user_turns_processed < 3:
                 result.append({
                     "role": "user",
                     "content": [
