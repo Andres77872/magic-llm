@@ -87,7 +87,7 @@ class EngineAnthropic(BaseChat):
                         j.pop('image_url', None)
                         j.pop('document', None)
                         k.append(j)
-                    elif j['type'] == 'image':
+                    elif j['type'] == 'image_url':
                         k.append({
                             'type': 'image',
                             'source': {
@@ -106,15 +106,19 @@ class EngineAnthropic(BaseChat):
         user_turns_processed = 0
         for turn in reversed(anthropic_chat):
             if turn["role"] == "user" and user_turns_processed < 3:
+                t = []
+                for i in turn["content"]:
+                    if i["type"] == "text":
+                        t.append({
+                            "type": "text",
+                            "text": i["text"],
+                            "cache_control": {"type": "ephemeral"}
+                        })
+                    else:
+                        t.append(i)
                 result.append({
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": turn["content"][0]["text"],
-                            "cache_control": {"type": "ephemeral"}
-                        }
-                    ]
+                    "content": t
                 })
                 user_turns_processed += 1
             else:
