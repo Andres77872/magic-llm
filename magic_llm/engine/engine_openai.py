@@ -162,13 +162,12 @@ class EngineOpenAI(BaseChat):
             raise e
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
-
         payload = {
             **data.model_dump(),
             **kwargs
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(self.base.base_url + '/audio/speech',
-                                    headers=self.headers,
+                                    headers=self.base.headers,
                                     json=payload) as response:
                 return await response.read()

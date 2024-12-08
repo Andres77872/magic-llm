@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChatMetaModel
 
 logger = logging.getLogger(__name__)
@@ -183,12 +184,11 @@ class BaseChat(abc.ABC):
                                             'content': er,
                                             'role': None
                                         },
-                                        'finish_reason': None,
+                                        'finish_reason': f'error: {er}',
                                         'index': 0
                                     }
                                 ]
-                            }
-                                                      )
+                            })
                     else:
                         await asyncio.sleep(self.retry_config.delay)
 
@@ -360,11 +360,11 @@ class BaseChat(abc.ABC):
         """Generate embeddings for the given text."""
         pass
 
-    async def async_audio_speech(**kwargs) -> Any:
+    async def async_audio_speech(self, speech_request: AudioSpeechRequest, **kwargs) -> Any:
         """Generate audio speech asynchronously."""
         pass
 
-    def audio_speech(self, speech_request: Any, **kwargs) -> Any:
+    def audio_speech(self, speech_request: AudioSpeechRequest, **kwargs) -> Any:
         """Generate audio speech synchronously."""
         pass
 
