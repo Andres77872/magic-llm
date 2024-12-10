@@ -3,7 +3,8 @@ from magic_llm.engine import (EngineOpenAI,
                               EngineCloudFlare,
                               EngineAmazon,
                               EngineCohere,
-                              EngineAnthropic)
+                              EngineAnthropic,
+                              EngineAzure)
 
 
 class MagicLlmBase:
@@ -46,5 +47,10 @@ class MagicLlmBase:
             self.llm = EngineAnthropic(
                 model=model,
                 api_key=private_key,
+                **kwargs
+            )
+        elif engine == 'azure':
+            self.llm = EngineAzure(
+                model=model,
                 **kwargs
             )
