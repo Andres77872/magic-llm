@@ -3,7 +3,7 @@ from typing import Dict, Tuple
 import json
 
 from magic_llm.model import ModelChat
-from magic_llm.model.ModelAudio import AudioSpeechRequest
+from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
 
 
@@ -87,4 +87,7 @@ class OpenAiBaseProvider(ABC):
                     })
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
+        raise NotImplementedError
+
+    async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
         raise NotImplementedError

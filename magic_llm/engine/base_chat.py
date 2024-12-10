@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelAudio import AudioSpeechRequest
+from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChatMetaModel
 
 logger = logging.getLogger(__name__)
@@ -372,3 +372,7 @@ class BaseChat(abc.ABC):
         """Cleanup resources."""
         if hasattr(self, 'executor'):
             self.executor.shutdown(wait=False)
+
+    async def async_audio_transcriptions(self, speech_request: AudioTranscriptionsRequest, **kwargs) -> Any:
+        """Generate audio transcriptions asynchronously."""
+        pass

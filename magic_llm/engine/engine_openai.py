@@ -17,7 +17,7 @@ from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               ProviderDeepInfra,
                                               OpenAiBaseProvider)
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelAudio import AudioSpeechRequest
+from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import UsageModel
 
 
@@ -166,3 +166,6 @@ class EngineOpenAI(BaseChat):
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
         return await self.base.async_audio_speech(data)
+
+    async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
+        return await self.base.async_audio_transcriptions(data)
