@@ -19,6 +19,7 @@ class ProviderDeepInfra(OpenAiBaseProvider):
             'preset_voice': data.voice,
             'text': data.input,
             'output_format': 'wav',
+            'speed': data.speed,
             **kwargs
         }
         async with aiohttp.ClientSession() as session:
