@@ -1,7 +1,9 @@
 import json
+import aiohttp
 
 from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
 from magic_llm.model import ModelChat
+from magic_llm.model.ModelAudio import AudioSpeechRequest
 
 
 class ProviderOpenAI(OpenAiBaseProvider):
@@ -23,3 +25,14 @@ class ProviderOpenAI(OpenAiBaseProvider):
                 }
             })
         return json.dumps(data).encode('utf-8'), headers
+
+    async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
+        payload = {
+            **data.model_dump(),
+            **kwargs
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(self.base_url + '/audio/speech',
+                                    headers=self.headers,
+                                    json=payload) as response:
+                return await response.read()
