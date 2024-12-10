@@ -14,6 +14,7 @@ from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               ProviderMistral,
                                               ProviderFireworks,
                                               ProviderDeepseek,
+                                              ProviderDeepInfra,
                                               OpenAiBaseProvider)
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
@@ -44,6 +45,8 @@ class EngineOpenAI(BaseChat):
                 self.base: OpenAiBaseProvider = ProviderFireworks(api_key=api_key, **kwargs)
             elif 'api.deepseek.com' in base_url.lower():
                 self.base: OpenAiBaseProvider = ProviderDeepseek(api_key=api_key, **kwargs)
+            elif 'api.deepinfra.com/v1' in base_url.lower():
+                self.base: OpenAiBaseProvider = ProviderDeepInfra(api_key=api_key, **kwargs)
             else:
                 self.base: OpenAiBaseProvider = ProviderOpenAI(api_key=api_key, base_url=base_url, **kwargs)
         elif type(openai_adapter) is OpenAiBaseProvider:
@@ -162,4 +165,4 @@ class EngineOpenAI(BaseChat):
             raise e
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
-        return self.base.async_audio_speech(data)
+        return await self.base.async_audio_speech(data)

@@ -7,3 +7,4 @@ from magic_llm.engine.openai_adapters.openai_mistral import ProviderMistral
 from magic_llm.engine.openai_adapters.openai_fireworks import ProviderFireworks
 from magic_llm.engine.openai_adapters.openai_deepseek import ProviderDeepseek
 from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
+from magic_llm.engine.openai_adapters.openai_deepinfra import ProviderDeepInfra

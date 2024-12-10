@@ -5,7 +5,7 @@ from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
 from magic_llm.model.ModelAudio import AudioSpeechRequest
 
 
-class ProviderOpenAI(OpenAiBaseProvider):
+class ProviderDeepInfra(OpenAiBaseProvider):
     def __init__(self,
                  base_url: str = "https://api.deepinfra.com/v1/openai",
                  **kwargs):
