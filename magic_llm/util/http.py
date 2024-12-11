@@ -36,10 +36,11 @@ class AsyncHttpClient:
         """
         if not self.session:
             raise RuntimeError("Session not initialized. Use 'with' block or call 'connect()'.")
-
+        timeout = aiohttp.ClientTimeout(total=kwargs.pop('timeout', None))
         async with self.session.request(
                 method,
                 url,
+                timeout=timeout,
                 **kwargs,
         ) as response:
             response.raise_for_status()

@@ -76,12 +76,11 @@ class EngineGoogle(BaseChat):
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         request, json_data, headers, data = self.prepare_http_data(chat, stream=False, **kwargs)
-        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
         async with AsyncHttpClient() as client:
             response = await client.post_raw_binary(url=self.url,
                                                     data=json_data,
                                                     headers=headers,
-                                                    timeout=timeout)
+                                                    timeout=kwargs.get('timeout'))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate

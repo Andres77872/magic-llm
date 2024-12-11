@@ -95,12 +95,11 @@ class EngineOpenAI(BaseChat):
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self.base.prepare_data(chat, **kwargs)
-        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
         async with AsyncHttpClient() as client:
             response = await client.post_raw_binary(url=self.base.base_url + '/chat/completions',
                                                     data=json_data,
                                                     headers=headers,
-                                                    timeout=timeout)
+                                                    timeout=kwargs.get('timeout'))
             encoding = 'utf-8'
             r = json.loads(response.decode(encoding))
             return self.prepare_response(r)

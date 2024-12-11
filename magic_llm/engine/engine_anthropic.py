@@ -166,13 +166,11 @@ class EngineAnthropic(BaseChat):
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self.prepare_data(chat, **kwargs)
-        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
-
         async with AsyncHttpClient() as client:
             response = await client.post_raw_binary(url=self.base_url,
                                                     data=json_data,
                                                     headers=headers,
-                                                    timeout=timeout)
+                                                    timeout=kwargs.get('timeout'))
 
             return self.process_generate(response)
 
