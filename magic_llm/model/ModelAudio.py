@@ -11,7 +11,7 @@ class AudioSpeechRequest(BaseModel):
 
 class AudioTranscriptionsRequest(BaseModel):
     file: bytes
-    model: str
+    model: Optional[str] = None
     language: Optional[str] = None
     prompt: Optional[str] = None
     response_format: Optional[str] = 'json'

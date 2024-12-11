@@ -2,7 +2,7 @@ import base64
 
 from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
-from magic_llm.util.http import async_http_post_json
+from magic_llm.util.http import AsyncHttpClient
 
 
 class ProviderDeepInfra(OpenAiBaseProvider):
@@ -22,21 +22,23 @@ class ProviderDeepInfra(OpenAiBaseProvider):
             'speed': data.speed,
             **kwargs
         }
-
-        response_json = await async_http_post_json(url=self.base_url.replace('/openai', '') + '/inference/deepinfra/tts',
-                                                   json=payload,
-                                                   headers=self.headers)
-
-        encoded_audio = response_json.get("audio")
-        if encoded_audio and encoded_audio.startswith("data:audio/wav;base64,"):
-            encoded_audio = encoded_audio.split(",")[1]
-        audio_content = base64.b64decode(encoded_audio)
-        return audio_content
+        url = self.base_url.replace('/openai', '') + '/inference/deepinfra/tts'
+        async with AsyncHttpClient() as client:
+            response = await client.post_raw_binary(url=url,
+                                                    json=payload,
+                                                    headers=self.headers)
+            encoded_audio = response.get("audio")
+            if encoded_audio and encoded_audio.startswith("data:audio/wav;base64,"):
+                encoded_audio = encoded_audio.split(",")[1]
+            audio_content = base64.b64decode(encoded_audio)
+            return audio_content
 
     async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
         headers = {
             "Authorization": self.headers.get("Authorization")
         }
-        return await async_http_post_json(url=self.base_url + '/audio/transcriptions',
-                                          data=self.prepare_transcriptions(data),
-                                          headers=headers)
+        async with AsyncHttpClient() as client:
+            response = await client.post_raw_binary(url=self.base_url + '/audio/transcriptions',
+                                                    data=self.prepare_transcriptions(data),
+                                                    headers=headers)
+            return response

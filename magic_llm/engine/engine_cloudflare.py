@@ -7,7 +7,7 @@ import time
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
-from magic_llm.util.http import async_http_post_raw_binary
+from magic_llm.util.http import AsyncHttpClient
 
 
 class EngineCloudFlare(BaseChat):
@@ -60,11 +60,12 @@ class EngineCloudFlare(BaseChat):
         json_data, headers = self.prepare_data(chat, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
 
-        response = await async_http_post_raw_binary(url=self.url,
+        async with AsyncHttpClient() as client:
+            response = await client.post_raw_binary(url=self.url,
                                                     data=json_data,
                                                     headers=headers,
                                                     timeout=timeout)
-        return self.process_generate(response)
+            return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
