@@ -1,8 +1,7 @@
-import aiohttp
-
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
+from magic_llm.util.http import async_http_post_raw_binary
 
 
 class EngineAzure(BaseChat):
@@ -49,11 +48,6 @@ class EngineAzure(BaseChat):
             "User-Agent": "magic-audio https://arz.ai",
         }
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.base_url,
-                                    headers=headers,
-                                    data=ssml_template.strip()) as response:
-                response.raise_for_status()
-                # Return the raw binary content of the response
-                audio_content = await response.read()
-                return audio_content
+        return await async_http_post_raw_binary(url=self.base_url,
+                                                headers=headers,
+                                                data=ssml_template.strip())
