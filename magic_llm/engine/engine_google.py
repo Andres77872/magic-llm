@@ -7,6 +7,7 @@ import time
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.util.http import async_http_post_raw_binary
 
 
 class EngineGoogle(BaseChat):
@@ -56,31 +57,32 @@ class EngineGoogle(BaseChat):
         return urllib.request.Request(self.url_stream if stream else self.url, data=json_data, headers=headers,
                                       method='POST'), json_data, headers, data
 
+    def process_generate(self, response):
+        encoding = 'utf-8'
+
+        # Decode the response.
+        data = json.loads(response.decode(encoding))
+        content = data['candidates'][0]['content']['parts'][0]['text']
+        return ModelChatResponse(**{
+            'content': content,
+            'role': 'assistant',
+            'usage': UsageModel(
+                prompt_tokens=data['usageMetadata']['promptTokenCount'],
+                completion_tokens=data['usageMetadata']['candidatesTokenCount'],
+                total_tokens=data['usageMetadata']['totalTokenCount']
+            )
+        })
+
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         request, json_data, headers, data = self.prepare_http_data(chat, stream=False, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.url,
-                                    data=json_data,
-                                    headers=headers,
-                                    timeout=timeout) as response:
-                response_data = await response.read()
-                encoding = response.charset or 'utf-8'
-
-                # Decode the response.
-                data = json.loads(response_data.decode(encoding))
-                content = data['candidates'][0]['content']['parts'][0]['text']
-                return ModelChatResponse(**{
-                    'content': content,
-                    'role': 'assistant',
-                    'usage': UsageModel(
-                        prompt_tokens=data['usageMetadata']['promptTokenCount'],
-                        completion_tokens=data['usageMetadata']['candidatesTokenCount'],
-                        total_tokens=data['usageMetadata']['totalTokenCount']
-                    )
-                })
+        response = await async_http_post_raw_binary(url=self.url,
+                                                    data=json_data,
+                                                    headers=headers,
+                                                    timeout=timeout)
+        return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
@@ -88,20 +90,7 @@ class EngineGoogle(BaseChat):
         # Make the request and read the response.
         with urllib.request.urlopen(request) as response:
             response_data = response.read()
-            encoding = response.info().get_content_charset('utf-8')
-
-            # Decode the response.
-            data = json.loads(response_data.decode(encoding))
-            content = data['candidates'][0]['content']['parts'][0]['text']
-            return ModelChatResponse(**{
-                'content': content,
-                'role': 'assistant',
-                'usage': UsageModel(
-                    prompt_tokens=data['usageMetadata']['promptTokenCount'],
-                    completion_tokens=data['usageMetadata']['candidatesTokenCount'],
-                    total_tokens=data['usageMetadata']['totalTokenCount']
-                )
-            })
+            return self.process_generate(response_data)
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):

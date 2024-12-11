@@ -7,6 +7,7 @@ import time
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.util.http import async_http_post_raw_binary
 
 
 class EngineCohere(BaseChat):
@@ -50,47 +51,37 @@ class EngineCohere(BaseChat):
         # Create a request object with the URL, data, and headers.
         return urllib.request.Request(self.base_url, data=json_data, headers=headers)
 
+    def process_generate(self, response):
+        encoding = 'utf-8'
+        r = json.loads(response.decode(encoding))
+
+        return ModelChatResponse(**{
+            'content': r['text'],
+            'role': 'assistant',
+            'usage': UsageModel(
+                prompt_tokens=r['meta']['tokens']['input_tokens'],
+                completion_tokens=r['meta']['tokens']['output_tokens'],
+                total_tokens=r['meta']['tokens']['input_tokens'] + r['meta']['tokens']['output_tokens'],
+            )
+        })
+
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self.prepare_data(chat, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.base_url,
-                                    data=json_data,
-                                    headers=headers,
-                                    timeout=timeout) as response:
-                response_data = await response.read()
-                encoding = response.charset or 'utf-8'
-                r = json.loads(response_data.decode(encoding))
-
-                return ModelChatResponse(**{
-                    'content': r['text'],
-                    'role': 'assistant',
-                    'usage': UsageModel(
-                        prompt_tokens=r['meta']['tokens']['input_tokens'],
-                        completion_tokens=r['meta']['tokens']['output_tokens'],
-                        total_tokens=r['meta']['tokens']['input_tokens'] + r['meta']['tokens']['output_tokens'],
-                    )
-                })
+        response = await async_http_post_raw_binary(url=self.base_url,
+                                                    data=json_data,
+                                                    headers=headers,
+                                                    timeout=timeout)
+        return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
         with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs)) as response:
             response_data = response.read()
-            encoding = response.info().get_content_charset('utf-8')
-            r = json.loads(response_data.decode(encoding))
-
-            return ModelChatResponse(**{
-                'content': r['text'],
-                'role': 'assistant',
-                'usage': UsageModel(
-                    prompt_tokens=r['meta']['tokens']['input_tokens'],
-                    completion_tokens=r['meta']['tokens']['output_tokens'],
-                    total_tokens=r['meta']['tokens']['input_tokens'] + r['meta']['tokens']['output_tokens'],
-                )
-            })
+            return self.process_generate(response_data)
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):

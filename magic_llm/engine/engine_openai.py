@@ -19,6 +19,7 @@ from magic_llm.engine.openai_adapters import (ProviderOpenAI,
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import UsageModel
+from magic_llm.util.http import async_http_post_raw_binary
 
 
 class EngineOpenAI(BaseChat):
@@ -96,16 +97,13 @@ class EngineOpenAI(BaseChat):
         json_data, headers = self.base.prepare_data(chat, **kwargs)
         timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.base.base_url + '/chat/completions',
-                                    data=json_data,
-                                    headers=headers,
-                                    timeout=timeout) as response:
-                response.raise_for_status()
-                response_data = await response.read()
-                encoding = response.charset or 'utf-8'
-                r = json.loads(response_data.decode(encoding))
-                return self.prepare_response(r)
+        response = await async_http_post_raw_binary(url=self.base.base_url + '/chat/completions',
+                                                    data=json_data,
+                                                    headers=headers,
+                                                    timeout=timeout)
+        encoding = 'utf-8'
+        r = json.loads(response.decode(encoding))
+        return self.prepare_response(r)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
