@@ -93,8 +93,18 @@ class EngineAmazon(BaseChat):
             )
 
             r = json.loads(await response['body'].read())
-
-            if self.model.startswith('amazon'):
+            if self.model.startswith('amazon.nova'):
+                u = r.get('usage', {})
+                return ModelChatResponse(**{
+                    'content': r['output']['message']['content'][0]['text'],
+                    'role': 'assistant',
+                    'usage': UsageModel(
+                        prompt_tokens=u['inputTokens'],
+                        completion_tokens=u['outputTokens'],
+                        total_tokens=u['totalTokens']
+                    )
+                })
+            elif self.model.startswith('amazon'):
                 return ModelChatResponse(**{
                     'content': r['results'][0]['outputText'],
                     'role': 'assistant',
@@ -134,7 +144,18 @@ class EngineAmazon(BaseChat):
 
         r = json.loads(response.get('body').read())
 
-        if self.model.startswith('amazon'):
+        if self.model.startswith('amazon.nova'):
+            u = r.get('usage', {})
+            return ModelChatResponse(**{
+                'content': r['output']['message']['content'][0]['text'],
+                'role': 'assistant',
+                'usage': UsageModel(
+                    prompt_tokens=u['inputTokens'],
+                    completion_tokens=u['outputTokens'],
+                    total_tokens=u['totalTokens']
+                )
+            })
+        elif self.model.startswith('amazon'):
             return ModelChatResponse(**{
                 'content': r['results'][0]['outputText'],
                 'role': 'assistant',
