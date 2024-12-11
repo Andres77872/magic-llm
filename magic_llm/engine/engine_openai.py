@@ -3,8 +3,6 @@ import json
 import urllib.request
 from typing import Callable
 
-import aiohttp
-
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               ProviderGroq,
@@ -134,22 +132,21 @@ class EngineOpenAI(BaseChat):
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self.base.prepare_data(chat, stream=True, **kwargs)
-        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
-        async with aiohttp.ClientSession() as sess:
-            async with sess.post(self.base.base_url + '/chat/completions',
-                                 data=json_data,
-                                 headers=headers,
-                                 timeout=timeout) as response:
-                response.raise_for_status()
-                id_generation = ''
-                last_chunk = ''
-                async for chunk in response.content:
-                    chunk = chunk.decode('utf-8')
-                    if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
-                        if c.id:
-                            id_generation = c.id
-                        last_chunk = c
-                        yield c
+        async with AsyncHttpClient() as client:
+            id_generation = ''
+            last_chunk = ''
+            async for chunk in client.post_stream(
+                    self.base.base_url + '/chat/completions',
+                    data=json_data,
+                    headers=headers,
+                    timeout=kwargs.get('timeout')
+            ):
+                chunk = chunk.decode('utf-8')
+                if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
+                    if c.id:
+                        id_generation = c.id
+                    last_chunk = c
+                    yield c
 
     def embedding(self, text: list[str] | str, **kwargs):
         try:

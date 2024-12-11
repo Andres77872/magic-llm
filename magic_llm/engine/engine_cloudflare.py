@@ -1,5 +1,4 @@
 # https://developers.cloudflare.com/workers-ai/models/text-generation
-import aiohttp
 import json
 import urllib.request
 import time
@@ -100,27 +99,30 @@ class EngineCloudFlare(BaseChat):
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self.prepare_data(chat, **kwargs, stream=True)
-        timeout = aiohttp.ClientTimeout(total=kwargs.get('timeout'))
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.url, data=json_data, headers=headers, timeout=timeout) as response:
-                async for event in response.content:
-                    if event != b'\n':
-                        event = event[5:].strip()
-                        if event != b'[DONE]':
-                            event = json.loads(event.decode('utf-8'))
-                            chunk = {
-                                'id': '1',
-                                'choices': [{
-                                    'delta': {
-                                        'content': event['response'],
-                                        'role': None
-                                    },
-                                    'finish_reason': None,
-                                    'index': 0
-                                }],
-                                'created': int(time.time()),
-                                'model': self.model,
-                                'object': 'chat.completion.chunk'
-                            }
-                            yield ChatCompletionModel(**chunk)
+        async with AsyncHttpClient() as client:
+            async for event in client.post_stream(
+                    self.url,
+                    data=json_data,
+                    headers=headers,
+                    timeout=kwargs.get('timeout')
+            ):
+                if event != b'\n':
+                    event = event[5:].strip()
+                    if event != b'[DONE]':
+                        event = json.loads(event.decode('utf-8'))
+                        chunk = {
+                            'id': '1',
+                            'choices': [{
+                                'delta': {
+                                    'content': event['response'],
+                                    'role': None
+                                },
+                                'finish_reason': None,
+                                'index': 0
+                            }],
+                            'created': int(time.time()),
+                            'model': self.model,
+                            'object': 'chat.completion.chunk'
+                        }
+                        yield ChatCompletionModel(**chunk)

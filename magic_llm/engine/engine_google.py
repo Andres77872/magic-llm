@@ -1,5 +1,4 @@
 # https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini?hl=es-419
-import aiohttp
 import json
 import urllib.request
 import time
@@ -123,30 +122,33 @@ class EngineGoogle(BaseChat):
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers, _ = self.prepare_data(chat, **kwargs)
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.url_stream, data=json_data, headers=headers) as response:
-                response.raise_for_status()
-                async for chunk in response.content:
-                    if chunk.strip():
-                        chunk = chunk.strip()
-                        chunk = json.loads(chunk[5:].strip())
-                        chunk = {
-                            'id': '1',
-                            'choices': [{
-                                'delta': {
-                                    'content': chunk['candidates'][0]['content']['parts'][0]['text'],
-                                    'role': 'assistant'
-                                },
-                                'finish_reason': None,
-                                'index': 0
-                            }],
-                            'created': int(time.time()),
-                            'model': self.model,
-                            'object': 'chat.completion.chunk',
-                            'usage': {
-                                'prompt_tokens': chunk['usageMetadata']['promptTokenCount'],
-                                'completion_tokens': chunk['usageMetadata'].get('candidatesTokenCount', 0),
-                                'total_tokens': chunk['usageMetadata']['totalTokenCount']
-                            }
+
+        async with AsyncHttpClient() as client:
+            async for chunk in client.post_stream(
+                    self.url_stream,
+                    data=json_data,
+                    headers=headers
+            ):
+                if chunk.strip():
+                    chunk = chunk.strip().decode('utf-8')
+                    chunk = json.loads(chunk[5:].strip())
+                    chunk = {
+                        'id': '1',
+                        'choices': [{
+                            'delta': {
+                                'content': chunk['candidates'][0]['content']['parts'][0]['text'],
+                                'role': 'assistant'
+                            },
+                            'finish_reason': None,
+                            'index': 0
+                        }],
+                        'created': int(time.time()),
+                        'model': self.model,
+                        'object': 'chat.completion.chunk',
+                        'usage': {
+                            'prompt_tokens': chunk['usageMetadata']['promptTokenCount'],
+                            'completion_tokens': chunk['usageMetadata'].get('candidatesTokenCount', 0),
+                            'total_tokens': chunk['usageMetadata']['totalTokenCount']
                         }
-                        yield ChatCompletionModel(**chunk)
+                    }
+                    yield ChatCompletionModel(**chunk)

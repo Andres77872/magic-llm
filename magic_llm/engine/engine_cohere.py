@@ -1,5 +1,4 @@
 # https://docs.cohere.com/reference/chat
-import aiohttp
 import json
 import urllib.request
 import time
@@ -117,35 +116,39 @@ class EngineCohere(BaseChat):
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self.prepare_data(chat, **kwargs, stream=True)
-        async with aiohttp.ClientSession() as session:
-            async with session.post(self.base_url, data=json_data, headers=headers) as response:
-                idx = None
-                usage = None
-                async for chunk in response.content:
-                    if chunk:
-                        if c := self.process_chunk(chunk.decode().strip(), idx, usage):
-                            idx = c[1]
-                            usage = c[2]
-                            if c[0]:
-                                yield c[0]
-                chunk = {
-                    'id': idx,
-                    'choices':
-                        [{
-                            'delta':
-                                {
-                                    'content': '',
-                                    'role': None
-                                },
-                            'finish_reason': None,
-                            'index': 0
-                        }],
-                    'created': int(time.time()),
-                    'model': self.model,
-                    'usage': usage,
-                    'object': 'chat.completion.chunk'
-                }
-                yield ChatCompletionModel(**chunk)
+
+        async with AsyncHttpClient() as client:
+            idx = None
+            usage = None
+            async for chunk in client.post_stream(
+                    self.base_url,
+                    data=json_data,
+                    headers=headers
+            ):
+                if chunk:
+                    if c := self.process_chunk(chunk.decode().strip(), idx, usage):
+                        idx = c[1]
+                        usage = c[2]
+                        if c[0]:
+                            yield c[0]
+
+            # Final chunk after the stream is complete
+            chunk = {
+                'id': idx,
+                'choices': [{
+                    'delta': {
+                        'content': '',
+                        'role': None
+                    },
+                    'finish_reason': None,
+                    'index': 0
+                }],
+                'created': int(time.time()),
+                'model': self.model,
+                'usage': usage,
+                'object': 'chat.completion.chunk'
+            }
+            yield ChatCompletionModel(**chunk)
 
     def process_chunk(self, chunk: str, idx, usage):
         chunk, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage)
