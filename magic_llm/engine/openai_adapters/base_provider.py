@@ -8,6 +8,7 @@ import aiohttp
 from magic_llm.model import ModelChat
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
+from magic_llm.util.http import AsyncHttpClient
 
 
 class OpenAiBaseProvider(ABC):
@@ -112,4 +113,11 @@ class OpenAiBaseProvider(ABC):
         raise NotImplementedError
 
     async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
-        raise NotImplementedError
+        headers = {
+            "Authorization": self.headers.get("Authorization")
+        }
+        async with AsyncHttpClient() as client:
+            response = await client.post_json(url=self.base_url + '/audio/transcriptions',
+                                              data=self.prepare_transcriptions(data),
+                                              headers=headers)
+            return response

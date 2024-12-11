@@ -1,9 +1,7 @@
 import json
 
 from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
-from magic_llm.model.ModelAudio import AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
-from magic_llm.util.http import AsyncHttpClient
 
 
 class ProviderGroq(OpenAiBaseProvider):
@@ -25,13 +23,3 @@ class ProviderGroq(OpenAiBaseProvider):
                 chunk['choices'] = [{}]
             chunk = ChatCompletionModel(**chunk)
             return chunk
-
-    async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
-        headers = {
-            "Authorization": self.headers.get("Authorization")
-        }
-        async with AsyncHttpClient() as client:
-            response = await client.post_json(url=self.base_url + '/audio/transcriptions',
-                                              data=self.prepare_transcriptions(data),
-                                              headers=headers)
-            return response

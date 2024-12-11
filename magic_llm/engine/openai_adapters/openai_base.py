@@ -2,7 +2,7 @@ import json
 
 from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
 from magic_llm.model import ModelChat
-from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
+from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.util.http import AsyncHttpClient
 
 
@@ -37,14 +37,4 @@ class ProviderOpenAI(OpenAiBaseProvider):
                 url=self.base_url + '/audio/speech',
                 json=payload,
                 headers=self.headers)
-            return response
-
-    async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
-        headers = {
-            "Authorization": self.headers.get("Authorization")
-        }
-        async with AsyncHttpClient() as client:
-            response = await client.post_json(url=self.base_url + '/audio/transcriptions',
-                                              data=self.prepare_transcriptions(data),
-                                              headers=headers)
             return response
