@@ -137,7 +137,7 @@ class EngineOpenAI(BaseChat):
             }
             response = client.post_json(url=self.base.base_url + '/embeddings',
                                         data=data,
-                                        headers=self.headers)
+                                        headers=self.base.headers)
             return response
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):

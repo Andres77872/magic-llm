@@ -148,7 +148,8 @@ class HttpClient:
         :raises: requests.exceptions.RequestException
         """
         self._ensure_session()
-
+        if (d := kwargs.get('data')) and isinstance(d, dict):
+            kwargs['data'] = json.dumps(d)
         try:
             response = self.session.request(method, url, **kwargs)
             response.raise_for_status()
@@ -202,7 +203,8 @@ class HttpClient:
 
         # Set stream=True for streaming response
         kwargs['stream'] = True
-
+        if (d := kwargs.get('data')) and isinstance(d, dict):
+            kwargs['data'] = json.dumps(d)
         try:
             with self.session.request(method, url, **kwargs) as response:
                 response.raise_for_status()
