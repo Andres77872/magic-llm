@@ -1,6 +1,5 @@
 # https://cookbook.openai.com/examples/how_to_format_inputs_to_chatgpt_models
 import json
-import urllib.request
 from typing import Callable
 
 from magic_llm.engine.base_chat import BaseChat
@@ -17,7 +16,7 @@ from magic_llm.engine.openai_adapters import (ProviderOpenAI,
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import UsageModel
-from magic_llm.util.http import AsyncHttpClient
+from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class EngineOpenAI(BaseChat):
@@ -50,23 +49,6 @@ class EngineOpenAI(BaseChat):
                 self.base: OpenAiBaseProvider = ProviderOpenAI(api_key=api_key, base_url=base_url, **kwargs)
         elif type(openai_adapter) is OpenAiBaseProvider:
             self.base: OpenAiBaseProvider = openai_adapter(api_key=api_key, **kwargs)
-
-    def prepare_http_data(self, chat: ModelChat, **kwargs):
-        data, headers = self.base.prepare_data(chat, **kwargs)
-        return urllib.request.Request(self.base.base_url + '/chat/completions', data=data, headers=headers)
-
-    def prepare_data_embedding(self, text: list[str] | str, **kwargs):
-        # Construct the header and data to be sent in the request.
-        data = {
-            "input": text,
-            "model": self.model,
-            **kwargs
-        }
-        # Convert the data dictionary to a JSON string.
-        json_data = json.dumps(data).encode('utf-8')
-
-        # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.base.base_url + '/embeddings', data=json_data, headers=self.headers)
 
     def prepare_response(self, r):
         if r['choices'][0]['message'].get('content'):
@@ -105,24 +87,24 @@ class EngineOpenAI(BaseChat):
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_http_data(chat, stream=False, **kwargs),
-                                    timeout=kwargs.get('timeout')) as response:
-            response_data = response.read()
-            encoding = response.info().get_content_charset('utf-8')
-
-            # Decode and print the response.
-            r = json.loads(response_data.decode(encoding))
-
-            return self.prepare_response(r)
+        data, headers = self.base.prepare_data(chat, **kwargs)
+        with HttpClient() as client:
+            response = client.post_json(url=self.base.base_url + '/chat/completions',
+                                        data=data,
+                                        headers=headers)
+            return self.prepare_response(response)
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
-        with urllib.request.urlopen(self.prepare_http_data(chat, stream=True, **kwargs),
-                                    timeout=kwargs.get('timeout')) as response:
+        data, headers = self.base.prepare_data(chat, stream=True, **kwargs)
+        with HttpClient() as client:
             id_generation = ''
             last_chunk = ''
-            for chunk in response:
-                chunk = chunk.decode('utf-8')
+            for chunk in client.stream_request("POST",
+                                               self.base.base_url + '/chat/completions',
+                                               data=data,
+                                               headers=headers,
+                                               timeout=kwargs.get('timeout')):
                 if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
                     if c.id:
                         id_generation = c.id
@@ -135,12 +117,10 @@ class EngineOpenAI(BaseChat):
         async with AsyncHttpClient() as client:
             id_generation = ''
             last_chunk = ''
-            async for chunk in client.post_stream(
-                    self.base.base_url + '/chat/completions',
-                    data=json_data,
-                    headers=headers,
-                    timeout=kwargs.get('timeout')
-            ):
+            async for chunk in client.post_stream(self.base.base_url + '/chat/completions',
+                                                  data=json_data,
+                                                  headers=headers,
+                                                  timeout=kwargs.get('timeout')):
                 chunk = chunk.decode('utf-8')
                 if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
                     if c.id:
@@ -149,14 +129,16 @@ class EngineOpenAI(BaseChat):
                     yield c
 
     def embedding(self, text: list[str] | str, **kwargs):
-        try:
-            with urllib.request.urlopen(self.prepare_data_embedding(text, **kwargs),
-                                        timeout=kwargs.get('timeout')) as response:
-                data = response.read().decode('utf-8')
-                return data
-        except urllib.request.HTTPError as e:
-            print(e.read())
-            raise e
+        with HttpClient() as client:
+            data = {
+                "input": text,
+                "model": self.model,
+                **kwargs
+            }
+            response = client.post_json(url=self.base.base_url + '/embeddings',
+                                        data=data,
+                                        headers=self.headers)
+            return response
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
         return await self.base.async_audio_speech(data)
