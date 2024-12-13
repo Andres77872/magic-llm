@@ -1,7 +1,9 @@
-import json
-
 import aiohttp
-from typing import Any
+import json
+from typing import Any, Generator
+
+import requests
+from requests import RequestException
 
 
 class AsyncHttpClient:
@@ -106,3 +108,111 @@ class AsyncHttpClient:
         """
         async for chunk in self.stream_request("POST", url, **kwargs):
             yield chunk
+
+
+class HttpClient:
+    """
+    A reusable HTTP client for making requests using the requests library.
+    """
+
+    def __init__(self):
+        self.session = None
+
+    def __enter__(self):
+        self.session = requests.Session()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            self.session.close()
+            self.session = None
+
+    def _ensure_session(self):
+        """Ensures the session is initialized."""
+        if not self.session:
+            raise RuntimeError("Session not initialized. Use 'with' block.")
+
+    def request(
+            self,
+            method: str,
+            url: str,
+            **kwargs,
+    ) -> bytes:
+        """
+        Makes an HTTP request.
+
+        :param method: The HTTP method (e.g., 'POST', 'GET', etc.).
+        :param url: The endpoint URL.
+        :param kwargs: Additional arguments for requests.
+        :return: The response content as bytes.
+        :raises: requests.exceptions.RequestException
+        """
+        self._ensure_session()
+
+        try:
+            response = self.session.request(method, url, **kwargs)
+            response.raise_for_status()
+            return response.content
+        except RequestException as e:
+            # Preserve the original error but add more context if possible
+            if hasattr(e.response, 'content'):
+                error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
+                raise type(e)(error_message) from None
+            raise
+
+    def post_json(self, url: str, **kwargs) -> Any:
+        """
+        Sends a POST request with a JSON payload and returns the parsed JSON response.
+
+        :param url: The endpoint URL.
+        :param kwargs: Additional arguments for the `request` method.
+        :return: The parsed JSON response.
+        :raises: requests.exceptions.RequestException, json.JSONDecodeError
+        """
+        response = self.request("POST", url, **kwargs)
+        return json.loads(response.decode('utf-8'))
+
+    def post_raw_binary(self, url: str, **kwargs) -> bytes:
+        """
+        Sends a POST request and returns the raw binary response.
+
+        :param url: The endpoint URL.
+        :param kwargs: Additional arguments for the `request` method.
+        :return: The raw binary response content.
+        :raises: requests.exceptions.RequestException
+        """
+        return self.request("POST", url, **kwargs)
+
+    def stream_request(
+            self,
+            method: str,
+            url: str,
+            **kwargs
+    ) -> Generator[str, None, None]:
+        """
+        Makes a streaming HTTP request.
+
+        :param method: The HTTP method (e.g., 'POST', 'GET', etc.).
+        :param url: The endpoint URL.
+        :param kwargs: Additional arguments for requests.
+        :yield: Lines of text from the response.
+        :raises: requests.exceptions.RequestException
+        """
+        self._ensure_session()
+
+        # Set stream=True for streaming response
+        kwargs['stream'] = True
+
+        try:
+            with self.session.request(method, url, **kwargs) as response:
+                response.raise_for_status()
+                # yield from response.iter_lines(decode_unicode=False)
+                for line in response.iter_lines(decode_unicode=False):
+                    if line:
+                        yield line.decode('utf-8')
+        except RequestException as e:
+            # Add context to the error if possible
+            if hasattr(e.response, 'content'):
+                error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
+                raise type(e)(error_message) from None
+            raise
