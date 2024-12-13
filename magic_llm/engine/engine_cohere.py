@@ -1,12 +1,11 @@
 # https://docs.cohere.com/reference/chat
 import json
-import urllib.request
 import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
-from magic_llm.util.http import AsyncHttpClient
+from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class EngineCohere(BaseChat):
@@ -45,15 +44,7 @@ class EngineCohere(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
 
-    def prepare_http_data(self, chat: ModelChat, **kwargs):
-        json_data, headers = self.prepare_data(chat, **kwargs)
-        # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.base_url, data=json_data, headers=headers)
-
-    def process_generate(self, response):
-        encoding = 'utf-8'
-        r = json.loads(response.decode(encoding))
-
+    def process_generate(self, r: dict):
         return ModelChatResponse(**{
             'content': r['text'],
             'role': 'assistant',
@@ -68,26 +59,32 @@ class EngineCohere(BaseChat):
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self.prepare_data(chat, **kwargs)
         async with AsyncHttpClient() as client:
-            response = await client.post_raw_binary(url=self.base_url,
-                                                    data=json_data,
-                                                    headers=headers,
-                                                    timeout=kwargs.get('timeout'))
+            response = await client.post_json(url=self.base_url,
+                                              data=json_data,
+                                              headers=headers,
+                                              timeout=kwargs.get('timeout'))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs)) as response:
-            response_data = response.read()
-            return self.process_generate(response_data)
+        json_data, headers = self.prepare_data(chat, **kwargs)
+        with HttpClient() as client:
+            response = client.post_json(url=self.base_url,
+                                        data=json_data,
+                                        headers=headers)
+            return self.process_generate(response)
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
-        # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_http_data(chat, **kwargs, stream=True)) as response:
+        json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
+        with HttpClient() as client:
             idx = None
             usage = None
-            for chunk in response:
+            for chunk in client.stream_request("POST",
+                                               self.base_url,
+                                               data=json_data,
+                                               headers=headers,
+                                               timeout=kwargs.get('timeout')):
                 if chunk:
                     if c := self.process_chunk(chunk.strip(), idx, usage):
                         idx = c[1]
@@ -120,11 +117,9 @@ class EngineCohere(BaseChat):
         async with AsyncHttpClient() as client:
             idx = None
             usage = None
-            async for chunk in client.post_stream(
-                    self.base_url,
-                    data=json_data,
-                    headers=headers
-            ):
+            async for chunk in client.post_stream(self.base_url,
+                                                  data=json_data,
+                                                  headers=headers):
                 if chunk:
                     if c := self.process_chunk(chunk.decode().strip(), idx, usage):
                         idx = c[1]

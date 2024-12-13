@@ -1,12 +1,11 @@
 # https://docs.anthropic.com/claude/reference/messages-streaming
 import json
-import urllib.request
 import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
-from magic_llm.util.http import AsyncHttpClient
+from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class EngineAnthropic(BaseChat):
@@ -140,18 +139,11 @@ class EngineAnthropic(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
 
-    def prepare_http_data(self, chat: ModelChat, **kwargs):
-        json_data, headers = self.prepare_data(chat, **kwargs)
-        # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.base_url, data=json_data, headers=headers)
-
     def process_chunk(self, chunk: str, idx, usage):
         chunk, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage)
         return ChatCompletionModel(**chunk) if chunk else None, idx, usage
 
-    def process_generate(self, response):
-        encoding = 'utf-8'
-        r = json.loads(response.decode(encoding))
+    def process_generate(self, r):
         return ModelChatResponse(**{
             'content': r['content'][0]['text'],
             'role': 'assistant',
@@ -166,28 +158,36 @@ class EngineAnthropic(BaseChat):
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self.prepare_data(chat, **kwargs)
         async with AsyncHttpClient() as client:
-            response = await client.post_raw_binary(url=self.base_url,
-                                                    data=json_data,
-                                                    headers=headers,
-                                                    timeout=kwargs.get('timeout'))
+            response = await client.post_json(url=self.base_url,
+                                              data=json_data,
+                                              headers=headers,
+                                              timeout=kwargs.get('timeout'))
 
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        with urllib.request.urlopen(self.prepare_http_data(chat, stream=False, **kwargs)) as response:
-            response_data = response.read()
-            return self.process_generate(response_data)
+        json_data, headers = self.prepare_data(chat, **kwargs)
+        with HttpClient() as client:
+            response = client.post_json(url=self.base_url,
+                                        data=json_data,
+                                        headers=headers)
+            return self.process_generate(response)
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
         # Make the request and read the response.
-        with urllib.request.urlopen(self.prepare_http_data(chat, stream=True, **kwargs)) as response:
+        json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
+        with HttpClient() as client:
             idx = None
             usage = None
-            for chunk in response:
+            for chunk in client.stream_request("POST",
+                                               self.base_url,
+                                               data=json_data,
+                                               headers=headers,
+                                               timeout=kwargs.get('timeout')):
                 if chunk:
-                    evt = chunk.decode().split('data:')
+                    evt = chunk.split('data:')
                     if len(evt) != 2:
                         continue
                     if c := self.process_chunk(evt[-1].strip(), idx, usage):
@@ -220,11 +220,9 @@ class EngineAnthropic(BaseChat):
         async with AsyncHttpClient() as client:
             idx = None
             usage = None
-            async for chunk in client.post_stream(
-                    self.base_url,
-                    data=json_data,
-                    headers=headers
-            ):
+            async for chunk in client.post_stream(self.base_url,
+                                                  data=json_data,
+                                                  headers=headers):
                 if chunk:
                     evt = chunk.decode().split('data:')
                     if len(evt) != 2:

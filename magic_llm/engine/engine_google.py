@@ -1,12 +1,11 @@
 # https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini?hl=es-419
 import json
-import urllib.request
 import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
-from magic_llm.util.http import AsyncHttpClient
+from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class EngineGoogle(BaseChat):
@@ -49,18 +48,7 @@ class EngineGoogle(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers, data
 
-    def prepare_http_data(self, chat: ModelChat, stream: bool, **kwargs):
-        json_data, headers, data = self.prepare_data(chat, **kwargs)
-
-        # Create a request object with the URL, data, and headers.
-        return urllib.request.Request(self.url_stream if stream else self.url, data=json_data, headers=headers,
-                                      method='POST'), json_data, headers, data
-
-    def process_generate(self, response):
-        encoding = 'utf-8'
-
-        # Decode the response.
-        data = json.loads(response.decode(encoding))
+    def process_generate(self, data: dict):
         content = data['candidates'][0]['content']['parts'][0]['text']
         return ModelChatResponse(**{
             'content': content,
@@ -74,81 +62,67 @@ class EngineGoogle(BaseChat):
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        request, json_data, headers, data = self.prepare_http_data(chat, stream=False, **kwargs)
+        json_data, headers, data = self.prepare_data(chat, **kwargs)
         async with AsyncHttpClient() as client:
-            response = await client.post_raw_binary(url=self.url,
-                                                    data=json_data,
-                                                    headers=headers,
-                                                    timeout=kwargs.get('timeout'))
+            response = await client.post_json(url=self.url,
+                                              data=json_data,
+                                              headers=headers,
+                                              timeout=kwargs.get('timeout'))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        request, json_data, headers, data = self.prepare_http_data(chat, **kwargs, stream=False)
-        # Make the request and read the response.
-        with urllib.request.urlopen(request) as response:
-            response_data = response.read()
-            return self.process_generate(response_data)
+        json_data, headers, data = self.prepare_data(chat, **kwargs)
+        with HttpClient() as client:
+            response = client.post_json(url=self.url,
+                                        data=json_data,
+                                        headers=headers)
+            return self.process_generate(response)
+
+    def prepare_stream_response(self, chunk):
+        chunk = chunk.strip()
+        chunk = json.loads(chunk[5:].strip())
+        chunk = {
+            'id': '1',
+            'choices': [{
+                'delta': {
+                    'content': chunk['candidates'][0]['content']['parts'][0]['text'],
+                    'role': 'assistant'
+                },
+                'finish_reason': None,
+                'index': 0
+            }],
+            'created': int(time.time()),
+            'model': self.model,
+            'object': 'chat.completion.chunk',
+            'usage': {
+                'prompt_tokens': chunk['usageMetadata']['promptTokenCount'],
+                'completion_tokens': chunk['usageMetadata'].get('candidatesTokenCount', 0),
+                'total_tokens': chunk['usageMetadata']['totalTokenCount']
+            }
+        }
+        return ChatCompletionModel(**chunk)
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
-        request, json_data, _, _ = self.prepare_http_data(chat, **kwargs, stream=True)
-        with urllib.request.urlopen(request) as response:
-            for chunk in response:
+        json_data, headers, data = self.prepare_data(chat, **kwargs)
+
+        with HttpClient() as client:
+            for chunk in client.stream_request("POST",
+                                               self.url_stream,
+                                               data=json_data,
+                                               headers=headers,
+                                               timeout=kwargs.get('timeout')):
                 if chunk.strip():
-                    chunk = chunk.strip()
-                    chunk = json.loads(chunk[5:].strip())
-                    chunk = {
-                        'id': '1',
-                        'choices': [{
-                            'delta': {
-                                'content': chunk['candidates'][0]['content']['parts'][0]['text'],
-                                'role': 'assistant'
-                            },
-                            'finish_reason': None,
-                            'index': 0
-                        }],
-                        'created': int(time.time()),
-                        'model': self.model,
-                        'object': 'chat.completion.chunk',
-                        'usage': {
-                            'prompt_tokens': chunk['usageMetadata']['promptTokenCount'],
-                            'completion_tokens': chunk['usageMetadata'].get('candidatesTokenCount', 0),
-                            'total_tokens': chunk['usageMetadata']['totalTokenCount']
-                        }
-                    }
-                    yield ChatCompletionModel(**chunk)
+                    yield self.prepare_stream_response(chunk)
 
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers, _ = self.prepare_data(chat, **kwargs)
 
         async with AsyncHttpClient() as client:
-            async for chunk in client.post_stream(
-                    self.url_stream,
-                    data=json_data,
-                    headers=headers
-            ):
+            async for chunk in client.post_stream(self.url_stream,
+                                                  data=json_data,
+                                                  headers=headers):
                 if chunk.strip():
-                    chunk = chunk.strip().decode('utf-8')
-                    chunk = json.loads(chunk[5:].strip())
-                    chunk = {
-                        'id': '1',
-                        'choices': [{
-                            'delta': {
-                                'content': chunk['candidates'][0]['content']['parts'][0]['text'],
-                                'role': 'assistant'
-                            },
-                            'finish_reason': None,
-                            'index': 0
-                        }],
-                        'created': int(time.time()),
-                        'model': self.model,
-                        'object': 'chat.completion.chunk',
-                        'usage': {
-                            'prompt_tokens': chunk['usageMetadata']['promptTokenCount'],
-                            'completion_tokens': chunk['usageMetadata'].get('candidatesTokenCount', 0),
-                            'total_tokens': chunk['usageMetadata']['totalTokenCount']
-                        }
-                    }
-                    yield ChatCompletionModel(**chunk)
+                    yield self.prepare_stream_response(chunk)

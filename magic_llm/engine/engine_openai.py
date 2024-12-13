@@ -1,5 +1,4 @@
 # https://cookbook.openai.com/examples/how_to_format_inputs_to_chatgpt_models
-import json
 from typing import Callable
 
 from magic_llm.engine.base_chat import BaseChat
@@ -76,13 +75,11 @@ class EngineOpenAI(BaseChat):
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self.base.prepare_data(chat, **kwargs)
         async with AsyncHttpClient() as client:
-            response = await client.post_raw_binary(url=self.base.base_url + '/chat/completions',
+            response = await client.post_json(url=self.base.base_url + '/chat/completions',
                                                     data=json_data,
                                                     headers=headers,
                                                     timeout=kwargs.get('timeout'))
-            encoding = 'utf-8'
-            r = json.loads(response.decode(encoding))
-            return self.prepare_response(r)
+            return self.prepare_response(response)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
