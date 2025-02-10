@@ -18,7 +18,25 @@ class ModelChat:
             "content": content
         })
 
-    def add_user_message(self, content: str):
+    def add_user_message(self, content: str, image: str = None):
+        _content = None
+        if content and image:
+            _content = [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{image}"
+                    },
+                },
+                {
+                    "type": "text", "text": "What is in this image?"
+                }
+            ]
+
+        elif content and not image:
+            _content = content
+        else:
+            raise Exception('Image cannot be alone')
         self.messages.append({
             "role": "user",
             "content": content
