@@ -39,7 +39,7 @@ class ModelChat:
             raise Exception('Image cannot be alone')
         self.messages.append({
             "role": "user",
-            "content": content
+            "content": _content
         })
 
     def add_assistant_message(self, content: str):
