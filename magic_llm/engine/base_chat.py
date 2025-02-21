@@ -1,11 +1,11 @@
-from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any
 import abc
-import functools
 import asyncio
-import time
+import functools
 import logging
-from dataclasses import dataclass
+import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any
 
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
