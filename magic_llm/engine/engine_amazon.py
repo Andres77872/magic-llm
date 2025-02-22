@@ -1,8 +1,8 @@
+import json
 import time
 
 import aioboto3
 import boto3
-import json
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChatResponse, ModelChat
@@ -11,6 +11,7 @@ from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class EngineAmazon(BaseChat):
+    engine = 'amazon'
     def __init__(self,
                  aws_access_key_id: str,
                  aws_secret_access_key: str,

@@ -19,6 +19,7 @@ from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class EngineOpenAI(BaseChat):
+    engine = 'openai'
     def __init__(self,
                  api_key: str,
                  openai_adapter: Callable = None,
@@ -76,9 +77,9 @@ class EngineOpenAI(BaseChat):
         json_data, headers = self.base.prepare_data(chat, **kwargs)
         async with AsyncHttpClient() as client:
             response = await client.post_json(url=self.base.base_url + '/chat/completions',
-                                                    data=json_data,
-                                                    headers=headers,
-                                                    timeout=kwargs.get('timeout'))
+                                              data=json_data,
+                                              headers=headers,
+                                              timeout=kwargs.get('timeout'))
             return self.prepare_response(response)
 
     @BaseChat.sync_intercept_generate

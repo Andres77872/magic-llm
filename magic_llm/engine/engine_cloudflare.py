@@ -9,12 +9,12 @@ from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class EngineCloudFlare(BaseChat):
+    engine = 'cloudflare'
     def __init__(self,
                  api_key: str,
                  account_id: str,
                  **kwargs) -> None:
         super().__init__(**kwargs)
-
         self.url = f'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{self.model}'
         self.api_key = api_key
 

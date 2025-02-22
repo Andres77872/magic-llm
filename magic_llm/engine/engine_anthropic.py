@@ -9,6 +9,7 @@ from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class EngineAnthropic(BaseChat):
+    engine = 'anthropic'
     def __init__(self,
                  api_key: str,
                  **kwargs) -> None:

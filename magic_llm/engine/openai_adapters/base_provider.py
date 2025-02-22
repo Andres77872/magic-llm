@@ -1,7 +1,7 @@
+import json
 import mimetypes
 from abc import ABC
 from typing import Dict, Tuple
-import json
 
 import aiohttp
 

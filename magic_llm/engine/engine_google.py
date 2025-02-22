@@ -9,6 +9,7 @@ from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class EngineGoogle(BaseChat):
+    engine = 'google'
     def __init__(self,
                  api_key: str,
                  **kwargs) -> None:

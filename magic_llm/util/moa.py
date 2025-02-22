@@ -1,7 +1,8 @@
-from magic_llm import MagicLLM
-from magic_llm.model import ModelChat
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Dict, Tuple, Any
+
+from magic_llm import MagicLLM
+from magic_llm.model import ModelChat
 
 
 def run(agents: List[Tuple[MagicLLM, ModelChat]], synthesizer: Callable[[List[Dict]], Any]):

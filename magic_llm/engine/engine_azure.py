@@ -5,6 +5,7 @@ from magic_llm.util.http import AsyncHttpClient
 
 
 class EngineAzure(BaseChat):
+    engine = 'azure'
     def __init__(self,
                  speech_key: str,
                  speech_region: str,

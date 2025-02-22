@@ -1,7 +1,7 @@
-import aiohttp
 import json
 from typing import Any, Generator
 
+import aiohttp
 import requests
 from requests import RequestException
 
