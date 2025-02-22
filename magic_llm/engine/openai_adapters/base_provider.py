@@ -15,9 +15,8 @@ class OpenAiBaseProvider(ABC):
     def __init__(self,
                  base_url: str,
                  api_key: str,
-                 model: str,
-                 headers:
-                 Dict[str, str] = None,
+                 model: str | None = None,
+                 headers: Dict[str, str] = None,
                  **kwargs):
         self.base_url = base_url
         self.api_key = api_key

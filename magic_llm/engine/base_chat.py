@@ -49,7 +49,7 @@ def is_running_in_jupyter():
 class BaseChat(abc.ABC):
     def __init__(
             self,
-            model: str | None,
+            model: str | None = None,
             headers: Optional[dict] = None,
             callback: Optional[Callable] = None,
             fallback: Optional[Callable] = None,
