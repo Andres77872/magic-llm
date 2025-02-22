@@ -34,6 +34,15 @@ class ChatException(Exception):
     """Base exception for chat operations."""
     pass
 
+def is_running_in_jupyter():
+    try:
+        from IPython import get_ipython
+        if get_ipython():
+            return True
+        else:
+            return False
+    except ImportError:
+        return False
 
 class BaseChat(abc.ABC):
     def __init__(
@@ -196,6 +205,9 @@ class BaseChat(abc.ABC):
 
     @staticmethod
     def sync_intercept_stream_generate(func: Callable[..., Iterator[ChatCompletionModel]]):
+        if is_running_in_jupyter():
+            import nest_asyncio
+            nest_asyncio.apply()
         @functools.wraps(func)
         def wrapper(self, chat: ModelChat, **kwargs) -> Iterator[ChatCompletionModel]:
             model = self.model or kwargs.get('model')
@@ -298,6 +310,9 @@ class BaseChat(abc.ABC):
 
     @staticmethod
     def sync_intercept_generate(func: Callable[..., ModelChatResponse]):
+        if is_running_in_jupyter():
+            import nest_asyncio
+            nest_asyncio.apply()
         @functools.wraps(func)
         def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
             model = self.model or kwargs.get('model')
