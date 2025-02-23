@@ -65,7 +65,6 @@ Note: Other LLM providers have not been tested.
 | Deepseek         | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
 | Groq             | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
 | LeptonAI         | ✅         | ✅          | ❌         | ⁉               | ✅                | ❌               |
-| OctoAI           | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
 | NovitaAI         | ✅         | ✅          | ❌         | ✅               | ✅                | ❌               |
 
 ## Purpose

@@ -1,4 +1,5 @@
 from typing import Optional, Dict, Type
+
 from magic_llm.engine import (
     EngineOpenAI,
     EngineGoogle,
@@ -8,6 +9,7 @@ from magic_llm.engine import (
     EngineAnthropic,
     EngineAzure,
 )
+from magic_llm.engine.base_chat import BaseChat
 
 
 class MagicLlmBase:
@@ -56,4 +58,4 @@ class MagicLlmBase:
         if engine not in {EngineAmazon.engine, EngineAzure.engine}:
             engine_params['api_key'] = private_key
 
-        self.llm = engine_class(**engine_params)
+        self.llm: BaseChat = engine_class(**engine_params)
