@@ -1,12 +1,19 @@
 from magic_llm.model import ModelChatResponse
+from magic_llm.util.tokenizer import from_openai
 
 
 class ModelChat:
+    TOKENS_PER_MESSAGE = 3
+    TOKENS_PER_NAME = 1
+    ASSISTANT_PRIME_TOKENS = 3  # <|start|>assistant<|message|>
+
     def __init__(self, system: str = None,
                  max_input_length: int = None,
+                 max_input_tokens: int = None,
                  extra_args=None) -> None:
         self.messages = [{"role": "system", "content": system}] if system else []
         self.max_input_length = max_input_length
+        self.max_input_tokens = max_input_tokens
         self.extra_args = extra_args
 
     def set_system(self, system: str, index: int = 0):
@@ -29,7 +36,7 @@ class ModelChat:
                     },
                 },
                 {
-                    "type": "text", "text": "What is in this image?"
+                    "type": "text", "text": content
                 }
             ]
 
@@ -45,6 +52,12 @@ class ModelChat:
     def add_assistant_message(self, content: str):
         self.messages.append({
             "role": "assistant",
+            "content": content
+        })
+
+    def add_system_message(self, content: str):
+        self.messages.append({
+            "role": "system",
             "content": content
         })
 
@@ -70,25 +83,97 @@ class ModelChat:
                 for message in messages]) + f'\n'
 
     def __str__(self):
-        return "\n".join([f"{message['role']}: {message['content']}" for message in self.messages])
+        return "\n".join([f"{message['role']}: {message['content']}" for message in self.get_messages()])
+        # return self.num_tokens_from_messages()
 
-    def get_messages(self):
-        if self.max_input_length is None:
+    def num_tokens_from_messages(self, messages: list[dict] = None) -> int:
+        """
+        Calculate the total number of tokens in messages.
+
+        Args:
+            messages: Optional list of messages. If None, uses self.messages
+
+        Returns:
+            int: Total number of tokens
+        """
+
+        num_tokens = 0
+        for message in messages or self.messages:
+            num_tokens += self.TOKENS_PER_MESSAGE
+            for key, value in message.items():
+                # TODO: Add image handle for the tokenizer
+                value_str = value if isinstance(value, str) else ''
+                num_tokens += len(from_openai(value_str))
+                if key == "name":
+                    num_tokens += self.TOKENS_PER_NAME
+
+        return num_tokens + self.ASSISTANT_PRIME_TOKENS
+
+    def get_messages(self) -> list[dict]:
+        """
+        Get messages while respecting token limits and preserving system messages.
+        System messages are always kept, other messages are truncated if needed.
+
+        Returns:
+            List of messages that fit within token limit
+        """
+        if self.max_input_tokens is None:
             return self.messages
-        ctx = self.messages[0]['role'] == 'system'
-        if ctx:
-            c = len(self.messages[0])
-        else:
-            c = 0
-        while c > self.max_input_length:
-            if ctx:
-                self.messages = [self.messages[0]] + self.messages[2:]
-            else:
-                self.messages = self.messages[2:]
-            c += len(self.messages[-1]) + len(self.messages[-2])
-        return self.messages
 
-    def __add__(self, chat: ModelChatResponse):
+        total_tokens = self.num_tokens_from_messages()
+        if total_tokens <= self.max_input_tokens:
+            return self.messages
+
+        system_tokens = 0
+        system_messages = []
+
+        for msg in self.messages:
+            if msg['role'] == 'system':
+                system_tokens += (len(from_openai(msg['content'])) +
+                                  len(from_openai(msg['role'])) +
+                                  self.TOKENS_PER_MESSAGE)
+                system_messages.append(msg)
+
+        if system_tokens > self.max_input_tokens:
+            raise Exception('System message exceeds maximum token limit')
+
+        print(
+            f'Messages exceed token limit. Truncating from {total_tokens} to '
+            f'{self.max_input_tokens} tokens (system tokens: {system_tokens})'
+        )
+
+        # Build truncated message list
+        truncated_messages = []
+        current_tokens = system_tokens
+
+        for msg in reversed(self.messages):
+            if msg['role'] in {'user', 'assistant'}:
+                msg_tokens = (
+                        len(from_openai(msg['content'])) +
+                        len(from_openai(msg['role'])) +
+                        self.TOKENS_PER_MESSAGE  # Base tokens per message
+                )
+
+                if current_tokens + msg_tokens + self.ASSISTANT_PRIME_TOKENS <= self.max_input_tokens:
+                    truncated_messages.append(msg)
+                    current_tokens += msg_tokens
+            else:  # system messages
+                truncated_messages.append(msg)
+
+        final_messages = truncated_messages[::-1]
+        print(f'Messages truncated to {self.num_tokens_from_messages(final_messages)} tokens')
+        return final_messages
+
+    def __add__(self, chat: 'ModelChatResponse') -> 'ModelChat':
+        """
+        Add a new chat message to the conversation.
+
+        Args:
+            chat: ModelChatResponse object containing the new message
+
+        Returns:
+            self: Updated ModelChat instance
+        """
         self.messages.append({
             "role": chat.role,
             "content": chat.content
