@@ -266,10 +266,11 @@ class BaseChat(abc.ABC):
                         fallback = self._handle_fallback(is_async=False)
                         if fallback:
                             yield from fallback(chat)
-                        raise ChatException(
-                            message=f"Stream generation failed after {attempt + 1} attempts: {er}",
-                            error_code='STREAM_GENERATION_ERROR',
-                        )
+                        else:
+                            raise ChatException(
+                                message=f"Stream generation failed after {attempt + 1} attempts: {er}",
+                                error_code='STREAM_GENERATION_ERROR',
+                            )
                     else:
                         time.sleep(self.retry_config.delay)
 
@@ -311,10 +312,11 @@ class BaseChat(abc.ABC):
                     if attempt == self.retry_config.attempts - 1:
                         if self.fallback:
                             return await self.fallback.llm.async_generate(chat)
-                        raise ChatException(
-                            message=f"Generation failed after {attempt + 1} attempts: {er}",
-                            error_code='STREAM_GENERATION_ERROR',
-                        )
+                        else:
+                            raise ChatException(
+                                message=f"Generation failed after {attempt + 1} attempts: {er}",
+                                error_code='STREAM_GENERATION_ERROR',
+                            )
                     await asyncio.sleep(self.retry_config.delay)
 
         return wrapper
@@ -359,13 +361,19 @@ class BaseChat(abc.ABC):
                     if attempt == self.retry_config.attempts - 1:
                         if self.fallback:
                             return self.fallback.llm.generate(chat)
-                        raise ChatException(
-                            message=f"Generation failed after {attempt + 1} attempts: {er}",
-                            error_code='STREAM_GENERATION_ERROR',
-                        )
+                        else:
+                            raise ChatException(
+                                message=f"Generation failed after {attempt + 1} attempts: {er}",
+                                error_code='STREAM_GENERATION_ERROR',
+                            )
                     time.sleep(self.retry_config.delay)
 
         return wrapper
+
+    def __del__(self):
+        """Cleanup resources."""
+        if hasattr(self, 'executor'):
+            self.executor.shutdown(wait=False)
 
     @abc.abstractmethod
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
@@ -398,11 +406,6 @@ class BaseChat(abc.ABC):
     def audio_speech(self, speech_request: AudioSpeechRequest, **kwargs) -> Any:
         """Generate audio speech synchronously."""
         pass
-
-    def __del__(self):
-        """Cleanup resources."""
-        if hasattr(self, 'executor'):
-            self.executor.shutdown(wait=False)
 
     async def async_audio_transcriptions(self, speech_request: AudioTranscriptionsRequest, **kwargs) -> Any:
         """Generate audio transcriptions asynchronously."""
