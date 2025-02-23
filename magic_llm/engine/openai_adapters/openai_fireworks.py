@@ -24,6 +24,6 @@ class ProviderFireworks(OpenAiBaseProvider):
             raise NotImplementedError
         async with AsyncHttpClient() as client:
             response = await client.post_json(url=url + '/audio/transcriptions',
-                                              data=self.prepare_transcriptions(data),
+                                              data=self.prepare_async_transcriptions(data),
                                               headers=headers)
             return response

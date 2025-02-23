@@ -8,7 +8,7 @@ import aiohttp
 from magic_llm.model import ModelChat
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
-from magic_llm.util.http import AsyncHttpClient
+from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class OpenAiBaseProvider(ABC):
@@ -89,7 +89,7 @@ class OpenAiBaseProvider(ABC):
                         ]
                     })
 
-    def prepare_transcriptions(self, data: AudioTranscriptionsRequest):
+    def prepare_async_transcriptions(self, data: AudioTranscriptionsRequest):
         form_data = aiohttp.FormData()
         form_data.add_field(
             'file',
@@ -108,6 +108,23 @@ class OpenAiBaseProvider(ABC):
             form_data.add_field('temperature', str(data.temperature))
         return form_data
 
+    def prepare_json_transcriptions(self, data: AudioTranscriptionsRequest):
+        json_body = {
+            "model": data.model,
+        }
+
+        # Add optional fields only if they exist
+        if data.language:
+            json_body["language"] = data.language
+        if data.prompt:
+            json_body["prompt"] = data.prompt
+        if data.response_format:
+            json_body["response_format"] = data.response_format
+        if data.temperature is not None:
+            json_body["temperature"] = data.temperature  # No need for str() conversion in JSON
+
+        return json_body
+
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
         raise NotImplementedError
 
@@ -117,6 +134,17 @@ class OpenAiBaseProvider(ABC):
         }
         async with AsyncHttpClient() as client:
             response = await client.post_json(url=self.base_url + '/audio/transcriptions',
-                                              data=self.prepare_transcriptions(data),
+                                              data=self.prepare_async_transcriptions(data),
                                               headers=headers)
+            return response
+
+    def sync_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
+        headers = {
+            "Authorization": self.headers.get("Authorization")
+        }
+        with HttpClient() as client:
+            response = client.post_json(url=self.base_url + '/audio/transcriptions',
+                                        data=self.prepare_json_transcriptions(data),
+                                        files={'file': ('audio.mp3', data.file, 'audio/mpeg')},
+                                        headers=headers)
             return response

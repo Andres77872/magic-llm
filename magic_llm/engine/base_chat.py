@@ -410,3 +410,7 @@ class BaseChat(abc.ABC):
     async def async_audio_transcriptions(self, speech_request: AudioTranscriptionsRequest, **kwargs) -> Any:
         """Generate audio transcriptions asynchronously."""
         pass
+
+    def sync_audio_transcriptions(self, speech_request: AudioTranscriptionsRequest, **kwargs) -> Any:
+        """Generate audio transcriptions synchronously."""
+        pass

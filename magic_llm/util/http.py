@@ -150,8 +150,6 @@ class HttpClient:
         :raises: requests.exceptions.RequestException
         """
         self._ensure_session()
-        if (d := kwargs.get('data')) and isinstance(d, dict):
-            kwargs['data'] = json.dumps(d)
         try:
             response = self.session.request(method, url, **kwargs)
             if response.status_code != 200:

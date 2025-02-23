@@ -143,3 +143,6 @@ class EngineOpenAI(BaseChat):
 
     async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
         return await self.base.async_audio_transcriptions(data)
+
+    def sync_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
+        return self.base.sync_audio_transcriptions(data)
