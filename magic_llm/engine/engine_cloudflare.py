@@ -33,15 +33,12 @@ class EngineCloudFlare(BaseChat):
         return json_data, headers
 
     def process_generate(self, r):
-        r = r['result']['response']
+        content = r['result']['response']
+        usage = r['result']['usage']
         return ModelChatResponse(**{
-            'content': r,
+            'content': content,
             'role': 'assistant',
-            'usage': UsageModel(
-                prompt_tokens=0,
-                completion_tokens=0,
-                total_tokens=0,
-            )
+            'usage': usage
         })
 
     @BaseChat.async_intercept_generate
@@ -66,6 +63,13 @@ class EngineCloudFlare(BaseChat):
     def prepare_stream_response(self, event):
         event = event[5:].strip()
         event = json.loads(event)
+        usage = None
+        if 'usage' in event:
+            usage = UsageModel(
+                prompt_tokens=event['usage']['prompt_tokens'],
+                completion_tokens=event['usage']['completion_tokens'],
+                total_tokens=event['usage']['total_tokens']
+            )
         chunk = {
             'id': '1',
             'choices':
@@ -82,6 +86,10 @@ class EngineCloudFlare(BaseChat):
             'model': self.model,
             'object': 'chat.completion.chunk'
         }
+        if usage:
+            chunk.update({
+                'usage': usage
+            })
         return ChatCompletionModel(**chunk)
 
     @BaseChat.sync_intercept_stream_generate
