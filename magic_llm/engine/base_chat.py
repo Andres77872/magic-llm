@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any
 
+from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChatMetaModel
@@ -28,11 +29,6 @@ class Metrics:
 
     def calculate_ttf(self) -> float:
         return time.time() - self.start_time - self.ttfb
-
-
-class ChatException(Exception):
-    """Base exception for chat operations."""
-    pass
 
 
 def is_running_in_jupyter():
@@ -192,7 +188,7 @@ class BaseChat(abc.ABC):
                                 'choices': [
                                     {
                                         'delta': {
-                                            'content': er,
+                                            'content': '',
                                             'role': None
                                         },
                                         'finish_reason': f'error: {er}',
@@ -200,6 +196,10 @@ class BaseChat(abc.ABC):
                                     }
                                 ]
                             })
+                            raise ChatException(
+                                message=f"Stream generation failed after {attempt + 1} attempts: {er}",
+                                error_code='STREAM_GENERATION_ERROR',
+                            )
                     else:
                         await asyncio.sleep(self.retry_config.delay)
 
@@ -266,6 +266,10 @@ class BaseChat(abc.ABC):
                         fallback = self._handle_fallback(is_async=False)
                         if fallback:
                             yield from fallback(chat)
+                        raise ChatException(
+                            message=f"Stream generation failed after {attempt + 1} attempts: {er}",
+                            error_code='STREAM_GENERATION_ERROR',
+                        )
                     else:
                         time.sleep(self.retry_config.delay)
 
@@ -307,6 +311,10 @@ class BaseChat(abc.ABC):
                     if attempt == self.retry_config.attempts - 1:
                         if self.fallback:
                             return await self.fallback.llm.async_generate(chat)
+                        raise ChatException(
+                            message=f"Generation failed after {attempt + 1} attempts: {er}",
+                            error_code='STREAM_GENERATION_ERROR',
+                        )
                     await asyncio.sleep(self.retry_config.delay)
 
         return wrapper
@@ -351,6 +359,10 @@ class BaseChat(abc.ABC):
                     if attempt == self.retry_config.attempts - 1:
                         if self.fallback:
                             return self.fallback.llm.generate(chat)
+                        raise ChatException(
+                            message=f"Generation failed after {attempt + 1} attempts: {er}",
+                            error_code='STREAM_GENERATION_ERROR',
+                        )
                     time.sleep(self.retry_config.delay)
 
         return wrapper

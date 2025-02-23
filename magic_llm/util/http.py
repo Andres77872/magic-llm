@@ -1,5 +1,5 @@
 import json
-from typing import Any, Generator
+from typing import Any, Generator, AsyncGenerator
 
 import aiohttp
 import requests
@@ -45,7 +45,8 @@ class AsyncHttpClient:
                 timeout=timeout,
                 **kwargs,
         ) as response:
-            response.raise_for_status()
+            if response.status != 200:
+                raise Exception(await response.read())
             return await response.read()
 
     async def post_json(self, url: str, **kwargs) -> Any:
@@ -75,7 +76,7 @@ class AsyncHttpClient:
             method: str,
             url: str,
             **kwargs
-    ) -> aiohttp.StreamReader:
+    ) -> AsyncGenerator[Any, Any]:
         """
         Makes a streaming HTTP request.
 
@@ -94,11 +95,12 @@ class AsyncHttpClient:
                 timeout=timeout,
                 **kwargs
         ) as response:
-            response.raise_for_status()
+            if response.status != 200:
+                raise Exception(await response.read())
             async for chunk in response.content:
                 yield chunk
 
-    async def post_stream(self, url: str, **kwargs) -> aiohttp.StreamReader:
+    async def post_stream(self, url: str, **kwargs) -> AsyncGenerator[Any, Any]:
         """
         Sends a POST request and returns a streaming response.
 
@@ -152,7 +154,8 @@ class HttpClient:
             kwargs['data'] = json.dumps(d)
         try:
             response = self.session.request(method, url, **kwargs)
-            response.raise_for_status()
+            if response.status_code != 200:
+                raise Exception(response.content)
             return response.content
         except RequestException as e:
             # Preserve the original error but add more context if possible
@@ -207,8 +210,8 @@ class HttpClient:
             kwargs['data'] = json.dumps(d)
         try:
             with self.session.request(method, url, **kwargs) as response:
-                response.raise_for_status()
-                # yield from response.iter_lines(decode_unicode=False)
+                if response.status_code != 200:
+                    raise Exception(response.content)
                 for line in response.iter_lines(decode_unicode=False):
                     if line:
                         yield line.decode('utf-8')

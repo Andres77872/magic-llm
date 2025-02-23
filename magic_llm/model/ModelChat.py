@@ -1,3 +1,4 @@
+from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChatResponse
 from magic_llm.util.tokenizer import from_openai
 
@@ -8,11 +9,9 @@ class ModelChat:
     ASSISTANT_PRIME_TOKENS = 3  # <|start|>assistant<|message|>
 
     def __init__(self, system: str = None,
-                 max_input_length: int = None,
                  max_input_tokens: int = None,
                  extra_args=None) -> None:
         self.messages = [{"role": "system", "content": system}] if system else []
-        self.max_input_length = max_input_length
         self.max_input_tokens = max_input_tokens
         self.extra_args = extra_args
 
@@ -117,6 +116,18 @@ class ModelChat:
         Returns:
             List of messages that fit within token limit
         """
+        if not self.messages:
+            raise ChatException(
+                message="No messages available to process",
+                error_code='NO_MESSAGES'
+            )
+
+        if self.max_input_tokens is not None and self.max_input_tokens <= 0:
+            raise ChatException(
+                message="Invalid token limit specified",
+                error_code='INVALID_TOKEN_LIMIT'
+            )
+
         if self.max_input_tokens is None:
             return self.messages
 
@@ -135,7 +146,10 @@ class ModelChat:
                 system_messages.append(msg)
 
         if system_tokens > self.max_input_tokens:
-            raise Exception('System message exceeds maximum token limit')
+            raise ChatException(
+                message="System message exceeds token limit",
+                error_code='SYSTEM_MESSAGE_EXCEEDS_TOKEN_LIMIT'
+            )
 
         print(
             f'Messages exceed token limit. Truncating from {total_tokens} to '
