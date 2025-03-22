@@ -24,14 +24,14 @@ class ModelChat:
             "content": content
         })
 
-    def add_user_message(self, content: str, image: str = None):
+    def add_user_message(self, content: str, image: str = None, media_type: str = 'image/jpeg'):
         _content = None
         if content and image:
             _content = [
                 {
                     "type": "image_url",
                     "image_url": {
-                        "url": f"data:image/jpeg;base64,{image}"
+                        "url": f"data:{media_type};base64,{image}"
                     },
                 },
                 {
