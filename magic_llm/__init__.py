@@ -2,7 +2,7 @@ from typing import Callable, Optional
 
 from magic_llm.base import MagicLlmBase
 
-__version__ = '0.1.7'
+__version__ = '0.1.8'
 
 
 class MagicLLM(MagicLlmBase):

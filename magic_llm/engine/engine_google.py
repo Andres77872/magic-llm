@@ -10,6 +10,7 @@ from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 class EngineGoogle(BaseChat):
     engine = 'google'
+
     def __init__(self,
                  api_key: str,
                  **kwargs) -> None:
@@ -36,8 +37,25 @@ class EngineGoogle(BaseChat):
             "contents": [
                 {
                     "role": x['role'].replace('assistant', 'model'),
-                    "parts": [{'text': x['content']}]
-                } for x in messages],
+                    "parts": [
+                        # check if x['content'] is a list or a string
+                        *(
+                            [
+                                {"text": part["text"]} if part["type"] == "text" else
+                                {
+                                    "inline_data": {
+                                        "mime_type": part["image_url"]["url"].split(";")[0].replace('data:', ''),
+                                        "data": part["image_url"]["url"].split(",")[1]
+                                    }
+                                }
+                                for part in x['content']
+                            ] if isinstance(x['content'], list)
+                            else [{"text": x['content']}]
+                        )
+                    ]
+                }
+                for x in messages
+            ],
             "generationConfig": {**self.kwargs},
             **kwargs,
         }
