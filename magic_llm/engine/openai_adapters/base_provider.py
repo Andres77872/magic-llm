@@ -69,6 +69,9 @@ class OpenAiBaseProvider(ABC):
                       ) -> ChatCompletionModel:
         if chunk.startswith('data: ') and not chunk.endswith('[DONE]'):
             chunk = json.loads(chunk[5:])
+            # TODO improve server side error per provider
+            if 'choices' not in chunk:
+                raise Exception(f'no choices, {chunk}')
             chunk['usage'] = c if (c := chunk.get('usage', {})) else {}
             if len(chunk['choices']) == 0:
                 chunk['choices'] = [{}]
