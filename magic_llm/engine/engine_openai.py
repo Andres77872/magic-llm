@@ -1,5 +1,7 @@
 # https://cookbook.openai.com/examples/how_to_format_inputs_to_chatgpt_models
-from typing import Callable
+import logging
+import re
+from typing import Callable, Dict, Type, Optional
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.engine.openai_adapters import (ProviderOpenAI,
@@ -17,38 +19,81 @@ from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRe
 from magic_llm.model.ModelChatStream import UsageModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 
+logger = logging.getLogger(__name__)
+
 
 class EngineOpenAI(BaseChat):
     engine = 'openai'
+
+    # Map domain patterns to provider classes for easier maintenance
+    PROVIDER_MAPPING = {
+        r'api\.groq\.com': ProviderGroq,
+        r'api\.sambanova\.ai': ProviderSambaNova,
+        r'lepton\.run': ProviderLepton,
+        r'openrouter\.ai': ProviderOpenRouter,
+        r'api\.mistral\.ai': ProviderMistral,
+        r'api\.fireworks\.ai': ProviderFireworks,
+        r'api\.deepseek\.com': ProviderDeepseek,
+        r'api\.deepinfra\.com\/v1': ProviderDeepInfra,
+    }
+
     def __init__(self,
                  api_key: str,
-                 openai_adapter: Callable = None,
-                 base_url: str = None,
+                 openai_adapter: Optional[Callable] = None,
+                 base_url: Optional[str] = None,
                  **kwargs) -> None:
+        """
+        Initialize the OpenAI engine with the appropriate provider.
+
+        Args:
+            api_key: The API key for authentication
+            openai_adapter: Optional custom adapter class
+            base_url: Optional base URL for the API
+            **kwargs: Additional arguments for the provider
+        """
         super().__init__(**kwargs)
+
         if openai_adapter is None and base_url is None:
-            self.base: OpenAiBaseProvider = ProviderOpenAI(api_key=api_key, **kwargs)
+            # Default to OpenAI if no adapter or base_url is provided
+            self.base = ProviderOpenAI(api_key=api_key, **kwargs)
+            logger.debug("Using default OpenAI provider")
         elif base_url:
-            if 'api.groq.com' in base_url.lower():
-                self.base: OpenAiBaseProvider = ProviderGroq(api_key=api_key, **kwargs)
-            elif 'api.sambanova.ai' in base_url.lower():
-                self.base: OpenAiBaseProvider = ProviderSambaNova(api_key=api_key, **kwargs)
-            elif 'lepton.run' in base_url.lower():
-                self.base: OpenAiBaseProvider = ProviderLepton(api_key=api_key, **kwargs)
-            elif 'openrouter.ai' in base_url.lower():
-                self.base: OpenAiBaseProvider = ProviderOpenRouter(api_key=api_key, **kwargs)
-            elif 'api.mistral.ai' in base_url.lower():
-                self.base: OpenAiBaseProvider = ProviderMistral(api_key=api_key, **kwargs)
-            elif 'api.fireworks.ai' in base_url.lower():
-                self.base: OpenAiBaseProvider = ProviderFireworks(api_key=api_key, **kwargs)
-            elif 'api.deepseek.com' in base_url.lower():
-                self.base: OpenAiBaseProvider = ProviderDeepseek(api_key=api_key, **kwargs)
-            elif 'api.deepinfra.com/v1' in base_url.lower():
-                self.base: OpenAiBaseProvider = ProviderDeepInfra(api_key=api_key, **kwargs)
-            else:
-                self.base: OpenAiBaseProvider = ProviderOpenAI(api_key=api_key, base_url=base_url, **kwargs)
-        elif type(openai_adapter) is OpenAiBaseProvider:
-            self.base: OpenAiBaseProvider = openai_adapter(api_key=api_key, **kwargs)
+            # Select provider based on base_url pattern matching
+            provider_class = self._get_provider_for_url(base_url)
+            self.base = provider_class(api_key=api_key, **kwargs)
+
+            # If a custom base_url is provided for OpenAI, pass it along
+            if provider_class == ProviderOpenAI:
+                self.base = ProviderOpenAI(api_key=api_key, base_url=base_url, **kwargs)
+
+            logger.debug(f"Selected provider {provider_class.__name__} for URL: {base_url}")
+        elif isinstance(openai_adapter, type) and issubclass(openai_adapter, OpenAiBaseProvider):
+            # Use the provided adapter class
+            self.base = openai_adapter(api_key=api_key, **kwargs)
+            logger.debug(f"Using custom adapter: {openai_adapter.__name__}")
+        else:
+            # Fallback to OpenAI
+            self.base = ProviderOpenAI(api_key=api_key, **kwargs)
+            logger.warning(f"Unrecognized adapter type: {type(openai_adapter)}. Using default OpenAI provider.")
+
+    def _get_provider_for_url(self, url: str) -> Type[OpenAiBaseProvider]:
+        """
+        Determine the appropriate provider class based on the URL.
+
+        Args:
+            url: The base URL for the API
+
+        Returns:
+            The provider class to use
+        """
+        url_lower = url.lower()
+
+        for pattern, provider in self.PROVIDER_MAPPING.items():
+            if re.search(pattern, url_lower):
+                return provider
+
+        # Default to OpenAI if no match is found
+        return ProviderOpenAI
 
     def prepare_response(self, r):
         if r['choices'][0]['message'].get('content'):
@@ -139,10 +184,53 @@ class EngineOpenAI(BaseChat):
             return response
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
+        """
+        Generate audio speech asynchronously.
+
+        Args:
+            data: The audio speech request data
+            **kwargs: Additional arguments for the request
+
+        Returns:
+            The audio speech response
+        """
         return await self.base.async_audio_speech(data)
 
+    def audio_speech(self, data: AudioSpeechRequest, **kwargs):
+        """
+        Generate audio speech synchronously.
+
+        Args:
+            data: The audio speech request data
+            **kwargs: Additional arguments for the request
+
+        Returns:
+            The audio speech response
+        """
+        return self.base.audio_speech(data) if hasattr(self.base, 'audio_speech') else None
+
     async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
+        """
+        Generate audio transcriptions asynchronously.
+
+        Args:
+            data: The audio transcriptions request data
+            **kwargs: Additional arguments for the request
+
+        Returns:
+            The audio transcriptions response
+        """
         return await self.base.async_audio_transcriptions(data)
 
     def sync_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
+        """
+        Generate audio transcriptions synchronously.
+
+        Args:
+            data: The audio transcriptions request data
+            **kwargs: Additional arguments for the request
+
+        Returns:
+            The audio transcriptions response
+        """
         return self.base.sync_audio_transcriptions(data)

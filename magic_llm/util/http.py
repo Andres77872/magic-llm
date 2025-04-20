@@ -1,9 +1,22 @@
 import json
-from typing import Any, Generator, AsyncGenerator
+import logging
+from typing import Any, Generator, AsyncGenerator, Optional, Dict, Union, TypeVar, Generic
 
 import aiohttp
 import requests
 from requests import RequestException
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar('T')
+
+
+class HttpError(Exception):
+    """Base exception for HTTP client errors."""
+    def __init__(self, message: str, status_code: Optional[int] = None, response_content: Optional[bytes] = None):
+        self.status_code = status_code
+        self.response_content = response_content
+        super().__init__(message)
 
 
 class AsyncHttpClient:
@@ -22,6 +35,11 @@ class AsyncHttpClient:
         if self.session:
             await self.session.close()
 
+    def _ensure_session(self):
+        """Ensures the session is initialized."""
+        if not self.session:
+            raise RuntimeError("Session not initialized. Use 'with' block or call 'connect()'.")
+
     async def request(
             self,
             method: str,
@@ -34,20 +52,27 @@ class AsyncHttpClient:
         :param method: The HTTP method (e.g., 'POST', 'GET', etc.).
         :param url: The endpoint URL.
         :param kwargs: Additional arguments for aiohttp's request.
-        :return: The aiohttp.ClientResponse object.
+        :return: The response content as bytes.
+        :raises: HttpError if the request fails or returns a non-200 status code.
         """
-        if not self.session:
-            raise RuntimeError("Session not initialized. Use 'with' block or call 'connect()'.")
+        self._ensure_session()
         timeout = aiohttp.ClientTimeout(total=kwargs.pop('timeout', None))
-        async with self.session.request(
-                method,
-                url,
-                timeout=timeout,
-                **kwargs,
-        ) as response:
-            if response.status != 200:
-                raise Exception(await response.read())
-            return await response.read()
+        try:
+            async with self.session.request(
+                    method,
+                    url,
+                    timeout=timeout,
+                    **kwargs,
+            ) as response:
+                content = await response.read()
+                if response.status != 200:
+                    error_msg = f"HTTP {response.status}: {content.decode('utf-8', errors='replace')}"
+                    logger.error(f"Request to {url} failed: {error_msg}")
+                    raise HttpError(error_msg, response.status, content)
+                return content
+        except aiohttp.ClientError as e:
+            logger.error(f"Request to {url} failed with aiohttp error: {str(e)}")
+            raise HttpError(f"aiohttp error: {str(e)}")
 
     async def post_json(self, url: str, **kwargs) -> Any:
         """
@@ -56,9 +81,14 @@ class AsyncHttpClient:
         :param url: The endpoint URL.
         :param kwargs: Additional arguments for the `request` method.
         :return: The parsed JSON response.
+        :raises: HttpError, json.JSONDecodeError
         """
         response = await self.request("POST", url, **kwargs)
-        return json.loads(response.decode())
+        try:
+            return json.loads(response.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response from {url}: {str(e)}")
+            raise
 
     async def post_raw_binary(self, url: str, **kwargs) -> bytes:
         """
@@ -67,46 +97,55 @@ class AsyncHttpClient:
         :param url: The endpoint URL.
         :param kwargs: Additional arguments for the `request` method.
         :return: The raw binary response content.
+        :raises: HttpError
         """
-        response = await self.request("POST", url, **kwargs)
-        return response
+        return await self.request("POST", url, **kwargs)
 
     async def stream_request(
             self,
             method: str,
             url: str,
             **kwargs
-    ) -> AsyncGenerator[Any, Any]:
+    ) -> AsyncGenerator[bytes, None]:
         """
         Makes a streaming HTTP request.
 
         :param method: The HTTP method (e.g., 'POST', 'GET', etc.).
         :param url: The endpoint URL.
         :param kwargs: Additional arguments for aiohttp's request.
-        :return: An async generator yielding chunks of data.
+        :yield: Chunks of data as bytes.
+        :raises: HttpError
         """
-        if not self.session:
-            raise RuntimeError("Session not initialized. Use 'with' block or call 'connect()'.")
+        self._ensure_session()
 
         timeout = aiohttp.ClientTimeout(total=kwargs.pop('timeout', None))
-        async with self.session.request(
-                method,
-                url,
-                timeout=timeout,
-                **kwargs
-        ) as response:
-            if response.status != 200:
-                raise Exception(await response.read())
-            async for chunk in response.content:
-                yield chunk
+        try:
+            async with self.session.request(
+                    method,
+                    url,
+                    timeout=timeout,
+                    **kwargs
+            ) as response:
+                if response.status != 200:
+                    content = await response.read()
+                    error_msg = f"HTTP {response.status}: {content.decode('utf-8', errors='replace')}"
+                    logger.error(f"Streaming request to {url} failed: {error_msg}")
+                    raise HttpError(error_msg, response.status, content)
 
-    async def post_stream(self, url: str, **kwargs) -> AsyncGenerator[Any, Any]:
+                async for chunk in response.content:
+                    yield chunk
+        except aiohttp.ClientError as e:
+            logger.error(f"Streaming request to {url} failed with aiohttp error: {str(e)}")
+            raise HttpError(f"aiohttp streaming error: {str(e)}")
+
+    async def post_stream(self, url: str, **kwargs) -> AsyncGenerator[bytes, None]:
         """
         Sends a POST request and returns a streaming response.
 
         :param url: The endpoint URL.
         :param kwargs: Additional arguments for the request method.
-        :return: An async generator yielding chunks of data.
+        :yield: Chunks of data as bytes.
+        :raises: HttpError
         """
         async for chunk in self.stream_request("POST", url, **kwargs):
             yield chunk
@@ -114,7 +153,7 @@ class AsyncHttpClient:
 
 class HttpClient:
     """
-    A reusable HTTP client for making requests using the requests library.
+    A reusable HTTP client for making synchronous requests using the requests library.
     """
 
     def __init__(self):
@@ -147,20 +186,26 @@ class HttpClient:
         :param url: The endpoint URL.
         :param kwargs: Additional arguments for requests.
         :return: The response content as bytes.
-        :raises: requests.exceptions.RequestException
+        :raises: HttpError, requests.exceptions.RequestException
         """
         self._ensure_session()
         try:
             response = self.session.request(method, url, **kwargs)
             if response.status_code != 200:
-                raise Exception(response.content)
+                error_msg = f"HTTP {response.status_code}: {response.content.decode('utf-8', errors='replace')}"
+                logger.error(f"Request to {url} failed: {error_msg}")
+                raise HttpError(error_msg, response.status_code, response.content)
             return response.content
         except RequestException as e:
             # Preserve the original error but add more context if possible
-            if hasattr(e.response, 'content'):
+            if hasattr(e, 'response') and hasattr(e.response, 'content'):
                 error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
-                raise type(e)(error_message) from None
-            raise
+                logger.error(f"Request to {url} failed: {error_message}")
+                raise HttpError(error_message, 
+                               getattr(e.response, 'status_code', None),
+                               getattr(e.response, 'content', None))
+            logger.error(f"Request to {url} failed with requests error: {str(e)}")
+            raise HttpError(f"requests error: {str(e)}")
 
     def post_json(self, url: str, **kwargs) -> Any:
         """
@@ -169,10 +214,14 @@ class HttpClient:
         :param url: The endpoint URL.
         :param kwargs: Additional arguments for the `request` method.
         :return: The parsed JSON response.
-        :raises: requests.exceptions.RequestException, json.JSONDecodeError
+        :raises: HttpError, json.JSONDecodeError
         """
         response = self.request("POST", url, **kwargs)
-        return json.loads(response.decode('utf-8'))
+        try:
+            return json.loads(response.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response from {url}: {str(e)}")
+            raise
 
     def post_raw_binary(self, url: str, **kwargs) -> bytes:
         """
@@ -181,7 +230,7 @@ class HttpClient:
         :param url: The endpoint URL.
         :param kwargs: Additional arguments for the `request` method.
         :return: The raw binary response content.
-        :raises: requests.exceptions.RequestException
+        :raises: HttpError
         """
         return self.request("POST", url, **kwargs)
 
@@ -198,7 +247,7 @@ class HttpClient:
         :param url: The endpoint URL.
         :param kwargs: Additional arguments for requests.
         :yield: Lines of text from the response.
-        :raises: requests.exceptions.RequestException
+        :raises: HttpError
         """
         self._ensure_session()
 
@@ -209,13 +258,20 @@ class HttpClient:
         try:
             with self.session.request(method, url, **kwargs) as response:
                 if response.status_code != 200:
-                    raise Exception(response.content)
+                    error_msg = f"HTTP {response.status_code}: {response.content.decode('utf-8', errors='replace')}"
+                    logger.error(f"Streaming request to {url} failed: {error_msg}")
+                    raise HttpError(error_msg, response.status_code, response.content)
+
                 for line in response.iter_lines(decode_unicode=False):
                     if line:
                         yield line.decode('utf-8')
         except RequestException as e:
             # Add context to the error if possible
-            if hasattr(e.response, 'content'):
+            if hasattr(e, 'response') and hasattr(e.response, 'content'):
                 error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
-                raise type(e)(error_message) from None
-            raise
+                logger.error(f"Streaming request to {url} failed: {error_message}")
+                raise HttpError(error_message,
+                               getattr(e.response, 'status_code', None),
+                               getattr(e.response, 'content', None))
+            logger.error(f"Streaming request to {url} failed with requests error: {str(e)}")
+            raise HttpError(f"requests streaming error: {str(e)}")
