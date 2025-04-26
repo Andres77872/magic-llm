@@ -41,7 +41,7 @@ class UsageModel(BaseModel):
 class ChatCompletionModel(BaseModel):
     id: str
     object: Optional['str'] = 'chat.completion.chunk'
-    created: Optional[int] = None
+    created: Optional[float] = None
     model: str
     system_fingerprint: Optional[Any] = None
     choices: List[ChoiceModel]
