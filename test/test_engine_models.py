@@ -1,6 +1,8 @@
-import os
-import pytest
 import json
+import os
+
+import pytest
+
 from magic_llm import MagicLLM
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat
@@ -23,7 +25,7 @@ TEST_PROVIDERS = [
 # Locate keys file via environment variable or default to test/keys.json
 KEYS_FILE = os.getenv(
     "MAGIC_LLM_KEYS",
-    os.path.join(os.path.dirname(__file__), "keys.json"),
+    "/home/andres/Documents/keys.json",
 )
 if not os.path.exists(KEYS_FILE):
     pytest.skip(
@@ -43,12 +45,17 @@ PROVIDERS = [
 if not PROVIDERS:
     pytest.skip("No matching providers found in keys file", allow_module_level=True)
 
+
 def _build_chat():
     """Construct a simple chat with a single user message."""
     chat = ModelChat()
     chat.add_user_message("Hello")
     return chat
 
+
+#
+#  Streaming tests (sync & async)
+#
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
     PROVIDERS,
@@ -58,10 +65,11 @@ def test_sync_stream_generate(provider, key_name, model, fail_model):
     keys = dict(ALL_KEYS[key_name])
     chat = _build_chat()
     client = MagicLLM(model=model, **keys)
-    content = ''
-    for i in client.llm.stream_generate(chat):
-        content += i.choices[0].delta.content or ''
+    content = ""
+    for chunk in client.llm.stream_generate(chat):
+        content += chunk.choices[0].delta.content or ""
     assert content
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -73,10 +81,11 @@ async def test_async_stream_generate(provider, key_name, model, fail_model):
     keys = dict(ALL_KEYS[key_name])
     chat = _build_chat()
     client = MagicLLM(model=model, **keys)
-    content = ''
-    async for i in client.llm.astream_generate(chat):
-        content += i.choices[0].delta.content or ''
+    content = ""
+    async for chunk in client.llm.async_stream_generate(chat):
+        content += chunk.choices[0].delta.content or ""
     assert content
+
 
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
@@ -88,9 +97,9 @@ def test_sync_stream_generate_fail(provider, key_name, model, fail_model):
     chat = _build_chat()
     client = MagicLLM(model=fail_model, **keys)
     with pytest.raises(ChatException):
-        content = ''
-        for i in client.llm.stream_generate(chat):
-            content += i.choices[0].delta.content or ''
+        for chunk in client.llm.stream_generate(chat):
+            _ = chunk.choices[0].delta.content or ""
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -103,6 +112,191 @@ async def test_async_stream_generate_fail(provider, key_name, model, fail_model)
     chat = _build_chat()
     client = MagicLLM(model=fail_model, **keys)
     with pytest.raises(ChatException):
-        content = ''
-        async for i in client.llm.astream_generate(chat):
-            content += i.choices[0].delta.content or ''
+        async for chunk in client.llm.async_stream_generate(chat):
+            _ = chunk.choices[0].delta.content or ""
+
+
+#
+#  Non‐streaming tests
+#
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "fail_model"),
+    PROVIDERS,
+    ids=[p[0] for p in PROVIDERS],
+)
+def test_sync_non_stream_generate(provider, key_name, model, fail_model):
+    keys = dict(ALL_KEYS[key_name])
+    chat = _build_chat()
+
+    # valid model → succeeds
+    good = MagicLLM(model=model, **keys)
+    resp = good.llm.generate(chat)
+    assert resp.content, "Expected non‐empty content"
+
+    # invalid model → ChatException
+    bad = MagicLLM(model=fail_model, **keys)
+    with pytest.raises(ChatException):
+        bad.llm.generate(chat)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "fail_model"),
+    PROVIDERS,
+    ids=[p[0] for p in PROVIDERS],
+)
+async def test_async_non_stream_generate(provider, key_name, model, fail_model):
+    keys = dict(ALL_KEYS[key_name])
+    chat = _build_chat()
+
+    good = MagicLLM(model=model, **keys)
+    resp = await good.llm.async_generate(chat)
+    assert resp.content, "Expected non‐empty content"
+
+    bad = MagicLLM(model=fail_model, **keys)
+    with pytest.raises(ChatException):
+        await bad.llm.async_generate(chat)
+
+
+#
+#  Fallback tests
+#
+def _make_fallback_client(key_name, success_model):
+    keys = dict(ALL_KEYS[key_name])
+    return MagicLLM(model=success_model, **keys)
+
+
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "fail_model"),
+    PROVIDERS,
+    ids=[p[0] for p in PROVIDERS],
+)
+def test_sync_non_stream_fallback(provider, key_name, model, fail_model):
+    keys = dict(ALL_KEYS[key_name])
+    chat = _build_chat()
+    client = MagicLLM(
+        model=fail_model,
+        fallback=_make_fallback_client(key_name, model),
+        **keys,
+    )
+    resp = client.llm.generate(chat)
+    assert resp.content, "Expected fallback content"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "fail_model"),
+    PROVIDERS,
+    ids=[p[0] for p in PROVIDERS],
+)
+async def test_async_non_stream_fallback(provider, key_name, model, fail_model):
+    keys = dict(ALL_KEYS[key_name])
+    chat = _build_chat()
+    client = MagicLLM(
+        model=fail_model,
+        fallback=_make_fallback_client(key_name, model),
+        **keys,
+    )
+    resp = await client.llm.async_generate(chat)
+    assert resp.content, "Expected fallback content"
+
+
+#
+#  Usage & callback tests (streaming)
+#
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "fail_model"),
+    PROVIDERS,
+    ids=[p[0] for p in PROVIDERS],
+)
+def test_sync_generate_usage_and_callback(provider, key_name, model, fail_model):
+    keys = dict(ALL_KEYS[key_name])
+    chat = _build_chat()
+    calls = []
+
+    def cb(msg: ModelChat, content: str, usage, model_name: str, meta):
+        calls.append((content, usage, model_name))
+
+    client = MagicLLM(
+        model=fail_model,
+        fallback=_make_fallback_client(key_name, model),
+        callback=cb,
+        **keys,
+    )
+    output = ""
+    for chunk in client.llm.stream_generate(chat):
+        output += chunk.choices[0].delta.content or ""
+
+    assert calls, "Callback was not invoked"
+    last_usage = calls[-1][1]
+    assert last_usage.prompt_tokens > 0
+    assert last_usage.completion_tokens > 0
+    assert output, "Expected some streamed content"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "fail_model"),
+    PROVIDERS,
+    ids=[p[0] for p in PROVIDERS],
+)
+async def test_async_generate_usage_and_callback(provider, key_name, model, fail_model):
+    keys = dict(ALL_KEYS[key_name])
+    chat = _build_chat()
+    calls = []
+
+    def cb(msg: ModelChat, content: str, usage, model_name: str, meta):
+        calls.append((content, usage, model_name))
+
+    client = MagicLLM(
+        model=fail_model,
+        fallback=_make_fallback_client(key_name, model),
+        callback=cb,
+        **keys,
+    )
+    output = ""
+    async for chunk in client.llm.async_stream_generate(chat):
+        output += chunk.choices[0].delta.content or ""
+
+    assert calls, "Callback was not invoked"
+    last_usage = calls[-1][1]
+    assert last_usage.prompt_tokens > 0
+    assert last_usage.completion_tokens > 0
+    assert output, "Expected some streamed content"
+
+
+#
+#  Usage tests (non‐streaming)
+#
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "fail_model"),
+    PROVIDERS,
+    ids=[p[0] for p in PROVIDERS],
+)
+def test_sync_non_stream_usage(provider, key_name, model, fail_model):
+    keys = dict(ALL_KEYS[key_name])
+    chat = _build_chat()
+    client = MagicLLM(model=model, **keys)
+    resp = client.llm.generate(chat)
+    u = resp.usage
+    assert u.prompt_tokens > 0
+    assert u.completion_tokens > 0
+    # in non‐streaming, no first‐token latency recorded
+    assert u.ttft == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "fail_model"),
+    PROVIDERS,
+    ids=[p[0] for p in PROVIDERS],
+)
+async def test_async_non_stream_usage(provider, key_name, model, fail_model):
+    keys = dict(ALL_KEYS[key_name])
+    chat = _build_chat()
+    client = MagicLLM(model=model, **keys)
+    resp = await client.llm.async_generate(chat)
+    u = resp.usage
+    assert u.prompt_tokens > 0
+    assert u.completion_tokens > 0
+    assert u.ttft == 0
