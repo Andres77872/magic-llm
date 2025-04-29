@@ -1,6 +1,9 @@
+import logging
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChatResponse
 from magic_llm.util.tokenizer import from_openai
+
+logger = logging.getLogger(__name__)
 
 
 class ModelChat:
@@ -60,26 +63,85 @@ class ModelChat:
             "content": content
         })
 
+    # Define format templates as class attributes for better maintainability
+    FORMAT_TEMPLATES = {
+        'generic': {
+            'message_format': "{role}: {content}",
+            'separator': "\n",
+            'suffix': '\nassistant: ',
+            'role_mapping': {}
+        },
+        'titan': {
+            'message_format': "{role}: {content}",
+            'separator': "\n",
+            'suffix': '\nAssistant: ',
+            'role_mapping': {'user': 'User'}
+        },
+        'claude': {
+            'message_format': "{role}: {content}",
+            'separator': "\n\n",
+            'suffix': '\n\nAssistant: ',
+            'role_mapping': {'user': 'Human', 'assistant': 'Assistant'}
+        },
+        'llama2': {
+            'message_format': "{content}" if "{role}" == "assistant" else "[INST]{content}[/INST]",
+            'separator': "\n",
+            'suffix': '\n',
+            'role_mapping': {},
+            'special_format': True
+        }
+    }
+
     def generic_chat(self, format: str = 'generic'):
+        """
+        Format the chat messages according to the specified format.
+
+        Args:
+            format: The format to use ('generic', 'titan', 'claude', 'llama2')
+
+        Returns:
+            The formatted chat string
+
+        Raises:
+            ValueError: If an unsupported format is specified
+        """
         messages = self.get_messages()
-        if format == 'generic':
-            return "\n".join([
-                f"{message['role']}: {message['content']}"
-                for message in messages]) + '\nassistant: '
-        elif format == 'titan':
-            return "\n".join([
-                f"{message['role'].replace('user', 'User')}: {message['content']}"
-                for message in messages]) + f'\nAssistant: '
-        elif format == 'claude':
-            return "\n\n".join([
-                f"{message['role'].replace('user', 'Human').replace('assistant', 'Assistant')}: {message['content']}"
-                for message in messages]) + f'\n\nAssistant: '
-        elif format == 'llama2':
-            return "\n".join([
-                f"{message['content']}"
-                if message['role'] in {'assistant'} else
-                f"[INST]{message['content']}[/INST]"
-                for message in messages]) + f'\n'
+
+        # Get the format template or raise an error for unsupported formats
+        if format not in self.FORMAT_TEMPLATES:
+            supported_formats = ", ".join(self.FORMAT_TEMPLATES.keys())
+            raise ValueError(f"Unsupported format: {format}. Supported formats: {supported_formats}")
+
+        template = self.FORMAT_TEMPLATES[format]
+
+        # Handle special formats like llama2 that need custom processing
+        if template.get('special_format'):
+            if format == 'llama2':
+                return "\n".join([
+                    f"{message['content']}"
+                    if message['role'] in {'assistant'} else
+                    f"[INST]{message['content']}[/INST]"
+                    for message in messages
+                ]) + template['suffix']
+            # Add other special formats here as needed
+
+        # Standard format processing
+        formatted_messages = []
+        for message in messages:
+            # Apply role mapping if defined
+            role = message['role']
+            for original, replacement in template['role_mapping'].items():
+                role = role.replace(original, replacement)
+
+            # Format the message
+            formatted_message = template['message_format'].format(
+                role=role,
+                content=message['content']
+            )
+            formatted_messages.append(formatted_message)
+
+        # Join messages with the separator and add the suffix
+        return template['separator'].join(formatted_messages) + template['suffix']
 
     def __str__(self):
         return "\n".join([f"{message['role']}: {message['content']}" for message in self.get_messages()])
@@ -151,7 +213,7 @@ class ModelChat:
                 error_code='SYSTEM_MESSAGE_EXCEEDS_TOKEN_LIMIT'
             )
 
-        print(
+        logger.info(
             f'Messages exceed token limit. Truncating from {total_tokens} to '
             f'{self.max_input_tokens} tokens (system tokens: {system_tokens})'
         )
@@ -175,7 +237,7 @@ class ModelChat:
                 truncated_messages.append(msg)
 
         final_messages = truncated_messages[::-1]
-        print(f'Messages truncated to {self.num_tokens_from_messages(final_messages)} tokens')
+        logger.info(f'Messages truncated to {self.num_tokens_from_messages(final_messages)} tokens')
         return final_messages
 
     def __add__(self, chat: 'ModelChatResponse') -> 'ModelChat':
