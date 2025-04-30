@@ -1,3 +1,4 @@
+import difflib
 import json
 import os
 
@@ -6,6 +7,7 @@ import pytest
 from magic_llm import MagicLLM
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat
+from magic_llm.model.ModelAudio import AudioTranscriptionsRequest
 
 # Provider configurations: (provider_name, key_name_in_json, success_model, fail_model)
 TEST_PROVIDERS = [
@@ -20,6 +22,31 @@ TEST_PROVIDERS = [
     ("SambaNova", "SambaNova", "Meta-Llama-3.1-8B-Instruct", "FAIL/Meta-Llama-3.1-8B-Instruct"),
     ("deepinfra", "deepinfra", "microsoft/WizardLM-2-8x22B", "microsoft/WizardLM-2-8x22B-model-fail"),
     ("deepseek", "deepseek", "deepseek-chat", "FAIL/deepseek-chat"),
+    ("parasail", "parasail", "parasail-mistral-nemo", "parasail-mistral-nemo-fail"),
+    ("x.ai", "x.ai", "grok-3-mini", "grok-3-mini-fail"),
+    ("together.ai", "together.ai", "meta-llama/Llama-3-8b-chat-hf", "meta-llama/Llama-3-8b-chat-hf-fail"),
+    ("perplexity", "perplexity", "sonar", "sonar-fail"),
+    ("openrouter", "openrouter", "mistralai/mistral-nemo", "mistralai/mistral-nemo-fail"),
+    ("novita.ai", "novita.ai", "mistralai/mistral-nemo", "FAIL/mistralai/mistral-nemo"),
+    ("mistral", "mistral", "open-mistral-7b", "FAIL/open-mistral-7b"),
+    ("hyperbolic", "hyperbolic", "meta-llama/Meta-Llama-3.1-8B-Instruct", "FAIL/meta-llama/Meta-Llama-3.1-8B-Instruct"),
+    ("groq", "groq", "llama3-8b-8192", "FAIL/llama3-8b-8192"),
+    ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/llama4-scout-instruct-basic",
+     "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
+]
+
+# Providers with audio cap
+AUDIO_PROVIDERS = [
+    ("deepinfra", "openai", {"model": "openai/whisper-large-v3"}),
+    ("fireworks.ai", "openai", {"model": "whisper-v3"}),
+    ("groq", "openai", {"model": "whisper-large-v3"}),
+    ("azure", "azure", {"language": "es-MX"}),
+    ("openai", "openai", {"model": "whisper-1"}),
+]
+
+# Providers with embedding cap
+EMBEDDING_PROVIDERS = [
+
 ]
 
 # Locate keys file via environment variable or default to test/keys.json
@@ -84,6 +111,7 @@ async def test_async_stream_generate(provider, key_name, model, fail_model):
     content = ""
     async for chunk in client.llm.async_stream_generate(chat):
         content += chunk.choices[0].delta.content or ""
+    print(content)
     assert content
 
 
@@ -300,3 +328,37 @@ async def test_async_non_stream_usage(provider, key_name, model, fail_model):
     assert u.prompt_tokens > 0
     assert u.completion_tokens > 0
     assert u.ttft == 0
+
+
+def similarity(a, b):
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+EXPECTED_TEXT = (
+    "Dado que se trata de un único pago por el proyecto completo, debes tener en cuenta "
+    "el valor a largo plazo que generará para el cliente, en lugar de solo el costo operativo o "
+    "el tiempo invertido. Anteriormente, consideramos un escenario en que el cliente podía ahorrar "
+    "entre 400 y 700 USD al mes en costos internos debido a la mayor precisión y eficiencia del sistema."
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key_name", "provider", "kwargs"),
+    AUDIO_PROVIDERS,
+    ids=[p[0] for p in AUDIO_PROVIDERS],
+)
+async def test_async_audio_transcriptions(key_name, provider, kwargs):
+    keys = dict(ALL_KEYS[key_name])
+    with open('/home/andres/Music/speech.mp3', 'rb') as f:
+        data = AudioTranscriptionsRequest(
+            file=f.read(),
+            **kwargs,
+        )
+
+    client = MagicLLM(**keys)
+    resp = await client.llm.async_audio_transcriptions(data)
+    received_text = resp['text'].strip().lower()
+    expected_text = EXPECTED_TEXT.strip().lower()
+    sim = similarity(received_text[:len(expected_text)], expected_text)
+    assert sim > 0.95, f'FAIL: similitud baja ({sim:.3f})!\nEsperado: {expected_text}\nGenerado: {received_text}'

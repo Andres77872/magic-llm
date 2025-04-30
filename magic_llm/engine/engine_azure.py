@@ -6,6 +6,7 @@ from magic_llm.util.http import AsyncHttpClient
 
 class EngineAzure(BaseChat):
     engine = 'azure'
+
     def __init__(self,
                  speech_key: str,
                  speech_region: str,
@@ -69,5 +70,6 @@ class EngineAzure(BaseChat):
                 url=self.base_transcription_url + data.language,
                 headers=headers,
                 data=data.file)
-
-            return response
+            return {
+                'text': response['DisplayText'],
+            }
