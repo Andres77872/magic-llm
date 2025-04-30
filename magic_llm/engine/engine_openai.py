@@ -1,4 +1,5 @@
 # https://cookbook.openai.com/examples/how_to_format_inputs_to_chatgpt_models
+import json
 import logging
 import re
 from typing import Callable, Dict, Type, Optional
@@ -179,7 +180,7 @@ class EngineOpenAI(BaseChat):
                 **kwargs
             }
             response = client.post_json(url=self.base.base_url + '/embeddings',
-                                        data=data,
+                                        data=json.dumps(data),
                                         headers=self.base.headers)
             return response
 

@@ -46,7 +46,11 @@ AUDIO_PROVIDERS = [
 
 # Providers with embedding cap
 EMBEDDING_PROVIDERS = [
-
+    # ("openai", "openai", {"model": "text-embedding-3-small"}),
+    # ("deepinfra", "openai", {"model": "BAAI/bge-m3", "encoding_format": "float"}),
+    # ("novita.ai", "openai", {"model": "baai/bge-m3", "encoding_format": "float"}),
+    # ("mistral", "openai", {"model": "mistral-embed"}),
+    ("together.ai", "openai", {"model": "BAAI/bge-base-en-v1.5"}),
 ]
 
 # Locate keys file via environment variable or default to test/keys.json
@@ -362,3 +366,15 @@ async def test_async_audio_transcriptions(key_name, provider, kwargs):
     expected_text = EXPECTED_TEXT.strip().lower()
     sim = similarity(received_text[:len(expected_text)], expected_text)
     assert sim > 0.95, f'FAIL: similitud baja ({sim:.3f})!\nEsperado: {expected_text}\nGenerado: {received_text}'
+
+
+@pytest.mark.parametrize(
+    ("key_name", "provider", "kwargs"),
+    EMBEDDING_PROVIDERS,
+    ids=[p[0] for p in EMBEDDING_PROVIDERS],
+)
+def test_sync_embedding_single(key_name, provider, kwargs):
+    keys = dict(ALL_KEYS[key_name])
+    client = MagicLLM(**keys, **kwargs)
+    resp = client.llm.embedding(text=EXPECTED_TEXT)
+    print(resp)
