@@ -1,3 +1,5 @@
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Andres77872/magic-llm)
+
 # Magic LLM
 
 Magic LLM is a unified, simplified wrapper for connecting to a wide range of LLM providers, including:
