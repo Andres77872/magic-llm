@@ -46,6 +46,7 @@ class ChatCompletionModel(BaseModel):
     system_fingerprint: Optional[Any] = None
     choices: List[ChoiceModel]
     usage: Optional[UsageModel] = UsageModel()
+    extras: Optional[Any] = None
 
 
 class ChatMetaModel(BaseModel):

@@ -25,9 +25,10 @@ Magic LLM is a unified, simplified wrapper for connecting to a wide range of LLM
 - [Groq](https://console.groq.com/docs/openai)
 - [Fireworks.AI](https://docs.fireworks.ai/getting-started/introduction)
 - [Perplexity AI](https://docs.perplexity.ai/home)
-- [Azure OpenAI](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference)
-  
-*Note: Many of these providers have been verified compatible with OpenAI's API or are supported natively. Some may require non-standard argument/credential patterns.*
+- [Azure]()
+
+*Note: Many of these providers have been verified compatible with OpenAI's API or are supported natively. Some may
+require non-standard argument/credential patterns.*
 
 ---
 
@@ -35,30 +36,31 @@ Magic LLM is a unified, simplified wrapper for connecting to a wide range of LLM
 
 | Provider         | Streaming | Completion | Embedding | Audio | Async Streaming | Async Completion | Fallback | Callback |
 |------------------|-----------|------------|-----------|-------|-----------------|------------------|----------|----------|
-| OpenAI           | ✅         | ✅          | ✅         | ✅    | ✅               | ✅                | ✅       | ✅       |
-| Cloudflare       | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| AWS Bedrock      | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| Google AI Studio | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| Cohere           | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| Anthropic        | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| LeptonAI         | ✅         | ✅          | ❌         | ❌    | ❓               | ✅                | ✅       | ✅       |
-| Cerebras         | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| SambaNova        | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| DeepInfra        | ✅         | ✅          | ✅         | ✅    | ✅               | ✅                | ✅       | ✅       |
-| Deepseek         | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| Parasail         | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| x.ai             | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| Together.AI      | ✅         | ✅          | ✅         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| Perplexity AI    | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| OpenRouter       | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| NovitaAI         | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| Mistral          | ✅         | ✅          | ✅         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| Hyperbolic       | ✅         | ✅          | ❌         | ❌    | ✅               | ✅                | ✅       | ✅       |
-| Groq             | ✅         | ✅          | ❌         | ✅    | ✅               | ✅                | ✅       | ✅       |
-| Fireworks.AI     | ✅         | ✅          | ✅         | ✅    | ✅               | ✅                | ✅       | ✅       |
-| Azure OpenAI     | ✅         | ✅          | ✅         | ✅    | ✅               | ✅                | ✅       | ✅       |
+| OpenAI           | ✅         | ✅          | ✅         | ✅     | ✅               | ✅                | ✅        | ✅        |
+| Cloudflare       | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| AWS Bedrock      | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| Google AI Studio | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| Cohere           | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| Anthropic        | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| LeptonAI         | ✅         | ✅          | ❌         | ❌     | ❓               | ✅                | ✅        | ✅        |
+| Cerebras         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| SambaNova        | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| DeepInfra        | ✅         | ✅          | ✅         | ✅     | ✅               | ✅                | ✅        | ✅        |
+| Deepseek         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| Parasail         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| x.ai             | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| Together.AI      | ✅         | ✅          | ✅         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| Perplexity AI    | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| OpenRouter       | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| NovitaAI         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| Mistral          | ✅         | ✅          | ✅         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| Hyperbolic       | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
+| Groq             | ✅         | ✅          | ❌         | ✅     | ✅               | ✅                | ✅        | ✅        |
+| Fireworks.AI     | ✅         | ✅          | ✅         | ✅     | ✅               | ✅                | ✅        | ✅        |
+| Azure            | ❓         | ❓          | ❌         | ✅     | ❓               | ❓                | ✅        | ✅        |
 
 *Legend:*
+
 - **Streaming:** Supports incremental streamed responses
 - **Completion:** Supports single result completion
 - **Embedding:** Supports text embedding generation
@@ -91,7 +93,9 @@ Magic LLM is a unified, simplified wrapper for connecting to a wide range of LLM
 
 ## Purpose
 
-Magic LLM is designed as the backend core for [Magic UI](https://talk.novus.chat/), an application generator (RAG) and multivendor LLM front-end. It is **not** a full OpenAI client replacement, but strives for wide usability and API/response shape compatibility.
+Magic LLM is designed as the backend core for [Magic UI](https://talk.novus.chat/), an application generator (RAG) and
+multivendor LLM front-end. It is **not** a full OpenAI client replacement, but strives for wide usability and
+API/response shape compatibility.
 
 ---
 
@@ -151,9 +155,11 @@ print()  # Newline at end
 ```python
 import asyncio
 
+
 async def main():
     async for chunk in client.llm.async_stream_generate(chat):
         print(chunk.choices[0].delta.content or '', end='', flush=True)
+
 
 asyncio.run(main())
 ```
@@ -186,6 +192,7 @@ Attach a callback for every final output (after fallback, if needed):
 def on_chunk(msg, content, usage, model_name, meta):
     print(f"Used model {model_name}: [{usage.prompt_tokens}pt >> {usage.completion_tokens}ct] {content}")
 
+
 client = MagicLLM(
     engine='openai',
     model='bad-model',
@@ -202,7 +209,8 @@ for chunk in client.llm.stream_generate(chat):
 
 ## Audio Transcription (Speech-to-Text)
 
-If your provider or endpoint supports OpenAI Whisper API (e.g. OpenAI, Azure, DeepInfra, Groq, Fireworks), you can transcribe audio files with a unified API:
+If your provider or endpoint supports OpenAI Whisper API (e.g. OpenAI, Azure, DeepInfra, Groq, Fireworks), you can
+transcribe audio files with a unified API:
 
 ```python
 from magic_llm.model.ModelAudio import AudioTranscriptionsRequest
@@ -245,6 +253,7 @@ client = MagicLLM(
 ```
 
 **Cloudflare:**
+
 ```python
 client = MagicLLM(
     engine='cloudflare',
@@ -255,6 +264,7 @@ client = MagicLLM(
 ```
 
 **AWS Bedrock:**
+
 ```python
 client = MagicLLM(
     engine='amazon',
@@ -266,6 +276,7 @@ client = MagicLLM(
 ```
 
 **Google AI Studio:**
+
 ```python
 client = MagicLLM(
     engine='google',
@@ -275,6 +286,7 @@ client = MagicLLM(
 ```
 
 **Cohere:**
+
 ```python
 client = MagicLLM(
     engine='cohere',
@@ -284,6 +296,7 @@ client = MagicLLM(
 ```
 
 **Anthropic:**
+
 ```python
 client = MagicLLM(
     engine='anthropic',
@@ -292,7 +305,8 @@ client = MagicLLM(
 )
 ```
 
-**Other providers**: use the same builder pattern, see provider docs or examples. Some models/engines require special names.
+**Other providers**: use the same builder pattern, see provider docs or examples. Some models/engines require special
+names.
 
 ---
 
