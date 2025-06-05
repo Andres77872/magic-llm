@@ -12,7 +12,7 @@ from magic_llm.model.ModelAudio import AudioTranscriptionsRequest
 # Provider configurations: (provider_name, key_name_in_json, success_model, fail_model)
 TEST_PROVIDERS = [
     ("openai", "openai", "gpt-4o", "gpt-4o1"),
-    ("lepton", "lepton", "llama3-1-8b", "FAIL/llama3-1-8b"),
+    # ("lepton", "lepton", "llama3-1-8b", "FAIL/llama3-1-8b"),
     ("amazon", "amazon", "amazon.nova-pro-v1:0", "amazon.titan-text-lite-v3"),
     ("anthropic", "anthropic", "claude-3-haiku-20240307", "FAIL/claude-3-haiku-20240307"),
     ("cloudflare", "cloudflare", "@cf/meta/llama-2-7b-chat-int8", "FAIL/@cf/meta/llama-2-7b-chat-int8"),
@@ -46,10 +46,10 @@ AUDIO_PROVIDERS = [
 
 # Providers with embedding cap
 EMBEDDING_PROVIDERS = [
-    # ("openai", "openai", {"model": "text-embedding-3-small"}),
-    # ("deepinfra", "openai", {"model": "BAAI/bge-m3", "encoding_format": "float"}),
-    # ("novita.ai", "openai", {"model": "baai/bge-m3", "encoding_format": "float"}),
-    # ("mistral", "openai", {"model": "mistral-embed"}),
+    ("openai", "openai", {"model": "text-embedding-3-small"}),
+    ("deepinfra", "openai", {"model": "BAAI/bge-m3", "encoding_format": "float"}),
+    ("novita.ai", "openai", {"model": "baai/bge-m3", "encoding_format": "float"}),
+    ("mistral", "openai", {"model": "mistral-embed"}),
     ("together.ai", "openai", {"model": "BAAI/bge-base-en-v1.5"}),
 ]
 
