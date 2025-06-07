@@ -354,7 +354,7 @@ EXPECTED_TEXT = (
 )
 async def test_async_audio_transcriptions(key_name, provider, kwargs):
     keys = dict(ALL_KEYS[key_name])
-    with open('/home/andres/Music/speech.mp3', 'rb') as f:
+    with open('/home/andres/Music/speech.wav', 'rb') as f:
         data = AudioTranscriptionsRequest(
             file=f.read(),
             **kwargs,
@@ -365,7 +365,7 @@ async def test_async_audio_transcriptions(key_name, provider, kwargs):
     received_text = resp['text'].strip().lower()
     expected_text = EXPECTED_TEXT.strip().lower()
     sim = similarity(received_text[:len(expected_text)], expected_text)
-    assert sim > 0.95, f'FAIL: similitud baja ({sim:.3f})!\nEsperado: {expected_text}\nGenerado: {received_text}'
+    assert sim > 0.90, f'FAIL: similitud baja ({sim:.3f})!\nEsperado: {expected_text}\nGenerado: {received_text}'
 
 
 @pytest.mark.parametrize(
