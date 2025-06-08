@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import asyncio
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
@@ -46,4 +47,17 @@ def test_sync_embedding_single(key_name, provider, kwargs):
     keys = dict(ALL_KEYS[key_name])
     client = MagicLLM(**keys, **kwargs)
     resp = client.llm.embedding(text=EXPECTED_TEXT)
+    print(resp)
+
+
+@pytest.mark.parametrize(
+    ("key_name", "provider", "kwargs"),
+    EMBEDDING_PROVIDERS,
+    ids=[p[0] for p in EMBEDDING_PROVIDERS],
+)
+@pytest.mark.asyncio
+async def test_async_embedding_single(key_name, provider, kwargs):
+    keys = dict(ALL_KEYS[key_name])
+    client = MagicLLM(**keys, **kwargs)
+    resp = await client.llm.async_embedding(text=EXPECTED_TEXT)
     print(resp)
