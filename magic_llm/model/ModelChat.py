@@ -30,17 +30,18 @@ class ModelChat:
             "content": content
         })
 
-    def add_user_message(self, content: str, image: Union[str, bytes, list[Union[str, bytes]]] = None,
+    def add_user_message(self, content: str,
+                         image: Union[str, bytes, list[Union[str, bytes]]] = None,
                          media_type: str = 'image/jpeg'):
-        def process_image(img: Union[str, bytes], media_type: str) -> dict:
+        def process_image(i: Union[str, bytes], mt: str) -> dict:
             """Process a single image and return the appropriate format"""
-            if isinstance(img, str):
+            if isinstance(i, str):
                 # Check if it's a URL
-                if img.startswith(('http://', 'https://', 'data:')):
+                if i.startswith(('http://', 'https://', 'data:')):
                     return {
                         "type": "image_url",
                         "image_url": {
-                            "url": img
+                            "url": i
                         }
                     }
                 else:
@@ -48,20 +49,20 @@ class ModelChat:
                     return {
                         "type": "image_url",
                         "image_url": {
-                            "url": f"data:{media_type};base64,{img}"
+                            "url": f"data:{mt};base64,{i}"
                         }
                     }
-            elif isinstance(img, bytes):
+            elif isinstance(i, bytes):
                 # Convert bytes to base64
-                base64_image = base64.b64encode(img).decode('utf-8')
+                base64_image = base64.b64encode(i).decode('utf-8')
                 return {
                     "type": "image_url",
                     "image_url": {
-                        "url": f"data:{media_type};base64,{base64_image}"
+                        "url": f"data:{mt};base64,{base64_image}"
                     }
                 }
             else:
-                raise ValueError(f"Unsupported image type: {type(img)}")
+                raise ValueError(f"Unsupported image type: {type(i)}")
 
         _content = None
 
