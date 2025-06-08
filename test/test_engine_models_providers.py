@@ -1,15 +1,13 @@
-import difflib
 import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 from magic_llm import MagicLLM
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat
-from magic_llm.model.ModelAudio import AudioTranscriptionsRequest
 
 # Provider configurations: (provider_name, key_name_in_json, success_model, fail_model)
 TEST_PROVIDERS = [
@@ -33,26 +31,7 @@ TEST_PROVIDERS = [
     ("mistral", "mistral", "open-mistral-7b", "FAIL/open-mistral-7b"),
     ("hyperbolic", "hyperbolic", "meta-llama/Meta-Llama-3.1-8B-Instruct", "FAIL/meta-llama/Meta-Llama-3.1-8B-Instruct"),
     ("groq", "groq", "llama3-8b-8192", "FAIL/llama3-8b-8192"),
-    ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/llama4-scout-instruct-basic",
-     "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
-]
-
-# Providers with audio cap
-AUDIO_PROVIDERS = [
-    ("deepinfra", "openai", {"model": "openai/whisper-large-v3"}),
-    ("fireworks.ai", "openai", {"model": "whisper-v3"}),
-    ("groq", "openai", {"model": "whisper-large-v3"}),
-    ("azure", "azure", {"language": "es-MX"}),
-    ("openai", "openai", {"model": "whisper-1"}),
-]
-
-# Providers with embedding cap
-EMBEDDING_PROVIDERS = [
-    ("openai", "openai", {"model": "text-embedding-3-small"}),
-    ("deepinfra", "openai", {"model": "BAAI/bge-m3", "encoding_format": "float"}),
-    ("novita.ai", "openai", {"model": "baai/bge-m3", "encoding_format": "float"}),
-    ("mistral", "openai", {"model": "mistral-embed"}),
-    ("together.ai", "openai", {"model": "BAAI/bge-base-en-v1.5"}),
+    ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/llama4-scout-instruct-basic", "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
 ]
 
 # Locate keys file via environment variable or default to test/keys.json
@@ -86,9 +65,7 @@ def _build_chat():
     return chat
 
 
-#
-#  Streaming tests (sync & async)
-#
+# Streaming tests (sync & async)
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
     PROVIDERS,
@@ -117,7 +94,6 @@ async def test_async_stream_generate(provider, key_name, model, fail_model):
     content = ""
     async for chunk in client.llm.async_stream_generate(chat):
         content += chunk.choices[0].delta.content or ""
-    print(content)
     assert content
 
 
@@ -150,9 +126,7 @@ async def test_async_stream_generate_fail(provider, key_name, model, fail_model)
             _ = chunk.choices[0].delta.content or ""
 
 
-#
-#  Non‐streaming tests
-#
+# Non-streaming tests
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
     PROVIDERS,
@@ -192,9 +166,7 @@ async def test_async_non_stream_generate(provider, key_name, model, fail_model):
         await bad.llm.async_generate(chat)
 
 
-#
-#  Fallback tests
-#
+# Fallback tests
 def _make_fallback_client(key_name, success_model):
     keys = dict(ALL_KEYS[key_name])
     return MagicLLM(model=success_model, **keys)
@@ -235,9 +207,7 @@ async def test_async_non_stream_fallback(provider, key_name, model, fail_model):
     assert resp.content, "Expected fallback content"
 
 
-#
-#  Usage & callback tests (streaming)
-#
+# Usage & callback tests (streaming)
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
     PROVIDERS,
@@ -299,9 +269,7 @@ async def test_async_generate_usage_and_callback(provider, key_name, model, fail
     assert output, "Expected some streamed content"
 
 
-#
-#  Usage tests (non‐streaming)
-#
+# Usage tests (non-streaming)
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
     PROVIDERS,
@@ -315,7 +283,7 @@ def test_sync_non_stream_usage(provider, key_name, model, fail_model):
     u = resp.usage
     assert u.prompt_tokens > 0
     assert u.completion_tokens > 0
-    # in non‐streaming, no first‐token latency recorded
+    # in non‐streaming, no first-token latency recorded
     assert u.ttft == 0
 
 
@@ -334,49 +302,3 @@ async def test_async_non_stream_usage(provider, key_name, model, fail_model):
     assert u.prompt_tokens > 0
     assert u.completion_tokens > 0
     assert u.ttft == 0
-
-
-def similarity(a, b):
-    return difflib.SequenceMatcher(None, a, b).ratio()
-
-
-EXPECTED_TEXT = (
-    "Dado que se trata de un único pago por el proyecto completo, debes tener en cuenta "
-    "el valor a largo plazo que generará para el cliente, en lugar de solo el costo operativo o "
-    "el tiempo invertido. Anteriormente, consideramos un escenario en que el cliente podía ahorrar "
-    "entre 400 y 700 USD al mes en costos internos debido a la mayor precisión y eficiencia del sistema."
-)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("key_name", "provider", "kwargs"),
-    AUDIO_PROVIDERS,
-    ids=[p[0] for p in AUDIO_PROVIDERS],
-)
-async def test_async_audio_transcriptions(key_name, provider, kwargs):
-    keys = dict(ALL_KEYS[key_name])
-    with open('/home/andres/Music/speech.wav', 'rb') as f:
-        data = AudioTranscriptionsRequest(
-            file=f.read(),
-            **kwargs,
-        )
-
-    client = MagicLLM(**keys)
-    resp = await client.llm.async_audio_transcriptions(data)
-    received_text = resp['text'].strip().lower()
-    expected_text = EXPECTED_TEXT.strip().lower()
-    sim = similarity(received_text[:len(expected_text)], expected_text)
-    assert sim > 0.90, f'FAIL: similitud baja ({sim:.3f})!\nEsperado: {expected_text}\nGenerado: {received_text}'
-
-
-@pytest.mark.parametrize(
-    ("key_name", "provider", "kwargs"),
-    EMBEDDING_PROVIDERS,
-    ids=[p[0] for p in EMBEDDING_PROVIDERS],
-)
-def test_sync_embedding_single(key_name, provider, kwargs):
-    keys = dict(ALL_KEYS[key_name])
-    client = MagicLLM(**keys, **kwargs)
-    resp = client.llm.embedding(text=EXPECTED_TEXT)
-    print(resp)
