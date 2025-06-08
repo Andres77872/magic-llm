@@ -4,12 +4,14 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel, \
+    PromptTokensDetailsModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class EngineAnthropic(BaseChat):
     engine = 'anthropic'
+
     def __init__(self,
                  api_key: str,
                  **kwargs) -> None:
@@ -18,44 +20,45 @@ class EngineAnthropic(BaseChat):
         self.api_key = api_key
 
     def prepare_chunk(self, event: dict, idx, usage):
-        chunk = None
-        finish_reason = None
         if event['type'] == 'message_start':
             idx = event['message']['id']
             meta = event['message']['usage']
-            usage = {
-                "prompt_tokens": meta['input_tokens'] +
-                                 meta.get('cache_read_input_tokens', 0) +
-                                 meta.get('cache_creation_input_tokens', 0),
-                "completion_tokens": meta['output_tokens'],
-                "total_tokens": meta['input_tokens'] +
-                                meta['output_tokens'] +
-                                meta.get('cache_read_input_tokens', 0) +
-                                meta.get('cache_creation_input_tokens', 0),
-                "prompt_tokens_details": {'cached_tokens': meta['cache_read_input_tokens']}
-            }
+            usage = UsageModel(
+                prompt_tokens=(
+                        meta['input_tokens']
+                        + meta.get('cache_read_input_tokens', 0)
+                        + meta.get('cache_creation_input_tokens', 0)
+                ),
+                completion_tokens=meta['output_tokens'],
+                total_tokens=(
+                        meta['input_tokens']
+                        + meta['output_tokens']
+                        + meta.get('cache_read_input_tokens', 0)
+                        + meta.get('cache_creation_input_tokens', 0)
+                ),
+                prompt_tokens_details=PromptTokensDetailsModel(cached_tokens=meta['cache_read_input_tokens']),
+            )
+            return None, idx, usage
+
+        finish_reason = event.get('delta', {}).get('stop_reason', None)
         if event['type'] == 'message_delta':
-            finish_reason = event['delta']['stop_reason']
             meta = event['usage']
-            usage['completion_tokens'] = meta['output_tokens']
-            usage['total_tokens'] += meta['output_tokens']
+            usage.completion_tokens = meta['output_tokens']
+            usage.total_tokens += meta['output_tokens']
+            return None, idx, usage
         if event['type'] == 'content_block_delta':
-            chunk = {
-                'id': idx,
-                'choices': [{
-                    'delta': {
-                        'content': event['delta']['text'],
-                        'role': None
-                    },
-                    'finish_reason': finish_reason,
-                    'index': 0
-                }],
-                'created': int(time.time()),
-                'model': self.model,
-                'usage': usage,
-                'object': 'chat.completion.chunk'
-            }
-        return chunk, idx, usage
+            delta = DeltaModel(content=event['delta']['text'], role=None)
+            choice = ChoiceModel(delta=delta, finish_reason=finish_reason, index=0)
+            model = ChatCompletionModel(
+                id=idx,
+                choices=[choice],
+                created=int(time.time()),
+                model=self.model,
+                object='chat.completion.chunk',
+                usage=usage,
+            )
+            return model, idx, usage
+        return None, idx, usage
 
     def prepare_data(self, chat: ModelChat, **kwargs):
         headers = {
@@ -141,8 +144,8 @@ class EngineAnthropic(BaseChat):
         return json_data, headers
 
     def process_chunk(self, chunk: str, idx, usage):
-        chunk, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage)
-        return ChatCompletionModel(**chunk) if chunk else None, idx, usage
+        model, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage)
+        return model, idx, usage
 
     def process_generate(self, r):
         return ModelChatResponse(**{
@@ -196,24 +199,16 @@ class EngineAnthropic(BaseChat):
                         usage = c[2]
                         if c[0]:
                             yield c[0]
-            chunk = {
-                'id': idx,
-                'choices':
-                    [{
-                        'delta':
-                            {
-                                'content': '',
-                                'role': None
-                            },
-                        'finish_reason': None,
-                        'index': 0
-                    }],
-                'created': int(time.time()),
-                'model': self.model,
-                'usage': usage,
-                'object': 'chat.completion.chunk'
-            }
-            yield ChatCompletionModel(**chunk)
+            delta = DeltaModel(content='', role=None)
+            choice = ChoiceModel(delta=delta, finish_reason=None, index=0)
+            yield ChatCompletionModel(
+                id=idx,
+                choices=[choice],
+                created=int(time.time()),
+                model=self.model,
+                object='chat.completion.chunk',
+                usage=usage or UsageModel(),
+            )
 
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
@@ -233,21 +228,13 @@ class EngineAnthropic(BaseChat):
                     usage = c[2]
                     if c[0]:
                         yield c[0]
-            chunk = {
-                'id': idx,
-                'choices':
-                    [{
-                        'delta':
-                            {
-                                'content': '',
-                                'role': None
-                            },
-                        'finish_reason': None,
-                        'index': 0
-                    }],
-                'created': int(time.time()),
-                'model': self.model,
-                'usage': usage,
-                'object': 'chat.completion.chunk'
-            }
-            yield ChatCompletionModel(**chunk)
+            delta = DeltaModel(content='', role=None)
+            choice = ChoiceModel(delta=delta, finish_reason=None, index=0)
+            yield ChatCompletionModel(
+                id=idx,
+                choices=[choice],
+                created=int(time.time()),
+                model=self.model,
+                object='chat.completion.chunk',
+                usage=usage or UsageModel(),
+            )

@@ -4,7 +4,7 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
@@ -99,28 +99,22 @@ class EngineGoogle(BaseChat):
             return self.process_generate(response)
 
     def prepare_stream_response(self, chunk):
-        chunk = chunk.strip()
-        chunk = json.loads(chunk[5:].strip())
-        chunk = {
-            'id': '1',
-            'choices': [{
-                'delta': {
-                    'content': chunk['candidates'][0]['content']['parts'][0]['text'],
-                    'role': 'assistant'
-                },
-                'finish_reason': None,
-                'index': 0
-            }],
-            'created': int(time.time()),
-            'model': self.model,
-            'object': 'chat.completion.chunk',
-            'usage': {
-                'prompt_tokens': chunk['usageMetadata']['promptTokenCount'],
-                'completion_tokens': chunk['usageMetadata'].get('candidatesTokenCount', 0),
-                'total_tokens': chunk['usageMetadata']['totalTokenCount']
-            }
-        }
-        return ChatCompletionModel(**chunk)
+        payload = json.loads(chunk.strip()[5:].strip())
+        usage = UsageModel(
+            prompt_tokens=payload['usageMetadata']['promptTokenCount'],
+            completion_tokens=payload['usageMetadata'].get('candidatesTokenCount', 0),
+            total_tokens=payload['usageMetadata']['totalTokenCount'],
+        )
+        delta = DeltaModel(content=payload['candidates'][0]['content']['parts'][0]['text'], role='assistant')
+        choice = ChoiceModel(delta=delta, finish_reason=None, index=0)
+        return ChatCompletionModel(
+            id='1',
+            choices=[choice],
+            created=int(time.time()),
+            model=self.model,
+            object='chat.completion.chunk',
+            usage=usage,
+        )
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
