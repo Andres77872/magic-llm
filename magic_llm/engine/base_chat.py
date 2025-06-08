@@ -399,6 +399,10 @@ class BaseChat(abc.ABC):
         """Generate embeddings for the given text."""
         pass
 
+    async def async_embedding(self, text: Union[List[str], str], **kwargs) -> Any:
+        """Generate embeddings for the given text asynchronously."""
+        pass
+
     async def async_audio_speech(self, speech_request: AudioSpeechRequest, **kwargs) -> Any:
         """Generate audio speech asynchronously."""
         pass
