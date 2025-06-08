@@ -4,8 +4,11 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel, \
-    PromptTokensDetailsModel
+from magic_llm.model.ModelChatStream import (ChatCompletionModel,
+                                             UsageModel,
+                                             ChoiceModel,
+                                             DeltaModel,
+                                             PromptTokensDetailsModel)
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
