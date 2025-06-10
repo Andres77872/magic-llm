@@ -8,7 +8,6 @@ from magic_llm.engine.base_chat import BaseChat
 from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               ProviderGroq,
                                               ProviderSambaNova,
-                                              ProviderLepton,
                                               ProviderOpenRouter,
                                               ProviderMistral,
                                               ProviderFireworks,
@@ -30,7 +29,6 @@ class EngineOpenAI(BaseChat):
     PROVIDER_MAPPING = {
         r'api\.groq\.com': ProviderGroq,
         r'api\.sambanova\.ai': ProviderSambaNova,
-        r'lepton\.run': ProviderLepton,
         r'openrouter\.ai': ProviderOpenRouter,
         r'api\.mistral\.ai': ProviderMistral,
         r'api\.fireworks\.ai': ProviderFireworks,
