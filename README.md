@@ -33,29 +33,29 @@ require non-standard argument/credential patterns.*
 
 ## Supported Providers & Capabilities
 
-| Provider         | Streaming | Completion | Embedding | Audio | Async Streaming | Async Completion | Fallback | Callback |
-|------------------|-----------|------------|-----------|-------|-----------------|------------------|----------|----------|
-| OpenAI           | ✅         | ✅          | ✅         | ✅     | ✅               | ✅                | ✅        | ✅        |
-| Cloudflare       | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| AWS Bedrock      | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| Google AI Studio | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| Cohere           | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| Anthropic        | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| Cerebras         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| SambaNova        | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| DeepInfra        | ✅         | ✅          | ✅         | ✅     | ✅               | ✅                | ✅        | ✅        |
-| Deepseek         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| Parasail         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| x.ai             | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| Together.AI      | ✅         | ✅          | ✅         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| Perplexity AI    | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| OpenRouter       | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| NovitaAI         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| Mistral          | ✅         | ✅          | ✅         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| Hyperbolic       | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| Groq             | ✅         | ✅          | ❌         | ✅     | ✅               | ✅                | ✅        | ✅        |
-| Fireworks.AI     | ✅         | ✅          | ✅         | ✅     | ✅               | ✅                | ✅        | ✅        |
-| Azure            | ❓         | ❓          | ❌         | ✅     | ❓               | ❓                | ✅        | ✅        |
+| Provider         | Streaming | Completion | Embedding | Audio | Async Streaming | Async Completion | Function calling | Fallback | Callback |
+|------------------|-----------|------------|-----------|-------|-----------------|------------------|------------------|----------|----------|
+| OpenAI           | ✅         | ✅          | ✅         | ✅     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| Cloudflare       | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ❌                | ✅        | ✅        |
+| AWS Bedrock      | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ❌                | ✅        | ✅        |
+| Google AI Studio | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ❌                | ✅        | ✅        |
+| Cohere           | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ❌                | ✅        | ✅        |
+| Anthropic        | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| Cerebras         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| SambaNova        | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| DeepInfra        | ✅         | ✅          | ✅         | ✅     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| Deepseek         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| Parasail         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| x.ai             | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| Together.AI      | ✅         | ✅          | ✅         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| Perplexity AI    | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| OpenRouter       | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| NovitaAI         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ❌                | ✅        | ✅        |
+| Mistral          | ✅         | ✅          | ✅         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| Hyperbolic       | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| Groq             | ✅         | ✅          | ❌         | ✅     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| Fireworks.AI     | ✅         | ✅          | ✅         | ✅     | ✅               | ✅                | ✅                | ✅        | ✅        |
+| Azure            | ❓         | ❓          | ❌         | ✅     | ❓               | ❓                | ❓                | ✅        | ✅        |
 
 *Legend:*
 

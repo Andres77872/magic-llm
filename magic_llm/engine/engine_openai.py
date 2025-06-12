@@ -95,26 +95,7 @@ class EngineOpenAI(BaseChat):
         return ProviderOpenAI
 
     def prepare_response(self, r):
-        if r['choices'][0]['message'].get('content'):
-            return ModelChatResponse(**{
-                'content': r['choices'][0]['message']['content'],
-                'role': 'assistant',
-                'usage': UsageModel(
-                    prompt_tokens=r['usage']['prompt_tokens'],
-                    completion_tokens=r['usage']['completion_tokens'],
-                    total_tokens=r['usage']['total_tokens']
-                )
-            })
-        else:  # interpret as function calling
-            return ModelChatResponse(**{
-                'content': r['choices'][0]['message']['tool_calls'][0]['function']['arguments'],
-                'role': 'assistant',
-                'usage': UsageModel(
-                    prompt_tokens=r['usage']['prompt_tokens'],
-                    completion_tokens=r['usage']['completion_tokens'],
-                    total_tokens=r['usage']['total_tokens']
-                )
-            })
+        return ModelChatResponse(**r)
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:

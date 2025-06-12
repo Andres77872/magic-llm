@@ -4,6 +4,7 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelChatResponse import ToolCall, FunctionCall, Message, Choice
 from magic_llm.model.ModelChatStream import (ChatCompletionModel,
                                              UsageModel,
                                              ChoiceModel,
@@ -65,10 +66,10 @@ class EngineAnthropic(BaseChat):
 
     def prepare_data(self, chat: ModelChat, **kwargs):
         """
-        Build the payload for Anthropic’s *Messages* endpoint.
+        Build the payload for Anthropic's *Messages* endpoint.
 
         • Keeps the first `system` message (preamble) separate.
-        • Converts every message’s `content` into the structure required by
+        • Converts every message's `content` into the structure required by
           Anthropic:
               – plain strings  →  single text part
               – `image_url` parts
@@ -184,33 +185,154 @@ class EngineAnthropic(BaseChat):
         # ------------------------------------------------------------------ #
         # Final JSON body
         # ------------------------------------------------------------------ #
+        # Support OpenAI-style functions/tools and function_call/tool_choice
+        openai_tools = (
+                kwargs.pop('tools', None)
+                or self.kwargs.get('tools', None)
+        )
+        openai_tool_choice = (
+                kwargs.pop('tool_choice', None)
+                or self.kwargs.get('tool_choice', None)
+        )
+
         data: dict = {
-            "model": self.model,
-            "messages": anthropic_chat,
+            'model': self.model,
+            'messages': anthropic_chat,
             **kwargs,
             **self.kwargs,
         }
-        data.setdefault("max_tokens", 4096)
-        if preamble:
-            data["system"] = preamble
 
-        json_data = json.dumps(data).encode("utf-8")
+        # Map OpenAI tools to Anthropic tools schema
+        if openai_tools:
+            tools = []
+            for tool in openai_tools:
+                if tool.get('type') == 'function':
+                    fn_def = tool.get('function', {})
+                else:
+                    # Handle legacy format where tool is the function definition itself
+                    fn_def = tool
+
+                # Ensure we have required fields
+                if fn_def.get('name'):
+                    anthropic_tool = {
+                        'name': fn_def['name'],
+                        'description': fn_def.get('description', ''),
+                        'input_schema': fn_def.get('parameters', {
+                            'type': 'object',
+                            'properties': {},
+                            'required': []
+                        })
+                    }
+                    tools.append(anthropic_tool)
+
+            if tools:
+                data['tools'] = tools
+
+        # Map OpenAI tool_choice to Anthropic tool_choice
+        if openai_tool_choice is not None:
+            if isinstance(openai_tool_choice, str):
+                if openai_tool_choice == "none":
+                    # Anthropic doesn't have "none", so we don't set tool_choice
+                    pass
+                elif openai_tool_choice == "auto":
+                    data['tool_choice'] = {"type": "auto"}
+                elif openai_tool_choice == "required":
+                    data['tool_choice'] = {"type": "any"}
+            elif isinstance(openai_tool_choice, dict):
+                # Handle {"type": "function", "function": {"name": "function_name"}}
+                if openai_tool_choice.get('type') == 'function':
+                    function_name = openai_tool_choice.get('function', {}).get('name')
+                    if function_name:
+                        data['tool_choice'] = {"type": "tool", "name": function_name}
+                # Handle legacy {"name": "function_name"}
+                elif 'name' in openai_tool_choice:
+                    data['tool_choice'] = {"type": "tool", "name": openai_tool_choice['name']}
+
+        data.setdefault('max_tokens', 4096)
+        if preamble:
+            data['system'] = preamble
+
+        json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
 
     def process_chunk(self, chunk: str, idx, usage):
         model, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage)
         return model, idx, usage
 
-    def process_generate(self, r):
-        return ModelChatResponse(**{
-            'content': r['content'][0]['text'],
-            'role': 'assistant',
-            'usage': UsageModel(
-                prompt_tokens=r['usage']['input_tokens'],
-                completion_tokens=r['usage']['output_tokens'],
-                total_tokens=r['usage']['input_tokens'] + r['usage']['output_tokens'],
-            )
-        })
+    def process_generate(self, claude_response: dict) -> ModelChatResponse:
+        """Convert Claude API response to ModelChatResponse format"""
+
+        # Extract tool calls if present
+        tool_calls = None
+        content = None
+
+        if claude_response.get('content'):
+            # Claude returns content as a list
+            for item in claude_response['content']:
+                if item['type'] == 'tool_use':
+                    # Convert Claude tool use to OpenAI-style tool call
+                    if tool_calls is None:
+                        tool_calls = []
+
+                    tool_call = ToolCall(
+                        id=item['id'],
+                        type='function',
+                        function=FunctionCall(
+                            name=item['name'],
+                            arguments=json.dumps(item['input'])  # Convert dict to JSON string
+                        )
+                    )
+                    tool_calls.append(tool_call)
+                elif item['type'] == 'text':
+                    # If there's text content, use it
+                    content = item.get('text', '')
+
+        # Create the message
+        message = Message(
+            role=claude_response['role'],
+            content=content,
+            tool_calls=tool_calls,
+            refusal=None,
+            annotations=[]
+        )
+
+        # Map stop_reason to finish_reason
+        finish_reason_map = {
+            'tool_use': 'tool_calls',
+            'stop_sequence': 'stop',
+            'max_tokens': 'length',
+            'end_turn': 'stop'
+        }
+        finish_reason = finish_reason_map.get(claude_response.get('stop_reason'), claude_response.get('stop_reason'))
+
+        # Create the choice
+        choice = Choice(
+            index=0,
+            message=message,
+            logprobs=None,
+            finish_reason=finish_reason
+        )
+
+        # Create usage model
+        usage = UsageModel(
+            prompt_tokens=claude_response['usage']['input_tokens'],
+            completion_tokens=claude_response['usage']['output_tokens'],
+            total_tokens=claude_response['usage']['input_tokens'] + claude_response['usage']['output_tokens'],
+        )
+
+        # Create the final response
+        response = ModelChatResponse(
+            id=claude_response['id'],
+            object='chat.completion',  # Standard OpenAI format
+            created=int(time.time()),  # Claude doesn't provide this, so use current time
+            model=claude_response['model'],
+            choices=[choice],
+            usage=usage,
+            service_tier=claude_response['usage'].get('service_tier'),
+            system_fingerprint=None  # Claude doesn't provide this
+        )
+
+        return response
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
