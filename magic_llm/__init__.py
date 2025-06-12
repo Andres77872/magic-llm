@@ -3,7 +3,7 @@ from typing import Callable, Optional
 
 from magic_llm.base import MagicLlmBase
 
-__version__ = '0.1.16'
+__version__ = '0.1.17'
 
 logger = logging.getLogger(__name__)
 
