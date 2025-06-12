@@ -8,7 +8,7 @@ from magic_llm import MagicLLM
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import pytest
 
-from magic_llm.model import ModelChat
+from magic_llm.model import ModelChat, ModelChatResponse
 
 FUNCTION_DEF = {
     "type": "function",
@@ -102,3 +102,16 @@ def test_function_and_tool_mapping(provider, key_name, model, fail_model):
     client = MagicLLM(model=model, tools=[FUNCTION_DEF], tool_choice=tool_entry, **keys)
     res = client.llm.generate(chat)
     print(res)
+
+def test_function_and_tool_fallback():
+    # Unified OpenAI style: tools + tool_choice
+    tool_entry = {"type": "function", "function": {"name": FUNCTION_DEF['function']['name']}}
+    keys = dict(ALL_KEYS['anthropic'])
+    chat = _build_chat()
+    client_fallback = MagicLLM(model='claude-3-haiku-20240307', **keys)
+    keys = dict(ALL_KEYS['openai'])
+    client = MagicLLM(model='gpt-4o1', fallback=client_fallback, **keys)
+    res: ModelChatResponse = client.llm.generate(chat, tools=[FUNCTION_DEF], tool_choice=tool_entry)
+
+    print(res.model)
+    print(res.tool_calls)

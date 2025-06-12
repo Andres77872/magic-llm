@@ -179,7 +179,7 @@ class BaseChat(abc.ABC):
                     if attempt == self.retry_config.attempts - 1:
                         fallback = self._handle_fallback(is_async=True)
                         if fallback:
-                            async for i in fallback(chat):
+                            async for i in fallback(chat, **kwargs):
                                 yield i
                         else:
                             yield ChatCompletionModel(**{
@@ -265,7 +265,7 @@ class BaseChat(abc.ABC):
                     if attempt == self.retry_config.attempts - 1:
                         fallback = self._handle_fallback(is_async=False)
                         if fallback:
-                            yield from fallback(chat)
+                            yield from fallback(chat, **kwargs)
                         else:
                             raise ChatException(
                                 message=f"Stream generation failed after {attempt + 1} attempts: {er}",
@@ -279,7 +279,7 @@ class BaseChat(abc.ABC):
     @staticmethod
     def async_intercept_generate(func: Callable[..., Awaitable[ModelChatResponse]]):
         @functools.wraps(func)
-        async def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        async def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse | None | Any:
             model = self.model or kwargs.get('model')
             for attempt in range(self.retry_config.attempts):
                 start_time = time.time()
@@ -311,13 +311,14 @@ class BaseChat(abc.ABC):
                                                      status='ERROR: ' + er))
                     if attempt == self.retry_config.attempts - 1:
                         if self.fallback:
-                            return await self.fallback.llm.async_generate(chat)
+                            return await self.fallback.llm.async_generate(chat, **kwargs)
                         else:
                             raise ChatException(
                                 message=f"Generation failed after {attempt + 1} attempts: {er}",
                                 error_code='STREAM_GENERATION_ERROR',
                             )
                     await asyncio.sleep(self.retry_config.delay)
+            return None
 
         return wrapper
 
@@ -328,7 +329,7 @@ class BaseChat(abc.ABC):
             nest_asyncio.apply()
 
         @functools.wraps(func)
-        def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse | None | Any:
             model = self.model or kwargs.get('model')
             for attempt in range(self.retry_config.attempts):
                 usage = None
@@ -360,13 +361,14 @@ class BaseChat(abc.ABC):
 
                     if attempt == self.retry_config.attempts - 1:
                         if self.fallback:
-                            return self.fallback.llm.generate(chat)
+                            return self.fallback.llm.generate(chat, **kwargs)
                         else:
                             raise ChatException(
                                 message=f"Generation failed after {attempt + 1} attempts: {er}",
                                 error_code='STREAM_GENERATION_ERROR',
                             )
                     time.sleep(self.retry_config.delay)
+            return None
 
         return wrapper
 
