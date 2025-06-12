@@ -1,4 +1,7 @@
+import base64
 import logging
+from typing import Union
+
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChatResponse
 from magic_llm.util.tokenizer import from_openai
@@ -27,25 +30,60 @@ class ModelChat:
             "content": content
         })
 
-    def add_user_message(self, content: str, image: str = None, media_type: str = 'image/jpeg'):
-        _content = None
-        if content and image:
-            _content = [
-                {
+    def add_user_message(self, content: str,
+                         image: Union[str, bytes, list[Union[str, bytes]]] = None,
+                         media_type: str = 'image/jpeg'):
+        def process_image(i: Union[str, bytes], mt: str) -> dict:
+            """Process a single image and return the appropriate format"""
+            if isinstance(i, str):
+                # Check if it's a URL
+                if i.startswith(('http://', 'https://', 'data:')):
+                    return {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": i
+                        }
+                    }
+                else:
+                    # Assume it's already base64 encoded
+                    return {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mt};base64,{i}"
+                        }
+                    }
+            elif isinstance(i, bytes):
+                # Convert bytes to base64
+                base64_image = base64.b64encode(i).decode('utf-8')
+                return {
                     "type": "image_url",
                     "image_url": {
-                        "url": f"data:{media_type};base64,{image}"
-                    },
-                },
-                {
-                    "type": "text", "text": content
+                        "url": f"data:{mt};base64,{base64_image}"
+                    }
                 }
-            ]
+            else:
+                raise ValueError(f"Unsupported image type: {type(i)}")
+
+        _content = None
+
+        if content and image:
+            # Start with text content
+            _content = [{"type": "text", "text": content}]
+
+            # Handle single image or list of images
+            if isinstance(image, list):
+                # Process each image in the list
+                for img in image:
+                    _content.append(process_image(img, media_type))
+            else:
+                # Process single image
+                _content.append(process_image(image, media_type))
 
         elif content and not image:
             _content = content
         else:
             raise Exception('Image cannot be alone')
+
         self.messages.append({
             "role": "user",
             "content": _content

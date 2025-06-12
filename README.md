@@ -10,7 +10,6 @@ Magic LLM is a unified, simplified wrapper for connecting to a wide range of LLM
 - [Google AI Studio](https://ai.google.dev/tutorials/rest_quickstart)
 - [Cohere](https://docs.cohere.com/reference/chat)
 - [Anthropic](https://docs.anthropic.com/claude/reference/getting-started-with-the-api)
-- [LeptonAI](hhttps://www.lepton.ai/docs/guides)
 - [Cerebras](https://inference-docs.cerebras.ai/introduction)
 - [SambaNova](https://docs.sambanova.ai/cloud/docs/get-started/overview)
 - [DeepInfra](https://deepinfra.com/docs)
@@ -42,7 +41,6 @@ require non-standard argument/credential patterns.*
 | Google AI Studio | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
 | Cohere           | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
 | Anthropic        | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
-| LeptonAI         | ✅         | ✅          | ❌         | ❌     | ❓               | ✅                | ✅        | ✅        |
 | Cerebras         | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
 | SambaNova        | ✅         | ✅          | ❌         | ❌     | ✅               | ✅                | ✅        | ✅        |
 | DeepInfra        | ✅         | ✅          | ✅         | ✅     | ✅               | ✅                | ✅        | ✅        |
@@ -86,7 +84,7 @@ require non-standard argument/credential patterns.*
 - [x] Vision models (OpenAI/Anthropic; partial Google support)
 - [x] Function calling (tested with OpenAI)
 - [ ] Text-to-Speech (currently: OpenAI only)
-- [ ] Vision adapter for Google AI Studio
+- [x] Vision adapter for Google AI Studio
 - [ ] More TTS/vision support in other providers
 
 ---

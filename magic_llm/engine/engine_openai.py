@@ -2,13 +2,12 @@
 import json
 import logging
 import re
-from typing import Callable, Dict, Type, Optional
+from typing import Callable, Type, Optional
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               ProviderGroq,
                                               ProviderSambaNova,
-                                              ProviderLepton,
                                               ProviderOpenRouter,
                                               ProviderMistral,
                                               ProviderFireworks,
@@ -30,7 +29,6 @@ class EngineOpenAI(BaseChat):
     PROVIDER_MAPPING = {
         r'api\.groq\.com': ProviderGroq,
         r'api\.sambanova\.ai': ProviderSambaNova,
-        r'lepton\.run': ProviderLepton,
         r'openrouter\.ai': ProviderOpenRouter,
         r'api\.mistral\.ai': ProviderMistral,
         r'api\.fireworks\.ai': ProviderFireworks,
@@ -182,6 +180,19 @@ class EngineOpenAI(BaseChat):
             response = client.post_json(url=self.base.base_url + '/embeddings',
                                         data=json.dumps(data),
                                         headers=self.base.headers)
+            return response
+
+    async def async_embedding(self, text: list[str] | str, **kwargs):
+        async with AsyncHttpClient() as client:
+            data = {
+                "input": text,
+                "model": self.model,
+                **kwargs
+            }
+            response = await client.post_json(url=self.base.base_url + '/embeddings',
+                                              data=json.dumps(data),
+                                              headers=self.base.headers,
+                                              timeout=kwargs.get('timeout'))
             return response
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
