@@ -11,9 +11,9 @@ class FunctionCall(BaseModel):
 
 
 class ToolCall(BaseModel):
-    id: str
-    type: str  # "function"
-    function: FunctionCall
+    id: Optional[str] = None
+    type: Optional[str]  = "function"
+    function: Optional[FunctionCall] = None
 
 
 class Message(BaseModel):
@@ -42,10 +42,10 @@ class UsageDetails(BaseModel):
 class ModelChatResponse(BaseModel):
     id: str
     object: str
-    created: int
+    created: float
     model: str
     choices: List[Choice]
-    usage: UsageModel
+    usage: Optional[UsageModel] = UsageModel()
     service_tier: Optional[str] = None
     system_fingerprint: Optional[str] = None
 

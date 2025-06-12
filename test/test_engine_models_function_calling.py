@@ -33,7 +33,26 @@ FUNCTION_DEF = {
 }
 TEST_PROVIDERS = [
     ("openai", "openai", "gpt-4o", "gpt-4o1"),
-    ("anthropic", "anthropic", "claude-3-haiku-20240307", "FAIL/claude-3-haiku-20240307")
+    # ("lepton", "lepton", "llama3-1-8b", "FAIL/llama3-1-8b"),
+    ("amazon", "amazon", "amazon.nova-pro-v1:0", "amazon.titan-text-lite-v3"),
+    ("anthropic", "anthropic", "claude-3-haiku-20240307", "FAIL/claude-3-haiku-20240307"),
+    ("cloudflare", "cloudflare", "@cf/meta/llama-2-7b-chat-int8", "FAIL/@cf/meta/llama-2-7b-chat-int8"),
+    ("cohere", "cohere", "command-light", "FAIL/command-light"),
+    ("google", "google", "gemini-1.5-flash", "FAIL/gemini-1.5-flash"),
+    ("Cerebras", "Cerebras", "llama3.1-8b", "FAIL/llama3.1-8b"),
+    ("SambaNova", "SambaNova", "Meta-Llama-3.1-8B-Instruct", "FAIL/Meta-Llama-3.1-8B-Instruct"),
+    ("deepinfra", "deepinfra", "meta-llama/Meta-Llama-3.1-70B-Instruct", "microsoft/WizardLM-2-8x22B-model-fail"),
+    ("deepseek", "deepseek", "deepseek-chat", "FAIL/deepseek-chat"),
+    ("parasail", "parasail", "parasail-mistral-nemo", "parasail-mistral-nemo-fail"),
+    ("x.ai", "x.ai", "grok-3-mini", "grok-3-mini-fail"),
+    ("together.ai", "together.ai", "meta-llama/Llama-3-8b-chat-hf", "meta-llama/Llama-3-8b-chat-hf-fail"),
+    ("perplexity", "perplexity", "sonar", "sonar-fail"),
+    ("openrouter", "openrouter", "mistralai/mistral-nemo", "mistralai/mistral-nemo-fail"),
+    ("novita.ai", "novita.ai", "mistralai/mistral-nemo", "FAIL/mistralai/mistral-nemo"),
+    ("mistral", "mistral", "open-mistral-7b", "FAIL/open-mistral-7b"),
+    ("hyperbolic", "hyperbolic", "meta-llama/Meta-Llama-3.1-8B-Instruct", "FAIL/meta-llama/Meta-Llama-3.1-8B-Instruct"),
+    ("groq", "groq", "llama3-8b-8192", "FAIL/llama3-8b-8192"),
+    ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/llama4-scout-instruct-basic", "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
 ]
 CALL_DEF = {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}
 KEYS_FILE = os.getenv(
