@@ -4,6 +4,7 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelChatResponse import Message, Choice
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 
@@ -32,14 +33,48 @@ class EngineCloudFlare(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
 
-    def process_generate(self, r):
-        content = r['result']['response']
-        usage = r['result']['usage']
-        return ModelChatResponse(**{
-            'content': content,
-            'role': 'assistant',
-            'usage': usage
-        })
+    def process_generate(self, r: dict) -> ModelChatResponse:
+        """Process Cloudflare response and convert to ModelChatResponse"""
+
+        # Extract the result data
+        result = r.get('result', {})
+
+        # Create message
+        message = Message(
+            role='assistant',
+            content=result.get('response', ''),
+            tool_calls=None,
+            refusal=None,
+            annotations=[]
+        )
+
+        # Create choice
+        choice = Choice(
+            index=0,
+            message=message,
+            logprobs=None,
+            finish_reason='stop' if r.get('success', True) else 'error'
+        )
+
+        # Create usage model
+        usage_data = result.get('usage', {})
+        usage = UsageModel(
+            prompt_tokens=usage_data.get('prompt_tokens', 0),
+            completion_tokens=usage_data.get('completion_tokens', 0),
+            total_tokens=usage_data.get('total_tokens', 0)
+        )
+
+        # Create response
+        return ModelChatResponse(
+            id=f"cloudflare_{int(time.time() * 1000)}",
+            object='chat.completion',
+            created=int(time.time()),
+            model='cloudflare',  # Cloudflare doesn't provide model name in response
+            choices=[choice],
+            usage=usage,
+            service_tier=None,
+            system_fingerprint=None
+        )
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:

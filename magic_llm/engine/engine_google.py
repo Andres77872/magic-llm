@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelChatResponse import ToolCall, FunctionCall, Choice, Message
 from magic_llm.model.ModelChatStream import (ChatCompletionModel,
                                              UsageModel,
                                              ChoiceModel,
@@ -226,17 +227,91 @@ class EngineGoogle(BaseChat):
         json_bytes = json.dumps(data).encode("utf-8")
         return json_bytes, headers, data
 
-    def process_generate(self, data: dict):
-        content = data['candidates'][0]['content']['parts'][0]['text']
-        return ModelChatResponse(**{
-            'content': content,
-            'role': 'assistant',
-            'usage': UsageModel(
-                prompt_tokens=data['usageMetadata']['promptTokenCount'],
-                completion_tokens=data['usageMetadata']['candidatesTokenCount'],
-                total_tokens=data['usageMetadata']['totalTokenCount']
-            )
-        })
+    def process_generate(self, gemini_response: dict) -> ModelChatResponse:
+        """Convert Gemini API response to ModelChatResponse format"""
+
+        # Extract content and tool calls from parts
+        content_parts = []
+        tool_calls = None
+
+        candidate = gemini_response['candidates'][0]
+        parts = candidate['content']['parts']
+
+        for part in parts:
+            if 'text' in part:
+                # Text content
+                content_parts.append(part['text'])
+            elif 'functionCall' in part:
+                # Function/tool call
+                if tool_calls is None:
+                    tool_calls = []
+
+                func_call = part['functionCall']
+                tool_call = (ToolCall(
+                    id=f"call_{len(tool_calls)}_{int(time.time() * 1000)}",  # Generate unique ID
+                    type='function',
+                    function=FunctionCall(
+                        name=func_call['name'],
+                        arguments=json.dumps(func_call.get('args', {}))
+                    )
+                ))
+                tool_calls.append(tool_call)
+
+        # Combine text parts if any
+        content = ''.join(content_parts) if content_parts else None
+
+        # Create the message
+        message = Message(
+            role='assistant',  # Gemini uses 'model' but we normalize to 'assistant'
+            content=content,
+            tool_calls=tool_calls,
+            refusal=None,
+            annotations=[]
+        )
+
+        # Map Gemini finish reasons to OpenAI format
+        finish_reason_map = {
+            'STOP': 'stop',
+            'MAX_TOKENS': 'length',
+            'SAFETY': 'content_filter',
+            'RECITATION': 'content_filter',
+            'OTHER': 'stop',
+            'FINISH_REASON_UNSPECIFIED': None
+        }
+        finish_reason = finish_reason_map.get(
+            candidate.get('finishReason', 'STOP'),
+            candidate.get('finishReason')
+        )
+
+        # Create the choice
+        choice = Choice(
+            index=0,
+            message=message,
+            logprobs=candidate.get('avgLogprobs'),  # Gemini provides average log probs
+            finish_reason=finish_reason
+        )
+
+        # Create usage model
+        usage_metadata = gemini_response['usageMetadata']
+        usage = UsageModel(
+            prompt_tokens=usage_metadata['promptTokenCount'],
+            completion_tokens=usage_metadata['candidatesTokenCount'],
+            total_tokens=usage_metadata['totalTokenCount']
+        )
+
+        # Create the final response
+        response = ModelChatResponse(
+            id=gemini_response.get('responseId', f"gemini_{int(time.time() * 1000)}"),
+            object='chat.completion',
+            created=int(time.time()),  # Gemini doesn't provide timestamp
+            model=gemini_response.get('modelVersion', 'gemini'),
+            choices=[choice],
+            usage=usage,
+            service_tier=None,  # Gemini doesn't provide this
+            system_fingerprint=None  # Gemini doesn't provide this
+        )
+
+        return response
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:

@@ -71,7 +71,7 @@ class EngineAmazon(BaseChat):
             )
 
             r = json.loads(await response['body'].read())
-            return ModelChatResponse(**self.provider.process_response(r))
+            return self.provider.process_response(r)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
@@ -83,7 +83,7 @@ class EngineAmazon(BaseChat):
         )
 
         r = json.loads(response.get('body').read())
-        return ModelChatResponse(**self.provider.process_response(r))
+        return self.provider.process_response(r)
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):

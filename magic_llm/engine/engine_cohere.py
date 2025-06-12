@@ -4,12 +4,14 @@ import time
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelChatResponse import Message, Choice
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class EngineCohere(BaseChat):
     engine = 'cohere'
+
     def __init__(self,
                  api_key: str,
                  **kwargs) -> None:
@@ -45,16 +47,59 @@ class EngineCohere(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
 
-    def process_generate(self, r: dict):
-        return ModelChatResponse(**{
-            'content': r['text'],
-            'role': 'assistant',
-            'usage': UsageModel(
-                prompt_tokens=r['meta']['tokens']['input_tokens'],
-                completion_tokens=r['meta']['tokens']['output_tokens'],
-                total_tokens=r['meta']['tokens']['input_tokens'] + r['meta']['tokens']['output_tokens'],
-            )
-        })
+    def process_generate(self, r: dict) -> ModelChatResponse:
+        """Process Cohere response and convert to ModelChatResponse"""
+
+        # Map Cohere finish reasons to OpenAI format
+        finish_reason_map = {
+            'COMPLETE': 'stop',
+            'MAX_TOKENS': 'length',
+            'ERROR': 'stop',
+            'ERROR_TOXIC': 'content_filter',
+            'ERROR_LIMIT': 'length',
+            'USER_CANCEL': 'stop'
+        }
+        finish_reason = finish_reason_map.get(
+            r.get('finish_reason', 'COMPLETE'),
+            'stop'
+        )
+
+        # Create message
+        message = Message(
+            role='assistant',
+            content=r.get('text', ''),
+            tool_calls=None,  # Cohere tool calls would need separate handling
+            refusal=None,
+            annotations=[]
+        )
+
+        # Create choice
+        choice = Choice(
+            index=0,
+            message=message,
+            logprobs=None,  # Cohere doesn't provide logprobs in this response
+            finish_reason=finish_reason
+        )
+
+        # Create usage model
+        tokens = r['meta']['tokens']
+        usage = UsageModel(
+            prompt_tokens=tokens['input_tokens'],
+            completion_tokens=tokens['output_tokens'],
+            total_tokens=tokens['input_tokens'] + tokens['output_tokens']
+        )
+
+        # Create response
+        return ModelChatResponse(
+            id=r.get('response_id', r.get('generation_id', f"cohere_{int(time.time() * 1000)}")),
+            object='chat.completion',
+            created=int(time.time()),
+            model='cohere',  # Cohere doesn't provide model name in response
+            choices=[choice],
+            usage=usage,
+            service_tier=None,  # Cohere doesn't provide this
+            system_fingerprint=None  # Cohere doesn't provide this
+        )
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:

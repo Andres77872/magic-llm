@@ -1,9 +1,9 @@
 import json
 import time
-from typing import Dict
 
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
-from magic_llm.model import ModelChat
+from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelChatResponse import Choice, Message
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
@@ -25,9 +25,10 @@ class ProviderAmazonNova(AmazonBaseProvider):
         """
         m = chat.get_messages()
         for i in m:
-            i['content'] = [{
-                "text": i['content']
-            }]
+            if (c := i.get('content')) and type(c) == str:
+                i['content'] = [{
+                    "text": i['content']
+                }]
 
         body = json.dumps({
             "messages": m,
@@ -40,26 +41,75 @@ class ProviderAmazonNova(AmazonBaseProvider):
 
         return body
 
-    def process_response(self, response: dict) -> Dict:
+    def process_response(self, r: dict) -> ModelChatResponse:
         """
         Process the response from Nova models.
 
         Args:
-            response: The response from the model
+            r: The response from the model
 
         Returns:
-            A dictionary containing the processed response
+            A ModelChatResponse object
         """
-        u = response.get('usage', {})
-        return {
-            'content': response['output']['message']['content'][0]['text'],
-            'role': 'assistant',
-            'usage': UsageModel(
-                prompt_tokens=u['inputTokens'],
-                completion_tokens=u['outputTokens'],
-                total_tokens=u['totalTokens']
-            )
+
+        # Extract content and tool calls from Nova response
+        output_message = r['output']['message']
+        content_parts = []
+        tool_calls = None
+
+        for content_item in output_message['content']:
+            if 'text' in content_item:
+                content_parts.append(content_item['text'])
+
+        # Combine text parts
+        content = ''.join(content_parts) if content_parts else None
+
+        # Map Nova stop reasons to OpenAI format
+        stop_reason_map = {
+            'end_turn': 'stop',
+            'stop_sequence': 'stop',
+            'max_tokens': 'length',
+            'content_filtered': 'content_filter',
+            'tool_use': 'tool_calls'
         }
+        finish_reason = stop_reason_map.get(r.get('stopReason', 'end_turn'), 'stop')
+
+        # Create message
+        message = Message(
+            role=output_message.get('role', 'assistant'),
+            content=content,
+            tool_calls=tool_calls,
+            refusal=None,
+            annotations=[]
+        )
+
+        # Create choice
+        choice = Choice(
+            index=0,
+            message=message,
+            logprobs=None,
+            finish_reason=finish_reason
+        )
+
+        # Create usage model
+        usage_data = r.get('usage', {})
+        usage = UsageModel(
+            prompt_tokens=usage_data.get('inputTokens', 0),
+            completion_tokens=usage_data.get('outputTokens', 0),
+            total_tokens=usage_data.get('totalTokens', 0)
+        )
+
+        # Create response
+        return ModelChatResponse(
+            id=f"nova_{int(time.time() * 1000)}",
+            object='chat.completion',
+            created=int(time.time()),
+            model='amazon.nova',  # Could be more specific if model info is available
+            choices=[choice],
+            usage=usage,
+            service_tier=None,
+            system_fingerprint=None
+        )
 
     def format_event_to_chunk(self, event: dict) -> ChatCompletionModel:
         """

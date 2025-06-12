@@ -53,7 +53,7 @@ class AmazonBaseProvider(ABC):
         """
         raise NotImplementedError("Subclasses must implement prepare_data")
     
-    def process_response(self, response: dict) -> Dict:
+    def process_response(self, response: dict):
         """
         Process the response from the model.
         
