@@ -82,19 +82,28 @@ class EngineAnthropic(BaseChat):
         # ------------------------------------------------------------------ #
         # HTTP headers
         # ------------------------------------------------------------------ #
+        use_cache = kwargs.pop('use_cache', True)
+
         headers = {
             "Content-Type": "application/json",
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
-            "anthropic-beta": (
-                "messages-2023-12-15,"
-                "pdfs-2024-09-25,"
-                "prompt-caching-2024-07-31"
-            ),
             "accept": "application/json",
             "user-agent": "arz-magic-llm-engine",
             **self.headers,
         }
+
+        if use_cache:
+            headers["anthropic-beta"] = (
+                "messages-2023-12-15,"
+                "pdfs-2024-09-25,"
+                "prompt-caching-2024-07-31"
+            )
+        else:
+            headers["anthropic-beta"] = (
+                "messages-2023-12-15,"
+                "pdfs-2024-09-25"
+            )
 
         # ------------------------------------------------------------------ #
         # Extract optional pre-amble (1st `system` message)
@@ -162,7 +171,7 @@ class EngineAnthropic(BaseChat):
         user_turns_processed = 0
 
         for turn in reversed(anthropic_chat):
-            if turn["role"] == "user" and user_turns_processed < 3:
+            if turn["role"] == "user" and user_turns_processed < 3 and use_cache:
                 patched_parts = []
                 for part in turn["content"]:
                     if part["type"] == "text":
