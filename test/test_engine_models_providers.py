@@ -17,7 +17,7 @@ TEST_PROVIDERS = [
     ("anthropic", "anthropic", "claude-3-haiku-20240307", "FAIL/claude-3-haiku-20240307"),
     ("cloudflare", "cloudflare", "@cf/meta/llama-2-7b-chat-int8", "FAIL/@cf/meta/llama-2-7b-chat-int8"),
     ("cohere", "cohere", "command-light", "FAIL/command-light"),
-    ("google", "google", "gemini-1.5-flash", "FAIL/gemini-1.5-flash"),
+    ("google", "google", "gemini-2.5-flash", "FAIL/gemini-1.5-flash"),
     ("Cerebras", "Cerebras", "llama3.1-8b", "FAIL/llama3.1-8b"),
     ("SambaNova", "SambaNova", "Meta-Llama-3.1-8B-Instruct", "FAIL/Meta-Llama-3.1-8B-Instruct"),
     ("deepinfra", "deepinfra", "microsoft/WizardLM-2-8x22B", "microsoft/WizardLM-2-8x22B-model-fail"),

@@ -187,7 +187,7 @@ class EngineOpenAI(BaseChat):
         Returns:
             The audio speech response
         """
-        return await self.base.async_audio_speech(data)
+        return await self.base.async_audio_speech(data, **kwargs)
 
     def audio_speech(self, data: AudioSpeechRequest, **kwargs):
         """

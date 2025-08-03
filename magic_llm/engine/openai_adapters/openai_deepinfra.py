@@ -47,18 +47,19 @@ class ProviderDeepInfra(OpenAiBaseProvider):
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
         payload = {
-            'preset_voice': data.voice,
             'text': data.input,
-            'output_format': 'wav',
-            'speed': data.speed,
             **kwargs
         }
-        url = self.base_url.replace('/openai', '') + '/inference/deepinfra/tts'
+
+        if data.voice:
+            payload['voice_id'] = data.voice
+
+        url = self.base_url.replace('/openai', '') + '/inference/' + data.model
         async with AsyncHttpClient() as client:
-            response = await client.post_raw_binary(url=url,
-                                                    json=payload,
-                                                    headers=self.headers)
-            encoded_audio = response.get("audio")
+            response = await client.post_json(url=url,
+                                              json=payload,
+                                              headers=self.headers)
+            encoded_audio = response['audio']
             if encoded_audio and encoded_audio.startswith("data:audio/wav;base64,"):
                 encoded_audio = encoded_audio.split(",")[1]
             audio_content = base64.b64decode(encoded_audio)
