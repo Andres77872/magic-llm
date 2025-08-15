@@ -33,8 +33,9 @@ class ProviderDeepInfra(OpenAiBaseProvider):
         data = {
             "model": self.model,
             "messages": messages,
+            # init-time defaults first, call-time overrides second
+            **self.kwargs,
             **kwargs,
-            **self.kwargs
         }
         if 'callback' in data:
             data.pop('callback')

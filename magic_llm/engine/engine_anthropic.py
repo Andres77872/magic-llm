@@ -196,20 +196,22 @@ class EngineAnthropic(BaseChat):
         # Final JSON body
         # ------------------------------------------------------------------ #
         # Support OpenAI-style functions/tools and tool_choice via unified mapper
-        openai_tools = (
-                kwargs.pop('tools', None)
-                or self.kwargs.get('tools', None)
-        )
-        openai_tool_choice = (
-                kwargs.pop('tool_choice', None)
-                or self.kwargs.get('tool_choice', None)
-        )
+        # Respect call-time overrides even when falsy (e.g., [], None)
+        if 'tools' in kwargs:
+            openai_tools = kwargs.pop('tools')
+        else:
+            openai_tools = self.kwargs.get('tools', None)
+        if 'tool_choice' in kwargs:
+            openai_tool_choice = kwargs.pop('tool_choice')
+        else:
+            openai_tool_choice = self.kwargs.get('tool_choice', None)
 
         data: dict = {
             'model': self.model,
             'messages': anthropic_chat,
-            **kwargs,
+            # init-time defaults first, call-time overrides second
             **self.kwargs,
+            **kwargs,
         }
 
         anthropic_tools, anthropic_choice = map_to_anthropic(openai_tools, openai_tool_choice)
