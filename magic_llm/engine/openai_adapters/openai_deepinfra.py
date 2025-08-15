@@ -5,6 +5,7 @@ from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
 from magic_llm.model import ModelChat
 from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.util.http import AsyncHttpClient
+from magic_llm.util.tools_mapping import coerce_tool_choice_to_string, map_to_openai
 
 
 class ProviderDeepInfra(OpenAiBaseProvider):
@@ -39,8 +40,16 @@ class ProviderDeepInfra(OpenAiBaseProvider):
             data.pop('callback')
         if 'fallback' in data:
             data.pop('fallback')
-        if (tc := data.get('tool_choice')) and type(tc) == dict:
-            data['tool_choice'] = 'auto'
+        # Normalize tools/tool_choice to canonical OpenAI schema
+        tools_mapped, choice_mapped = map_to_openai(data.get('tools'), data.get('tool_choice'))
+        if tools_mapped is not None:
+            data['tools'] = tools_mapped
+        if choice_mapped is not None:
+            data['tool_choice'] = choice_mapped
+
+        # DeepInfra only accepts string tool_choice. Downgrade dict to string.
+        if (tc := data.get('tool_choice')) is not None:
+            data['tool_choice'] = coerce_tool_choice_to_string(tc, default='auto')
 
         json_data = json.dumps(data).encode('utf-8')
         return json_data, self.headers

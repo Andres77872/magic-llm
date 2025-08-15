@@ -3,9 +3,23 @@ from typing import Optional, List, Any
 from pydantic import BaseModel
 
 
+class FunctionCall(BaseModel):
+    name: Optional[str] = None
+    arguments: Optional[str] = None
+
+
+class ToolCall(BaseModel):
+    id: Optional[str] = None
+    type: Optional[str] = "function"
+    function: Optional[FunctionCall] = None
+
+
 class DeltaModel(BaseModel):
     content: Optional[str] = ''
     role: Optional[str] = 'assistant'
+    tool_calls: Optional[List[ToolCall]] = None
+    refusal: Optional[str] = None
+    annotations: Optional[List[Any]] = []
 
 
 class ChoiceModel(BaseModel):

@@ -52,7 +52,8 @@ TEST_PROVIDERS = [
     ("mistral", "mistral", "open-mistral-7b", "FAIL/open-mistral-7b"),
     ("hyperbolic", "hyperbolic", "meta-llama/Meta-Llama-3.1-8B-Instruct", "FAIL/meta-llama/Meta-Llama-3.1-8B-Instruct"),
     ("groq", "groq", "llama3-8b-8192", "FAIL/llama3-8b-8192"),
-    ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/llama4-scout-instruct-basic", "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
+    ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/llama4-scout-instruct-basic",
+     "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
 ]
 CALL_DEF = {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}
 KEYS_FILE = os.getenv(
@@ -103,6 +104,7 @@ def test_function_and_tool_mapping(provider, key_name, model, fail_model):
     res = client.llm.generate(chat)
     print(res)
 
+
 def test_function_and_tool_fallback():
     # Unified OpenAI style: tools + tool_choice
     tool_entry = {"type": "function", "function": {"name": FUNCTION_DEF['function']['name']}}
@@ -115,3 +117,19 @@ def test_function_and_tool_fallback():
 
     print(res.model)
     print(res.tool_calls)
+
+
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "fail_model"),
+    PROVIDERS,
+    ids=[p[0] for p in PROVIDERS],
+)
+def test_function_and_tool_mapping_stream(provider, key_name, model, fail_model):
+    # Unified OpenAI style: tools + tool_choice
+    tool_entry = {"type": "function", "function": {"name": FUNCTION_DEF['function']['name']}}
+    keys = dict(ALL_KEYS[key_name])
+    chat = _build_chat()
+    client = MagicLLM(model=model, tools=[FUNCTION_DEF], tool_choice=tool_entry, **keys)
+    res = client.llm.stream_generate(chat)
+    for chunk in res:
+        print(chunk)

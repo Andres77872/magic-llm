@@ -11,6 +11,7 @@ from magic_llm.model.ModelChatStream import (ChatCompletionModel,
                                              DeltaModel,
                                              PromptTokensDetailsModel)
 from magic_llm.util.http import AsyncHttpClient, HttpClient
+from magic_llm.util.tools_mapping import map_to_anthropic
 
 
 class EngineAnthropic(BaseChat):
@@ -194,7 +195,7 @@ class EngineAnthropic(BaseChat):
         # ------------------------------------------------------------------ #
         # Final JSON body
         # ------------------------------------------------------------------ #
-        # Support OpenAI-style functions/tools and function_call/tool_choice
+        # Support OpenAI-style functions/tools and tool_choice via unified mapper
         openai_tools = (
                 kwargs.pop('tools', None)
                 or self.kwargs.get('tools', None)
@@ -211,51 +212,11 @@ class EngineAnthropic(BaseChat):
             **self.kwargs,
         }
 
-        # Map OpenAI tools to Anthropic tools schema
-        if openai_tools:
-            tools = []
-            for tool in openai_tools:
-                if tool.get('type') == 'function':
-                    fn_def = tool.get('function', {})
-                else:
-                    # Handle legacy format where tool is the function definition itself
-                    fn_def = tool
-
-                # Ensure we have required fields
-                if fn_def.get('name'):
-                    anthropic_tool = {
-                        'name': fn_def['name'],
-                        'description': fn_def.get('description', ''),
-                        'input_schema': fn_def.get('parameters', {
-                            'type': 'object',
-                            'properties': {},
-                            'required': []
-                        })
-                    }
-                    tools.append(anthropic_tool)
-
-            if tools:
-                data['tools'] = tools
-
-        # Map OpenAI tool_choice to Anthropic tool_choice
-        if openai_tool_choice is not None:
-            if isinstance(openai_tool_choice, str):
-                if openai_tool_choice == "none":
-                    # Anthropic doesn't have "none", so we don't set tool_choice
-                    pass
-                elif openai_tool_choice == "auto":
-                    data['tool_choice'] = {"type": "auto"}
-                elif openai_tool_choice == "required":
-                    data['tool_choice'] = {"type": "any"}
-            elif isinstance(openai_tool_choice, dict):
-                # Handle {"type": "function", "function": {"name": "function_name"}}
-                if openai_tool_choice.get('type') == 'function':
-                    function_name = openai_tool_choice.get('function', {}).get('name')
-                    if function_name:
-                        data['tool_choice'] = {"type": "tool", "name": function_name}
-                # Handle legacy {"name": "function_name"}
-                elif 'name' in openai_tool_choice:
-                    data['tool_choice'] = {"type": "tool", "name": openai_tool_choice['name']}
+        anthropic_tools, anthropic_choice = map_to_anthropic(openai_tools, openai_tool_choice)
+        if anthropic_tools:
+            data['tools'] = anthropic_tools
+        if anthropic_choice:
+            data['tool_choice'] = anthropic_choice
 
         data.setdefault('max_tokens', 4096)
         if preamble:

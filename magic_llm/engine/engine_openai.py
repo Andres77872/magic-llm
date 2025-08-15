@@ -128,6 +128,7 @@ class EngineOpenAI(BaseChat):
                                                data=data,
                                                headers=headers,
                                                timeout=kwargs.get('timeout')):
+                print(chunk)
                 if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
                     if c.id:
                         id_generation = c.id

@@ -9,6 +9,7 @@ from magic_llm.model import ModelChat
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
+from magic_llm.util.tools_mapping import map_to_openai
 
 
 class OpenAiBaseProvider(ABC):
@@ -59,6 +60,14 @@ class OpenAiBaseProvider(ABC):
             data.pop('callback')
         if 'fallback' in data:
             data.pop('fallback')
+
+        # Normalize OpenAI-style tools and tool_choice for consistency
+        tools_mapped, choice_mapped = map_to_openai(data.get('tools'), data.get('tool_choice'))
+        if tools_mapped is not None:
+            data['tools'] = tools_mapped
+        if choice_mapped is not None:
+            data['tool_choice'] = choice_mapped
+
         json_data = json.dumps(data).encode('utf-8')
         return json_data, self.headers
 
