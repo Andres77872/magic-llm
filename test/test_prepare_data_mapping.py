@@ -48,6 +48,26 @@ def test_openai_provider_prepare_data_maps_tools_and_choice(chat_simple):
     assert body["tool_choice"] == {"type": "function", "function": {"name": "get_weather"}}
 
 
+def test_openai_provider_prepare_data_accepts_callable(chat_simple):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-4o")
+
+    def get_weather(location: str):
+        """Get current temperature for a given location."""
+        return ""
+
+    body_bytes, _ = prov.prepare_data(chat_simple, tools=[get_weather], tool_choice={"name": "get_weather"})
+    body = _decode_body(body_bytes)
+
+    # tools normalized to OpenAI function wrapper
+    assert "tools" in body and isinstance(body["tools"], list) and len(body["tools"]) == 1
+    t0 = body["tools"][0]
+    assert t0["type"] == "function"
+    assert t0["function"]["name"] == "get_weather"
+    assert "parameters" in t0["function"]
+    # tool_choice normalized to OpenAI format
+    assert body["tool_choice"] == {"type": "function", "function": {"name": "get_weather"}}
+
+
 def test_deepinfra_provider_coerces_tool_choice_to_string(chat_simple):
     prov = ProviderDeepInfra(api_key="sk-xxx", model="meta-llama/Meta-Llama-3.1-70B-Instruct")
 
@@ -86,3 +106,31 @@ def test_anthropic_engine_prepare_data_maps_tools_and_choice(chat_simple, choice
 
     # sanity: messages exist
     assert isinstance(body.get("messages"), list) and len(body["messages"]) >= 1
+
+
+def test_anthropic_engine_prepare_data_accepts_callable_and_pydantic(chat_simple):
+    try:
+        from pydantic import BaseModel
+    except Exception:
+        BaseModel = None
+
+    def get_weather(location: str):
+        """Get current temperature for a given location."""
+        return ""
+
+    tools = [get_weather]
+    if BaseModel is not None:
+        class GetForecast(BaseModel):
+            """Forecast for a given location and days."""
+            location: str
+            days: int
+
+        tools.append(GetForecast)
+
+    eng = EngineAnthropic(api_key="ak-xxx", model="claude-3-haiku-20240307")
+    body_bytes, headers = eng.prepare_data(chat_simple, tools=tools, tool_choice={"name": "get_weather"})
+    body = _decode_body(body_bytes)
+
+    assert isinstance(body.get("tools"), list) and len(body["tools"]) >= 1
+    # First tool is callable get_weather
+    assert any(t.get("name") == "get_weather" and "input_schema" in t for t in body["tools"]) 

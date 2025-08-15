@@ -1,9 +1,133 @@
 import copy
-from typing import Any, Dict, List, Optional, Tuple, Union
+import inspect
+from typing import Any, Dict, List, Optional, Tuple, Union, get_args, get_origin
+
+try:
+    from pydantic import BaseModel  # pydantic v2
+except Exception:  # pragma: no cover - optional import safety
+    BaseModel = None  # type: ignore
 
 # Types
 OpenAITool = Dict[str, Any]
 ToolChoice = Union[str, Dict[str, Any], None]
+
+
+def _is_pydantic_model(obj: Any) -> bool:
+    """Return True if obj is a Pydantic BaseModel class or instance."""
+    if BaseModel is None:
+        return False
+    try:
+        # class or instance
+        return (inspect.isclass(obj) and issubclass(obj, BaseModel)) or isinstance(obj, BaseModel)
+    except Exception:
+        return False
+
+
+def _json_schema_for_annotation(annotation: Any) -> Dict[str, Any]:
+    """Best-effort conversion from a Python type annotation to a JSON Schema snippet."""
+    if annotation is inspect.Signature.empty or annotation is Any:
+        return {}
+
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+
+    # Optional[T] / Union[T, None]
+    if origin is Union:
+        non_none = [a for a in args if a is not type(None)]  # noqa: E721
+        if len(non_none) == 1:
+            return _json_schema_for_annotation(non_none[0])
+        # Generic union -> enum of types (fallback to string)
+        return {}
+
+    # List[T] / Sequence[T]
+    if origin in (list, List, tuple, set):
+        items = _json_schema_for_annotation(args[0]) if args else {}
+        return {"type": "array", "items": items or {}}
+
+    # Dict[K, V]
+    if origin in (dict, Dict):
+        return {"type": "object"}
+
+    # Literal[...] -> enum
+    try:
+        from typing import Literal  # py39+
+    except Exception:  # pragma: no cover
+        Literal = None
+    if Literal is not None and origin is Literal:
+        return {"enum": list(args)}
+
+    # Pydantic model as parameter type
+    if _is_pydantic_model(annotation):
+        model = annotation if inspect.isclass(annotation) else annotation.__class__
+        try:
+            schema = model.model_json_schema()  # type: ignore[attr-defined]
+        except Exception:
+            schema = {}
+        return schema or {"type": "object"}
+
+    # Primitive types
+    mapping = {bool: "boolean", int: "integer", float: "number", str: "string"}
+    if annotation in mapping:
+        return {"type": mapping[annotation]}
+
+    # Fallback
+    return {}
+
+
+def _schema_from_callable(fn: Any) -> Tuple[str, str, Dict[str, Any]]:
+    """Extract (name, description, parameters_schema) from a Python callable."""
+    name = getattr(fn, "__name__", None) or "tool"
+    description = (inspect.getdoc(fn) or "").strip()
+
+    sig = inspect.signature(fn)
+    type_hints = {}
+    try:
+        from typing import get_type_hints as _get_type_hints
+
+        type_hints = _get_type_hints(fn)
+    except Exception:
+        pass
+
+    properties: Dict[str, Any] = {}
+    required: List[str] = []
+
+    for pname, param in sig.parameters.items():
+        if pname in {"self", "cls"}:
+            continue
+        ann = type_hints.get(pname, param.annotation)
+        schema = _json_schema_for_annotation(ann)
+        properties[pname] = schema or {"type": "string"}
+
+        is_optional = False
+        origin = get_origin(ann)
+        args = get_args(ann)
+        if origin is Union and any(a is type(None) for a in args):  # noqa: E721
+            is_optional = True
+
+        if param.default is inspect._empty and not is_optional:
+            required.append(pname)
+
+    parameters = {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+    }
+    return name, description, parameters
+
+
+def _schema_from_pydantic(model_obj: Any) -> Tuple[str, str, Dict[str, Any]]:
+    """Extract (name, description, parameters_schema) from a Pydantic model class or instance."""
+    model_cls = model_obj if inspect.isclass(model_obj) else model_obj.__class__
+    name = getattr(model_cls, "__name__", "tool")
+    description = (inspect.getdoc(model_cls) or "").strip()
+    try:
+        schema = model_cls.model_json_schema()  # type: ignore[attr-defined]
+    except Exception:
+        schema = {"type": "object", "properties": {}, "required": []}
+    # Ensure object schema
+    if schema.get("type") != "object":
+        schema = {"type": "object", "properties": {}, "required": []}
+    return name, description, schema
 
 
 def normalize_openai_tools(tools: Optional[List[OpenAITool]]) -> List[Dict[str, Any]]:
@@ -23,27 +147,73 @@ def normalize_openai_tools(tools: Optional[List[OpenAITool]]) -> List[Dict[str, 
     for tool in tools:
         if tool is None:
             continue
-        # If wrapped in {type:function, function:{...}}
-        if tool.get("type") == "function":
-            fn_def = copy.deepcopy(tool.get("function", {}))
-        else:
-            # Legacy: tool itself is the function definition
-            fn_def = copy.deepcopy(tool)
 
-        name = fn_def.get("name")
-        if not name:
-            # skip invalid entries
+        # --- Pydantic model class or instance -------------------------------
+        if _is_pydantic_model(tool):
+            name, desc, params = _schema_from_pydantic(tool)
+            normalized.append({"name": name, "description": desc, "parameters": params})
             continue
 
-        normalized.append({
-            "name": name,
-            "description": fn_def.get("description", ""),
-            "parameters": fn_def.get("parameters", {
+        # --- Python callable -------------------------------------------------
+        if callable(tool) and not isinstance(tool, dict):
+            try:
+                name, desc, params = _schema_from_callable(tool)
+            except Exception:
+                continue
+            normalized.append({"name": name, "description": desc, "parameters": params})
+            continue
+
+        # --- Dict inputs -----------------------------------------------------
+        if isinstance(tool, dict):
+            # If wrapped in {type:function, function:{...}}
+            if tool.get("type") == "function":
+                fn_def = copy.deepcopy(tool.get("function", {}))
+                # propagate any flags like strict
+                if "strict" in tool and "strict" not in fn_def:
+                    fn_def["strict"] = tool["strict"]
+            else:
+                # Legacy or mixed: tool itself is the function definition
+                fn_def = copy.deepcopy(tool)
+
+            # Support synonyms for parameters
+            if "parameters" not in fn_def:
+                if "schema" in fn_def:
+                    fn_def["parameters"] = fn_def["schema"]
+                elif "input_schema" in fn_def:
+                    fn_def["parameters"] = fn_def["input_schema"]
+
+            # If only a raw JSON Schema was provided, try to derive the name
+            name = fn_def.get("name") or fn_def.get("title")
+            if not name:
+                # Cannot normalise without a name
+                continue
+
+            params = fn_def.get("parameters") or {
                 "type": "object",
                 "properties": {},
-                "required": []
-            })
-        })
+                "required": [],
+            }
+            # Ensure parameters is an object schema
+            if not isinstance(params, dict) or params.get("type") != "object":
+                params = {
+                    "type": "object",
+                    "properties": params if isinstance(params, dict) else {},
+                    "required": [],
+                }
+
+            entry = {
+                "name": name,
+                "description": fn_def.get("description", ""),
+                "parameters": params,
+            }
+            # Preserve optional strict flag when present
+            if "strict" in fn_def:
+                entry["strict"] = fn_def["strict"]
+
+            normalized.append(entry)
+            continue
+
+        # Unknown type – skip
     return normalized
 
 
@@ -125,21 +295,26 @@ def map_to_openai(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice) ->
 
     openai_tools: Optional[List[Dict[str, Any]]] = None
     if normalized_tools:
-        openai_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t.get("description", ""),
-                    "parameters": t.get("parameters", {
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    })
-                }
+        openai_tools = []
+        for t in normalized_tools:
+            func_block = {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parameters": t.get("parameters", {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                })
             }
-            for t in normalized_tools
-        ]
+            # If strict was preserved in normalization, include it inside the function block
+            if t.get("strict") is not None:
+                func_block["strict"] = t["strict"]
+
+            tool_item = {
+                "type": "function",
+                "function": func_block,
+            }
+            openai_tools.append(tool_item)
 
     openai_choice: ToolChoice = None
     if isinstance(normalized_choice, str):
