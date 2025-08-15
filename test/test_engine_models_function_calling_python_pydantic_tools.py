@@ -15,7 +15,6 @@ try:
 except Exception:  # pragma: no cover
     BaseModel = None  # type: ignore
 
-
 # Limit to a representative set of real providers we support end-to-end
 TEST_PROVIDERS = [
     ("openai", "openai", "gpt-4o", "gpt-4o1"),
@@ -103,3 +102,21 @@ def test_python_and_pydantic_tools_call_time_override(provider, key_name, model,
     # Now override both tools and tool_choice at call time
     res = client.llm.generate(chat, tools=tools, tool_choice=tool_entry)
     print(res)
+
+
+@pytest.mark.parametrize(
+    ("provider", "key_name", "model", "_fail_model"),
+    PROVIDERS,
+    ids=[p[0] for p in PROVIDERS],
+)
+def test_python_and_pydantic_tools_at_init_stream(provider, key_name, model, _fail_model):
+    tools, primary_name = _python_tool_definitions()
+    tool_entry = {"type": "function", "function": {"name": primary_name}}
+
+    keys = dict(ALL_KEYS[key_name])
+    chat = _build_chat()
+
+    # Pass tools at initialization time
+    client = MagicLLM(model=model, tools=tools, tool_choice=tool_entry, **keys)
+    for i in client.llm.stream_generate(chat):
+        print(i)
