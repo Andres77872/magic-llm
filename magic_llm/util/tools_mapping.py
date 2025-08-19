@@ -1,5 +1,6 @@
 import copy
 import inspect
+import re
 from typing import Any, Dict, List, Optional, Tuple, Union, get_args, get_origin
 
 try:
@@ -74,10 +75,114 @@ def _json_schema_for_annotation(annotation: Any) -> Dict[str, Any]:
     return {}
 
 
+def _extract_param_docs_from_docstring(doc: str) -> Dict[str, str]:
+    """Extract per-parameter descriptions from a docstring.
+
+    Supports common styles:
+    - reST/Sphinx: ":param name: description" (optionally with separate ":type name:")
+    - Google/NumPy-like sections: "Args:" / "Arguments:" / "Parameters:" followed by
+      "name (type): description" entries (with indented continuations).
+
+    Returns a mapping of parameter name -> description. Missing entries are ignored.
+    """
+    if not doc:
+        return {}
+
+    lines = doc.expandtabs().splitlines()
+    docs: Dict[str, str] = {}
+
+    # Pass 1: reST/Sphinx style ":param ...: ..."
+    rst_param_re = re.compile(r"^\s*:param\s+(?:[^:]+?\s+)?(?P<name>\*{0,2}[\w]+)\s*:\s*(?P<desc>.*)\s*$")
+    i = 0
+    while i < len(lines):
+        m = rst_param_re.match(lines[i])
+        if m:
+            name = m.group("name").strip()
+            desc = m.group("desc").strip()
+            # Continuation lines: keep consuming indented lines until another ":field:" or header
+            j = i + 1
+            cont: List[str] = []
+            while j < len(lines):
+                nxt = lines[j]
+                if re.match(r"^\s*:\w", nxt):  # next field like :type, :return:, etc.
+                    break
+                if re.match(r"^\s*(Returns?|Yields?|Raises?)\s*:\s*$", nxt):
+                    break
+                if nxt.strip() == "":
+                    cont.append("")
+                    j += 1
+                    continue
+                if nxt.startswith(" "):
+                    cont.append(nxt.strip())
+                    j += 1
+                    continue
+                break
+            extra = " ".join([c for c in cont if c.strip() != ""]) if cont else ""
+            if extra:
+                desc = (desc + " " + extra).strip()
+            if name and desc:
+                docs[name] = desc
+            i = j
+            continue
+        i += 1
+
+    # Pass 2: Google/"Args:" or NumPy-like "Parameters:" section
+    section_header_re = re.compile(r"^\s*(Args|Arguments|Parameters)\s*:\s*$")
+    i = 0
+    while i < len(lines):
+        if not section_header_re.match(lines[i]):
+            i += 1
+            continue
+        base_indent = len(re.match(r"^(\s*)", lines[i]).group(1))
+        j = i + 1
+        # Allow optional underline (NumPy style): a line of dashes
+        if j < len(lines) and re.match(r"^\s*-{3,}\s*$", lines[j]):
+            j += 1
+        while j < len(lines):
+            line = lines[j]
+            if re.match(r"^\s*(Returns?|Yields?|Raises?)\s*:\s*$", line):
+                break
+            this_indent = len(re.match(r"^(\s*)", line).group(1))
+            if this_indent <= base_indent:
+                break
+            stripped = line.strip()
+            if not stripped:
+                j += 1
+                continue
+            # name (type): desc  OR  name: desc
+            m = re.match(r"^(?P<name>\*{0,2}[\w]+)\s*(\([^)]*\))?\s*:\s*(?P<desc>.*)$", stripped)
+            if m:
+                name = m.group("name").strip()
+                desc = m.group("desc").strip()
+                k = j + 1
+                # Continuations are more indented than this line
+                cont: List[str] = []
+                while k < len(lines):
+                    nxt = lines[k]
+                    ni = len(re.match(r"^(\s*)", nxt).group(1))
+                    if ni <= this_indent:
+                        break
+                    cont.append(nxt.strip())
+                    k += 1
+                if cont:
+                    extra = " ".join([c for c in cont if c.strip() != ""]) if cont else ""
+                    if extra:
+                        desc = (desc + " " + extra).strip()
+                if name and desc and name not in docs:
+                    docs[name] = desc
+                j = k
+                continue
+            j += 1
+        i = j
+    return docs
+
+
 def _schema_from_callable(fn: Any) -> Tuple[str, str, Dict[str, Any]]:
     """Extract (name, description, parameters_schema) from a Python callable."""
     name = getattr(fn, "__name__", None) or "tool"
     description = (inspect.getdoc(fn) or "").strip()
+    # Extract per-parameter descriptions from the docstring, if any
+    param_docs = _extract_param_docs_from_docstring(description)
 
     sig = inspect.signature(fn)
     type_hints = {}
@@ -97,6 +202,14 @@ def _schema_from_callable(fn: Any) -> Tuple[str, str, Dict[str, Any]]:
         ann = type_hints.get(pname, param.annotation)
         schema = _json_schema_for_annotation(ann)
         properties[pname] = schema or {"type": "string"}
+        # Attach description from docstring when available
+        pdesc = param_docs.get(pname)
+        if pdesc:
+            # Do not overwrite if a description is already present
+            if not isinstance(properties[pname], dict):
+                properties[pname] = {"description": pdesc}
+            else:
+                properties[pname].setdefault("description", pdesc)
 
         is_optional = False
         origin = get_origin(ann)

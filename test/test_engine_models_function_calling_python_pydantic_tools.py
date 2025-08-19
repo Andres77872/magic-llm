@@ -3,6 +3,7 @@ import os
 import sys
 
 from magic_llm import MagicLLM
+from magic_llm.util.tools_mapping import normalize_openai_tools
 
 # add project root to import path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -50,7 +51,21 @@ def _build_chat():
 
 def _python_tool_definitions():
     def get_weather(location: str):
-        """Get current temperature for a given location."""
+        """
+        Retrieve current weather information for a given location.
+
+        This function fetches and returns weather details based on the
+        specified location. The location is required and must be a valid
+        string indicating the place for which the weather is queried.
+        Ensure the location provided is recognized by the weather API used
+        by the function.
+
+        :param location: The name of the location to retrieve weather
+            information for.
+        :type location: str
+        :return: Weather details for the specified location.
+        :rtype: str
+        """
         return ""
 
     tools = [get_weather]
@@ -120,3 +135,9 @@ def test_python_and_pydantic_tools_at_init_stream(provider, key_name, model, _fa
     client = MagicLLM(model=model, tools=tools, tool_choice=tool_entry, **keys)
     for i in client.llm.stream_generate(chat):
         print(i)
+
+def test_to_json():
+    # Pass tools at initialization time
+    tools, primary_name = _python_tool_definitions()
+    res =normalize_openai_tools([tools[0]])
+    print(res)
