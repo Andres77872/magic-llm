@@ -322,6 +322,43 @@ chat.add_user_message("Great. One more example?")
 print(client.llm.generate(chat).content)
 ```
 
+### MIME type requirements and validation
+
+- If `image` is a data URI string (starts with `data:`), it must include a MIME type and `;base64,` prefix, e.g. `data:image/png;base64,<...>`. Otherwise a `ValueError` is raised.
+- If `image` is a raw base64 string (does not start with `data:`), you must provide a valid `media_type` (like `image/png`, `image/webp`, etc.). A `ValueError` is raised if `media_type` is missing or invalid.
+- If `image` is bytes, you must provide a valid `media_type`.
+
+Examples:
+
+```python
+# Data URI (includes explicit MIME type)
+chat = ModelChat()
+chat.add_user_message(
+    "Describe this.",
+    image="data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...",
+)
+
+# Raw base64 (requires media_type)
+chat = ModelChat()
+chat.add_user_message(
+    "Describe this.",
+    image=SAMPLE_BASE64_IMAGE,
+    media_type="image/webp",
+)
+
+# Bytes (requires media_type)
+chat = ModelChat()
+chat.add_user_message(
+    "Describe this.",
+    image=SAMPLE_BYTES,
+    media_type="image/png",
+)
+
+# Error: invalid or missing media_type with raw base64
+chat = ModelChat()
+chat.add_user_message("Describe this.", image=SAMPLE_BASE64_IMAGE, media_type=None)  # raises ValueError
+```
+
 ---
 
 ## 8) Images in chat messages (vision)

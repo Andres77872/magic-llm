@@ -24,6 +24,65 @@ def _is_pydantic_model(obj: Any) -> bool:
         return False
 
 
+def _inline_local_refs(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Inline local $ref entries that point to root $defs/definitions.
+
+    - Resolves references like {"$ref": "#/$defs/Foo"} by replacing with the
+      concrete schema from root["$defs"]["Foo"], recursively.
+    - Removes top-level $defs/definitions after inlining so the result is a
+      standalone schema acceptable for OpenAI tool parameters.
+    """
+    root = copy.deepcopy(schema)
+
+    # Gather local definitions (Pydantic v2 uses $defs; older may use definitions)
+    local_defs = {}
+    if isinstance(root, dict):
+        if isinstance(root.get("$defs"), dict):
+            local_defs.update(root["$defs"])
+        if isinstance(root.get("definitions"), dict):
+            # prefer $defs keys; but include definitions if present
+            for k, v in root["definitions"].items():
+                local_defs.setdefault(k, v)
+
+    def resolve(node: Any) -> Any:
+        if isinstance(node, dict):
+            # Replace $ref to local defs
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/"):
+                parts = ref.lstrip("#/").split("/")
+                if parts and parts[0] in ("$defs", "definitions") and len(parts) >= 2:
+                    key = parts[-1]
+                    target = local_defs.get(key)
+                    if isinstance(target, dict):
+                        resolved = resolve(copy.deepcopy(target))
+                        # Merge any sibling keys besides $ref (rare but allowed)
+                        for k, v in node.items():
+                            if k == "$ref":
+                                continue
+                            # do not overwrite resolved keys
+                            resolved.setdefault(k, v)
+                        return resolved
+                    else:
+                        # Unknown ref; drop $ref and continue processing other keys
+                        node = {k: v for k, v in node.items() if k != "$ref"}
+
+            # Recurse into dict members
+            for k, v in list(node.items()):
+                node[k] = resolve(v)
+            return node
+        if isinstance(node, list):
+            return [resolve(i) for i in node]
+        return node
+
+    root = resolve(root)
+
+    # Strip local definitions on the root if present after inlining
+    if isinstance(root, dict):
+        root.pop("$defs", None)
+        root.pop("definitions", None)
+    return root
+
+
 def _json_schema_for_annotation(annotation: Any) -> Dict[str, Any]:
     """Best-effort conversion from a Python type annotation to a JSON Schema snippet."""
     if annotation is inspect.Signature.empty or annotation is Any:
@@ -64,6 +123,8 @@ def _json_schema_for_annotation(annotation: Any) -> Dict[str, Any]:
             schema = model.model_json_schema()  # type: ignore[attr-defined]
         except Exception:
             schema = {}
+        # Inline local refs and strip $defs to satisfy OpenAI tool schema expectations
+        schema = _inline_local_refs(schema) if isinstance(schema, dict) else {}
         return schema or {"type": "object"}
 
     # Primitive types
@@ -240,6 +301,9 @@ def _schema_from_pydantic(model_obj: Any) -> Tuple[str, str, Dict[str, Any]]:
     # Ensure object schema
     if schema.get("type") != "object":
         schema = {"type": "object", "properties": {}, "required": []}
+    else:
+        # Inline local refs and strip $defs to satisfy OpenAI tool schema expectations
+        schema = _inline_local_refs(schema)
     return name, description, schema
 
 
