@@ -7,3 +7,4 @@ from magic_llm.engine.openai_adapters.openai_groq import ProviderGroq
 from magic_llm.engine.openai_adapters.openai_mistral import ProviderMistral
 from magic_llm.engine.openai_adapters.openai_openrouter import ProviderOpenRouter
 from magic_llm.engine.openai_adapters.openai_sambanova import ProviderSambaNova
+from magic_llm.engine.openai_adapters.openai_together import ProviderTogether
