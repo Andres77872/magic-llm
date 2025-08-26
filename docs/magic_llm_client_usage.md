@@ -432,6 +432,94 @@ print(resp["text"])  # provider-compatible response
 # resp = await client.llm.async_audio_transcriptions(data)
 ```
 
+## 9b) Audio speech (text‑to‑speech)
+
+Use `AudioSpeechRequest` on engines that support TTS.
+
+- OpenAI/compatible: use `await llm.async_audio_speech(...)` and pass `model` and `voice`.
+- Azure Speech: use `engine="azure"` with `speech_key` and `speech_region`; call `await llm.async_audio_speech(...)` with `voice` (model is ignored).
+- Amazon Polly (sync): set `service_name="polly"` when creating the client; call `llm.audio_speech(...)` and read the returned stream.
+
+OpenAI example (async):
+
+```python
+import asyncio
+from magic_llm import MagicLLM
+from magic_llm.model.ModelAudio import AudioSpeechRequest
+
+client = MagicLLM(engine="openai", model="gpt-4o-mini-tts", private_key="sk-...")
+
+async def main():
+    data = AudioSpeechRequest(
+        input="Hello from MagicLLM text to speech.",
+        model="gpt-4o-mini-tts",
+        voice="alloy",
+        response_format="mp3",
+    )
+    audio = await client.llm.async_audio_speech(data)
+    with open("out_openai.mp3", "wb") as f:
+        f.write(audio)
+
+asyncio.run(main())
+```
+
+Azure example (async):
+
+```python
+import asyncio
+from magic_llm import MagicLLM
+from magic_llm.model.ModelAudio import AudioSpeechRequest
+
+client = MagicLLM(engine="azure", speech_key="...", speech_region="eastus")
+
+async def main():
+    data = AudioSpeechRequest(
+        input="Hola desde MagicLLM.",
+        model="azure-tts",     # ignored by Azure engine
+        voice="en-US-AriaNeural",
+        response_format="mp3", # Azure returns mp3 by default in this engine
+    )
+    audio = await client.llm.async_audio_speech(data)
+    with open("out_azure.mp3", "wb") as f:
+        f.write(audio)
+
+asyncio.run(main())
+```
+
+Amazon Polly example (sync):
+
+```python
+from magic_llm import MagicLLM
+from magic_llm.model.ModelAudio import AudioSpeechRequest
+
+client = MagicLLM(
+    engine="amazon",
+    model="amazon.titan-text-lite-v1",  # any 'amazon...' model; not used by Polly TTS
+    aws_access_key_id="...",
+    aws_secret_access_key="...",
+    region_name="us-east-1",
+    service_name="polly",    # IMPORTANT for TTS
+)
+
+data = AudioSpeechRequest(
+    input="Amazon Polly with MagicLLM.",
+    model="neural",          # Polly engine mode: "standard" or "neural"
+    voice="Joanna",
+    response_format="mp3",
+)
+stream = client.llm.audio_speech(data)  # returns a StreamingBody
+audio = stream.read()
+with open("out_polly.mp3", "wb") as f:
+    f.write(audio)
+```
+
+Notes:
+
+- `AudioSpeechRequest`: fields are `input`, `model`, `voice`, optional `response_format` (default "mp3"), `speed` (default 1).
+- OpenAI/DeepInfra return raw audio bytes. Azure returns raw bytes. Amazon returns a stream; call `.read()`.
+- Some providers only support async TTS; sync will raise NotImplementedError in `EngineOpenAI.audio_speech(...)`.
+ - Amazon: initialize `MagicLLM` with any Bedrock `'amazon...'` model to satisfy engine setup, set `service_name="polly"`, and choose Polly mode via `AudioSpeechRequest.model` (`"standard"`/`"neural"`).
+
 ---
 
 ## 10) Embeddings
@@ -505,6 +593,8 @@ except ChatException as e:
 - `async for chunk in llm.async_stream_generate(chat, tools=None, tool_choice=None, ...)`
 - `llm.embedding(text, ...)`, `await llm.async_embedding(text, ...)`
 - `llm.sync_audio_transcriptions(AudioTranscriptionsRequest, ...)`, `await llm.async_audio_transcriptions(...)`
+- `llm.audio_speech(AudioSpeechRequest, ...)` (provider-dependent sync support)
+- `await llm.async_audio_speech(AudioSpeechRequest, ...)`
 - Images via `ModelChat.add_user_message(content, image=..., media_type=...)`
 
 This completes the end‑to‑end usage of the MagicLLM client.
