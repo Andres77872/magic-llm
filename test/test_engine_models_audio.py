@@ -23,6 +23,7 @@ TTS_PROVIDERS = [
     ("openai", "openai", {"model": "gpt-4o-mini-tts", "voice": "alloy"}),
     ("azure", "azure", {"voice": "en-US-AriaNeural"}),
     ("together.ai", "openai", {"model": "cartesia/sonic-2", "voice": "spanish narrator man", "base_url": "https://api.together.xyz/v1"}),
+    ("google", "google", {"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"}),
 ]
 
 # Locate keys file via environment variable or default to test/keys.json
