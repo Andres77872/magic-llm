@@ -238,6 +238,91 @@ print(resp)  # List[float]
 
 ---
 
+## Agentic Tool Workflow (Function Calling)
+
+Use `run_agentic` to let the model call your Python tools iteratively until it produces a normal answer.
+
+- **Callables**: simplest; the function's `__name__` is the tool name.
+- **JSON tool specs**: provide OpenAI-style schemas and map names to callables via `tool_functions`.
+
+### Minimal example (callables)
+
+```python
+from typing import Any, List
+from magic_llm import MagicLLM
+from magic_llm.util import run_agentic
+
+
+client = MagicLLM(engine='openai', model='gpt-4o-mini', private_key='sk-...')
+
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+
+def top_k(items: List[Any], k: int = 3) -> List[Any]:
+    return list(items)[:k]
+
+
+resp = run_agentic(
+    client=client,
+    user_input="Compute 17 + 25, then take the first 2 fruits from ['apple','banana','cherry'] and summarize.",
+    system_prompt="Use tools for arithmetic and list selection before answering.",
+    tools=[add, top_k],
+    tool_choice="auto",
+    max_iterations=4,
+)
+
+print(resp.content)
+```
+
+### OpenAI-style tool definitions (JSON)
+
+```python
+from magic_llm import MagicLLM
+from magic_llm.util import run_agentic
+
+
+client = MagicLLM(engine='openai', model='gpt-4o-mini', private_key='sk-...')
+
+
+tool_specs = [
+    {
+        "type": "function",
+        "function": {
+            "name": "add",
+            "description": "Add two integers",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "integer"},
+                    "b": {"type": "integer"}
+                },
+                "required": ["a", "b"]
+            }
+        }
+    }
+]
+
+
+def add(a: int, b: int) -> int:
+    return a + b
+
+
+resp = run_agentic(
+    client=client,
+    user_input="Use the add tool to add 7 and 35, then explain the result.",
+    tools=tool_specs,
+    tool_functions={"add": add},
+)
+
+print(resp.content)
+```
+
+For a complete end-to-end research + rerank demo using multiple tools (query rewriting, arXiv search, Jina reranker, and a follow-up vision analysis), see `test/test_agentic_tools_workflow.py`. The agent loop implementation lives in `magic_llm/util/agentic.py`.
+
+---
+
 ## Supported Provider Configurations
 
 **OpenAI (and any OpenAI-compatible API endpoint):**

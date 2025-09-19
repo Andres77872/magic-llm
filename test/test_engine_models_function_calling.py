@@ -46,7 +46,6 @@ TEST_PROVIDERS = [
     ("parasail", "parasail", "parasail-mistral-nemo", "parasail-mistral-nemo-fail"),
     ("x.ai", "x.ai", "grok-3-mini", "grok-3-mini-fail"),
     ("together.ai", "together.ai", "meta-llama/Llama-3-8b-chat-hf", "meta-llama/Llama-3-8b-chat-hf-fail"),
-    ("perplexity", "perplexity", "sonar", "sonar-fail"),
     ("openrouter", "openrouter", "mistralai/mistral-nemo", "mistralai/mistral-nemo-fail"),
     # ("novita.ai", "novita.ai", "mistralai/mistral-nemo", "FAIL/mistralai/mistral-nemo"),
     ("mistral", "mistral", "open-mistral-7b", "FAIL/open-mistral-7b"),

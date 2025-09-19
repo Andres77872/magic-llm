@@ -38,6 +38,18 @@ class ModelChat:
             if isinstance(i, str):
                 # Check if it's a URL
                 if i.startswith(('http://', 'https://', 'data:')):
+                    # Validate data URIs to ensure MIME type is present
+                    if i.startswith('data:'):
+                        # Expect "data:<mime>;base64,<payload>"
+                        try:
+                            header, _ = i.split(',', 1)
+                        except ValueError:
+                            raise ValueError("Invalid data URI. Expected 'data:<mime>;base64,<data>'")
+                        if ';base64' not in header:
+                            raise ValueError("Data URI for images must declare base64 encoding, e.g., data:image/png;base64,....")
+                        mime = header[5:].split(';', 1)[0]
+                        if not mime or '/' not in mime:
+                            raise ValueError("Data URI must include a MIME type, e.g., data:image/png;base64,....")
                     return {
                         "type": "image_url",
                         "image_url": {
@@ -46,6 +58,10 @@ class ModelChat:
                     }
                 else:
                     # Assume it's already base64 encoded
+                    # Require a valid media_type for raw base64
+                    if not mt or not isinstance(mt, str) or '/' not in mt:
+                        raise ValueError("Raw base64 image provided without a valid media_type. "
+                                         "Pass media_type like 'image/png' or use a data URI 'data:image/png;base64,...'.")
                     return {
                         "type": "image_url",
                         "image_url": {
@@ -54,6 +70,8 @@ class ModelChat:
                     }
             elif isinstance(i, bytes):
                 # Convert bytes to base64
+                if not mt or not isinstance(mt, str) or '/' not in mt:
+                    raise ValueError("Bytes image requires a valid media_type (e.g., 'image/png').")
                 base64_image = base64.b64encode(i).decode('utf-8')
                 return {
                     "type": "image_url",

@@ -13,6 +13,7 @@ from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               ProviderFireworks,
                                               ProviderDeepseek,
                                               ProviderDeepInfra,
+                                              ProviderTogether,
                                               OpenAiBaseProvider)
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
@@ -34,6 +35,7 @@ class EngineOpenAI(BaseChat):
         r'api\.fireworks\.ai': ProviderFireworks,
         r'api\.deepseek\.com': ProviderDeepseek,
         r'api\.deepinfra\.com\/v1': ProviderDeepInfra,
+        r'api\.together\.xyz': ProviderTogether,
     }
 
     def __init__(self,
@@ -128,7 +130,6 @@ class EngineOpenAI(BaseChat):
                                                data=data,
                                                headers=headers,
                                                timeout=kwargs.get('timeout')):
-                print(chunk)
                 if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
                     if c.id:
                         id_generation = c.id
@@ -201,7 +202,9 @@ class EngineOpenAI(BaseChat):
         Returns:
             The audio speech response
         """
-        return self.base.audio_speech(data) if hasattr(self.base, 'audio_speech') else None
+        if hasattr(self.base, 'audio_speech'):
+            return self.base.audio_speech(data, **kwargs)
+        raise NotImplementedError("Synchronous audio_speech is not implemented for this provider. Use async_audio_speech instead.")
 
     async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
         """
@@ -214,7 +217,7 @@ class EngineOpenAI(BaseChat):
         Returns:
             The audio transcriptions response
         """
-        return await self.base.async_audio_transcriptions(data)
+        return await self.base.async_audio_transcriptions(data, **kwargs)
 
     def sync_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
         """
@@ -227,4 +230,4 @@ class EngineOpenAI(BaseChat):
         Returns:
             The audio transcriptions response
         """
-        return self.base.sync_audio_transcriptions(data)
+        return self.base.sync_audio_transcriptions(data, **kwargs)

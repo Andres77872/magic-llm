@@ -227,6 +227,59 @@ def test_normalize_preserves_strict_flag():
     assert out2[0]["name"] == "get_weather2" and out2[0].get("strict") is True
 
 
+def test_callable_param_with_nested_pydantic_schema_includes_inner_properties():
+    try:
+        from pydantic import BaseModel
+    except Exception:
+        pytest.skip("pydantic not available")
+
+    class InnerModel(BaseModel):
+        data: str
+
+    class SomeModel(BaseModel):
+        inner_model: InnerModel
+
+    def use_nested(some_model: SomeModel):
+        """Tool with nested pydantic param."""
+        return ""
+
+    out = normalize_openai_tools([use_nested])
+    print(out)
+    assert isinstance(out, list) and len(out) == 1
+    entry = out[0]
+    assert entry["name"] == "use_nested"
+    params = entry["parameters"]
+    assert params.get("type") == "object"
+    # the outer callable param should be required
+    assert "some_model" in (params.get("required") or [])
+    assert "some_model" in params.get("properties", {})
+    sm_schema = params["properties"]["some_model"]
+    # Expect SomeModel object schema
+    assert sm_schema.get("type") == "object"
+    # Must not contain local $defs/definitions or $ref anywhere
+    def _no_ref_defs(node):
+        if isinstance(node, dict):
+            assert "$defs" not in node and "definitions" not in node and "$ref" not in node
+            for v in node.values():
+                _no_ref_defs(v)
+        elif isinstance(node, list):
+            for v in node:
+                _no_ref_defs(v)
+
+    _no_ref_defs(sm_schema)
+
+    # inner_model property exists and is fully inlined
+    assert "properties" in sm_schema
+    assert "inner_model" in sm_schema["properties"]
+    # SomeModel requires inner_model
+    assert "inner_model" in (sm_schema.get("required") or [])
+    inner_entry = sm_schema["properties"]["inner_model"]
+    assert inner_entry.get("type") == "object"
+    assert "data" in (inner_entry.get("properties") or {})
+    # InnerModel requires data
+    assert "data" in (inner_entry.get("required") or [])
+
+
 def test_map_to_openai_preserves_strict_flag():
     tool = {
         "type": "function",

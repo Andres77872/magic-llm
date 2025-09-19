@@ -1,13 +1,16 @@
 # https://cloud.google.com/vertex-ai/docs/generative-ai/model-reference/gemini?hl=es-419
 import asyncio
 import base64
+import io
 import json
 import mimetypes
 import time
+import wave
 from urllib.parse import urlparse
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatResponse import ToolCall, FunctionCall, Choice, Message
 from magic_llm.model.ModelChatStream import (ChatCompletionModel,
                                              UsageModel,
@@ -26,6 +29,7 @@ class EngineGoogle(BaseChat):
         base = 'https://generativelanguage.googleapis.com/v1beta/models/'
         self.url_stream = f'{base}{self.model}:streamGenerateContent?alt=sse&key={api_key}'
         self.url = f'{base}{self.model}:generateContent?key={api_key}'
+        self.url_tts = f'{base}gemini-2.5-flash-preview-tts:generateContent?key={api_key}'
         self.api_key = api_key
 
     def prepare_data_sync(self, chat: ModelChat, **kwargs):
@@ -373,3 +377,85 @@ class EngineGoogle(BaseChat):
                                                   headers=headers):
                 if chunk.strip():
                     yield self.prepare_stream_response(chunk)
+
+    def _pcm_to_wav_bytes(self, pcm_data: bytes, channels: int = 1, rate: int = 24000, sample_width: int = 2) -> bytes:
+        """Convert PCM data to WAV format and return as bytes."""
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sample_width)
+            wf.setframerate(rate)
+            wf.writeframes(pcm_data)
+        wav_buffer.seek(0)
+        return wav_buffer.read()
+
+    def _prepare_tts_data(self, speech_request: AudioSpeechRequest) -> dict:
+        """Prepare data for Gemini TTS API request."""
+        return {
+            "contents": [{
+                "parts": [{
+                    "text": speech_request.input
+                }]
+            }],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {
+                    "voiceConfig": {
+                        "prebuiltVoiceConfig": {
+                            "voiceName": speech_request.voice
+                        }
+                    }
+                }
+            },
+            "model": speech_request.model,
+        }
+
+    def audio_speech(self, speech_request: AudioSpeechRequest, **kwargs) -> bytes:
+        """Generate audio speech synchronously using Gemini TTS."""
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+            **self.headers
+        }
+
+        data = self._prepare_tts_data(speech_request)
+        json_data = json.dumps(data).encode("utf-8")
+
+        with HttpClient() as client:
+            response = client.post_json(
+                url=self.url_tts,
+                data=json_data,
+                headers=headers,
+                timeout=kwargs.get('timeout', 30)
+            )
+
+            # Extract PCM audio data from response
+            pcm_data = base64.b64decode(response['candidates'][0]['content']['parts'][0]['inlineData']['data'])
+
+            # Convert PCM to WAV bytes and return
+            return self._pcm_to_wav_bytes(pcm_data)
+
+    async def async_audio_speech(self, speech_request: AudioSpeechRequest, **kwargs) -> bytes:
+        """Generate audio speech asynchronously using Gemini TTS."""
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+            **self.headers
+        }
+
+        data = self._prepare_tts_data(speech_request)
+        json_data = json.dumps(data).encode("utf-8")
+
+        async with AsyncHttpClient() as client:
+            response = await client.post_json(
+                url=self.url_tts,
+                data=json_data,
+                headers=headers,
+                timeout=kwargs.get('timeout', 30)
+            )
+
+            # Extract PCM audio data from response
+            pcm_data = base64.b64decode(response['candidates'][0]['content']['parts'][0]['inlineData']['data'])
+
+            # Convert PCM to WAV bytes and return
+            return self._pcm_to_wav_bytes(pcm_data)

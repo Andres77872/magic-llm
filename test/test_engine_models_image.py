@@ -57,7 +57,7 @@ def test_image_url(key_name, provider, kwargs):
 
     # Create a chat with an image URL
     chat = ModelChat()
-    chat.add_user_message(SAMPLE_PROMPT, image=SAMPLE_IMAGE_URL)
+    chat.add_user_message(SAMPLE_PROMPT, image=SAMPLE_IMAGE_URL, media_type="image/webp")
 
     # Generate a response
     resp = client.llm.generate(chat)
@@ -78,7 +78,7 @@ def test_image_base64(key_name, provider, kwargs):
 
     # Create a chat with a base64 encoded image
     chat = ModelChat()
-    chat.add_user_message(SAMPLE_PROMPT, image=SAMPLE_BASE64_IMAGE)
+    chat.add_user_message(SAMPLE_PROMPT, image=SAMPLE_BASE64_IMAGE, media_type="image/webp")
 
     # Generate a response
     resp = client.llm.generate(chat)
@@ -99,7 +99,7 @@ def test_image_bytes(key_name, provider, kwargs):
 
     # Create a chat with a bytes image
     chat = ModelChat()
-    chat.add_user_message(SAMPLE_PROMPT, image=get_sample_bytes_image())
+    chat.add_user_message(SAMPLE_PROMPT, image=get_sample_bytes_image(), media_type="image/webp")
 
     # Generate a response
     resp = client.llm.generate(chat)
