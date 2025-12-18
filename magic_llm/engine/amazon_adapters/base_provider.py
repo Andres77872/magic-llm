@@ -1,12 +1,12 @@
 import json
 import time
-from abc import ABC
-from typing import Dict, Tuple, Optional
+from abc import ABC, abstractmethod
+from typing import Dict, Tuple, Optional, Any
 
 import aioboto3
 import boto3
 
-from magic_llm.model import ModelChat
+from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
@@ -40,42 +40,100 @@ class AmazonBaseProvider(ABC):
             aws_secret_access_key=aws_secret_access_key
         )
 
-    def prepare_data(self, chat: ModelChat, **kwargs) -> str:
+    # ═══════════════════════════════════════════════════════════════════
+    # TRANSFORMATION METHODS (Provider-specific, must be implemented)
+    # ═══════════════════════════════════════════════════════════════════
+
+    @abstractmethod
+    def transform_request(self, chat: ModelChat, **kwargs) -> str:
         """
-        Prepare the request data for the model.
-        
+        Transform ModelChat to provider-specific JSON string.
+
         Args:
             chat: The chat model containing messages
             **kwargs: Additional parameters for the request
-            
+
         Returns:
             A JSON string containing the request body
+
+        Note: Image support varies by Amazon Bedrock model. Override this
+        method in subclasses to handle images for models that support them.
         """
-        raise NotImplementedError("Subclasses must implement prepare_data")
-    
-    def process_response(self, response: dict):
+        pass
+
+    @abstractmethod
+    def transform_response(self, response: dict) -> ModelChatResponse:
         """
-        Process the response from the model.
-        
+        Transform provider response to ModelChatResponse.
+
+        IMPORTANT: Must return ModelChatResponse, not dict.
+
         Args:
             response: The response from the model
-            
+
         Returns:
-            A dictionary containing the processed response
+            A ModelChatResponse object
         """
-        raise NotImplementedError("Subclasses must implement process_response")
-    
-    def format_event_to_chunk(self, event: dict) -> ChatCompletionModel:
+        pass
+
+    @abstractmethod
+    def transform_stream_chunk(self, event: dict) -> ChatCompletionModel:
         """
-        Format a streaming event to a ChatCompletionModel.
-        
+        Transform streaming event to ChatCompletionModel.
+
         Args:
             event: The event from the streaming response
-            
+
         Returns:
             A ChatCompletionModel containing the formatted event
         """
-        raise NotImplementedError("Subclasses must implement format_event_to_chunk")
+        pass
+
+    # ═══════════════════════════════════════════════════════════════════
+    # BACKWARD COMPATIBLE ALIASES
+    # ═══════════════════════════════════════════════════════════════════
+
+    def prepare_data(self, chat: ModelChat, **kwargs) -> str:
+        """
+        Prepare the request data for the model.
+        Alias for transform_request for backward compatibility.
+
+        Args:
+            chat: The chat model containing messages
+            **kwargs: Additional parameters for the request
+
+        Returns:
+            A JSON string containing the request body
+        """
+        return self.transform_request(chat, **kwargs)
+
+    def process_response(self, response: dict) -> ModelChatResponse:
+        """
+        Process the response from the model.
+        Alias for transform_response for backward compatibility.
+
+        IMPORTANT: Returns ModelChatResponse, not dict.
+
+        Args:
+            response: The response from the model
+
+        Returns:
+            A ModelChatResponse object
+        """
+        return self.transform_response(response)
+
+    def format_event_to_chunk(self, event: dict) -> ChatCompletionModel:
+        """
+        Format a streaming event to a ChatCompletionModel.
+        Alias for transform_stream_chunk for backward compatibility.
+
+        Args:
+            event: The event from the streaming response
+
+        Returns:
+            A ChatCompletionModel containing the formatted event
+        """
+        return self.transform_stream_chunk(event)
     
     def audio_speech(self, data: AudioSpeechRequest, **kwargs):
         """

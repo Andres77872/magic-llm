@@ -1,4 +1,5 @@
 import json
+from typing import Dict, Any, Tuple, Optional
 
 from magic_llm.engine.amazon_adapters import (
     ProviderAmazonNova,
@@ -10,7 +11,7 @@ from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChatResponse, ModelChat
 from magic_llm.model.ModelAudio import AudioSpeechRequest
-from magic_llm.model.ModelChatStream import UsageModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class EngineAmazon(BaseChat):
@@ -59,6 +60,53 @@ class EngineAmazon(BaseChat):
             )
         else:
             raise ValueError(f"Unsupported model: {self.model}")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # TRANSFORMATION METHODS (Delegate to provider)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to Amazon Bedrock request format.
+        Delegates to the provider's transform_request method.
+
+        Note: Returns (body_bytes, headers) for consistency with other engines,
+        though Amazon uses body as string and separate API call patterns.
+
+        Image support depends on the underlying provider:
+        - Nova: Supports images via content array format
+        - Titan: No image support
+        - Anthropic (Bedrock): Legacy format, no image support
+        - Meta: No image support
+        """
+        body = self.provider.transform_request(chat, **kwargs)
+        headers = {
+            'accept': 'application/json',
+            'contentType': 'application/json'
+        }
+        return body.encode('utf-8'), headers
+
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform Amazon Bedrock response to ModelChatResponse.
+        Delegates to the provider's transform_response method.
+        """
+        return self.provider.transform_response(raw)
+
+    def transform_stream_chunk(
+        self,
+        raw: Any,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform streaming chunk to ChatCompletionModel.
+        Delegates to the provider's transform_stream_chunk method.
+        """
+        return self.provider.transform_stream_chunk(raw)
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:

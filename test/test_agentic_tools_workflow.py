@@ -187,7 +187,7 @@ def _reranker_tool(
     - Returns selected metadata: page, page_image (jpg), abstract, title, date, authors.
     """
     if not jina_api_key:
-        jina_api_key = 'jina_'
+        jina_api_key = 'jina_3f102d8bbdfb4ac4aa02f36e2ff0b234iaLxSNZgGgIEetn76RSKojArV0GI'
     if not jina_api_key:
         pytest.skip("JINA_API_KEY is required for reranker tool")
 

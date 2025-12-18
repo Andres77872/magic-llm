@@ -1,12 +1,17 @@
 # https://developers.cloudflare.com/workers-ai/models/text-generation
 import json
 import time
+from typing import Dict, Any, Tuple, Optional
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Message, Choice
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
+from magic_llm.util.response_mapping import (
+    build_response,
+    build_stream_chunk,
+)
 
 
 class EngineCloudFlare(BaseChat):
@@ -33,28 +38,52 @@ class EngineCloudFlare(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
 
+    # ═══════════════════════════════════════════════════════════════════
+    # TRANSFORMATION METHODS
+    # ═══════════════════════════════════════════════════════════════════
+
+    def transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to Cloudflare request format.
+        Alias for prepare_data for standardized interface.
+
+        Note: Cloudflare Workers AI does not support image inputs.
+        """
+        return self.prepare_data(chat, **kwargs)
+
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform Cloudflare response to ModelChatResponse.
+        Uses shared response_mapping utilities.
+        """
+        return self.process_generate(raw)
+
+    def transform_stream_chunk(
+        self,
+        raw: Any,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform Cloudflare streaming chunk to ChatCompletionModel.
+
+        Args:
+            raw: Raw chunk string from Cloudflare stream
+            context: Optional context dict (not used for Cloudflare)
+
+        Returns:
+            ChatCompletionModel
+        """
+        return self.prepare_stream_response(raw)
+
     def process_generate(self, r: dict) -> ModelChatResponse:
         """Process Cloudflare response and convert to ModelChatResponse"""
 
         # Extract the result data
         result = r.get('result', {})
-
-        # Create message
-        message = Message(
-            role='assistant',
-            content=result.get('response', ''),
-            tool_calls=None,
-            refusal=None,
-            annotations=[]
-        )
-
-        # Create choice
-        choice = Choice(
-            index=0,
-            message=message,
-            logprobs=None,
-            finish_reason='stop' if r.get('success', True) else 'error'
-        )
 
         # Create usage model
         usage_data = result.get('usage', {})
@@ -64,16 +93,13 @@ class EngineCloudFlare(BaseChat):
             total_tokens=usage_data.get('total_tokens', 0)
         )
 
-        # Create response
-        return ModelChatResponse(
+        # Build standardized response
+        return build_response(
             id=f"cloudflare_{int(time.time() * 1000)}",
-            object='chat.completion',
-            created=int(time.time()),
             model='cloudflare',  # Cloudflare doesn't provide model name in response
-            choices=[choice],
-            usage=usage,
-            service_tier=None,
-            system_fingerprint=None
+            content=result.get('response', ''),
+            finish_reason='stop' if r.get('success', True) else 'error',
+            usage=usage
         )
 
     @BaseChat.async_intercept_generate
@@ -104,15 +130,11 @@ class EngineCloudFlare(BaseChat):
                 completion_tokens=payload['usage']['completion_tokens'],
                 total_tokens=payload['usage']['total_tokens'],
             )
-        delta = DeltaModel(content=payload['response'], role=None)
-        choice = ChoiceModel(delta=delta, finish_reason=None, index=0)
-        return ChatCompletionModel(
+        return build_stream_chunk(
             id='1',
-            choices=[choice],
-            created=int(time.time()),
             model=self.model,
-            object='chat.completion.chunk',
-            usage=usage or UsageModel(),
+            content=payload['response'],
+            usage=usage
         )
 
     @BaseChat.sync_intercept_stream_generate

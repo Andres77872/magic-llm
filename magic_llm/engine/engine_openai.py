@@ -2,7 +2,7 @@
 import json
 import logging
 import re
-from typing import Callable, Type, Optional
+from typing import Callable, Type, Optional, Dict, Any, Tuple
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.engine.openai_adapters import (ProviderOpenAI,
@@ -17,7 +17,7 @@ from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               OpenAiBaseProvider)
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
-from magic_llm.model.ModelChatStream import UsageModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 logger = logging.getLogger(__name__)
@@ -96,8 +96,46 @@ class EngineOpenAI(BaseChat):
         # Default to OpenAI if no match is found
         return ProviderOpenAI
 
+    # ═══════════════════════════════════════════════════════════════════
+    # TRANSFORMATION METHODS (Delegate to provider)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to OpenAI-compatible request format.
+        Delegates to the provider's transform_request method.
+
+        Note: Image support depends on the underlying provider.
+        Most OpenAI-compatible providers support images through the
+        image_url content type.
+        """
+        return self.base.transform_request(chat, **kwargs)
+
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform OpenAI API response to ModelChatResponse.
+        Delegates to the provider's transform_response method.
+        """
+        return self.base.transform_response(raw)
+
+    def transform_stream_chunk(
+        self,
+        raw: Any,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform streaming chunk to ChatCompletionModel.
+        Delegates to the provider's transform_stream_chunk method.
+        """
+        return self.base.transform_stream_chunk(raw, context)
+
     def prepare_response(self, r):
-        return ModelChatResponse(**r)
+        """Backward compatible alias for transform_response."""
+        return self.transform_response(r)
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:

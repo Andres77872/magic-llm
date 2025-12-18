@@ -5,7 +5,7 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any
+from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any, Dict, Tuple
 
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse
@@ -377,6 +377,114 @@ class BaseChat(abc.ABC):
         if hasattr(self, 'executor'):
             self.executor.shutdown(wait=False)
 
+    # ═══════════════════════════════════════════════════════════════════
+    # VALIDATION METHODS (Provider-agnostic)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def validate_input(self, chat: ModelChat) -> ModelChat:
+        """
+        Validate input chat before transformation.
+        Override in subclass for provider-specific validation.
+
+        Raises:
+            ChatException: If validation fails
+        """
+        if not chat.messages:
+            raise ChatException(
+                message="Chat must have at least one message",
+                error_code="EMPTY_CHAT"
+            )
+        return chat
+
+    def validate_output(self, response: ModelChatResponse) -> ModelChatResponse:
+        """
+        Validate output response after transformation.
+        Ensures response conforms to expected schema.
+
+        Raises:
+            ChatException: If validation fails
+        """
+        if not response.choices:
+            raise ChatException(
+                message="Response must have at least one choice",
+                error_code="EMPTY_RESPONSE"
+            )
+        return response
+
+    def validate_stream_chunk(self, chunk: ChatCompletionModel) -> ChatCompletionModel:
+        """
+        Validate streaming chunk after transformation.
+        """
+        if not chunk.choices:
+            raise ChatException(
+                message="Stream chunk must have at least one choice",
+                error_code="EMPTY_CHUNK"
+            )
+        return chunk
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ABSTRACT TRANSFORMATION METHODS (Provider-specific)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to provider request format.
+
+        Args:
+            chat: The input chat model
+            **kwargs: Additional parameters (stream, tools, etc.)
+
+        Returns:
+            Tuple of (request_body_bytes, headers_dict)
+
+        Note: This method should be implemented by each engine.
+        Default implementation raises NotImplementedError.
+        """
+        raise NotImplementedError("Subclasses must implement transform_request")
+
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform provider response to ModelChatResponse.
+
+        Args:
+            raw: Raw response from provider API
+
+        Returns:
+            Normalized ModelChatResponse
+
+        Note: This method should be implemented by each engine.
+        Default implementation raises NotImplementedError.
+        """
+        raise NotImplementedError("Subclasses must implement transform_response")
+
+    def transform_stream_chunk(
+        self,
+        raw: Any,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform streaming chunk to ChatCompletionModel.
+
+        Args:
+            raw: Raw chunk from provider stream
+            context: Optional context dict for stateful transformations
+
+        Returns:
+            Normalized ChatCompletionModel or None if chunk should be skipped
+
+        Note: This method should be implemented by each engine.
+        Default implementation raises NotImplementedError.
+        """
+        raise NotImplementedError("Subclasses must implement transform_stream_chunk")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ABSTRACT GENERATION METHODS
+    # ═══════════════════════════════════════════════════════════════════
+
     @abc.abstractmethod
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         """Generate a chat response synchronously."""
@@ -396,6 +504,10 @@ class BaseChat(abc.ABC):
     async def async_stream_generate(self, chat: ModelChat, **kwargs) -> AsyncIterator[ChatCompletionModel]:
         """Stream generate a chat response asynchronously."""
         pass
+
+    # ═══════════════════════════════════════════════════════════════════
+    # OPTIONAL METHODS (Not all providers support these)
+    # ═══════════════════════════════════════════════════════════════════
 
     def embedding(self, text: Union[List[str], str], **kwargs) -> Any:
         """Generate embeddings for the given text."""

@@ -1,11 +1,11 @@
 import json
 import mimetypes
 from abc import ABC
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional, Any
 
 import aiohttp
 
-from magic_llm.model import ModelChat
+from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
@@ -41,6 +41,34 @@ class OpenAiBaseProvider(ABC):
                      chat:
                      ModelChat,
                      **kwargs) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Prepare the request data for OpenAI-compatible APIs.
+        Alias for transform_request for backward compatibility.
+
+        Note: Image handling is built into this method. OpenAI-compatible providers
+        that support images will pass through the image_url content type.
+        Providers that don't support images may need to override this method
+        or handle the transformation in their specific implementation.
+        """
+        return self.transform_request(chat, **kwargs)
+
+    def transform_request(self,
+                          chat: ModelChat,
+                          **kwargs) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to OpenAI-compatible request format.
+
+        Args:
+            chat: The input chat model
+            **kwargs: Additional parameters (stream, tools, etc.)
+
+        Returns:
+            Tuple of (request_body_bytes, headers_dict)
+
+        Note: Image support is provider-dependent. The base implementation
+        passes through image_url content types. Providers that don't support
+        images can override this method to filter or transform image content.
+        """
         # Construct the header and data to be sent in the request.
         messages = chat.get_messages()
         for message in messages:
@@ -71,6 +99,42 @@ class OpenAiBaseProvider(ABC):
 
         json_data = json.dumps(data).encode('utf-8')
         return json_data, self.headers
+
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform OpenAI API response to ModelChatResponse.
+        OpenAI responses are already in the correct format.
+
+        Args:
+            raw: Raw response from OpenAI-compatible API
+
+        Returns:
+            Normalized ModelChatResponse
+        """
+        return ModelChatResponse(**raw)
+
+    def transform_stream_chunk(
+        self,
+        raw: str,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform streaming chunk to ChatCompletionModel.
+        Alias for process_chunk for backward compatibility.
+
+        Args:
+            raw: Raw chunk string from provider stream
+            context: Optional context dict with 'id_generation' and 'last_chunk'
+
+        Returns:
+            Normalized ChatCompletionModel or None if chunk should be skipped
+        """
+        context = context or {}
+        return self.process_chunk(
+            raw,
+            context.get('id_generation', ''),
+            context.get('last_chunk')
+        )
 
     def process_chunk(self,
                       chunk: str | dict,

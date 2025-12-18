@@ -1,12 +1,19 @@
 # https://docs.cohere.com/reference/chat
 import json
 import time
+from typing import Dict, Any, Tuple, Optional
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Message, Choice
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
+from magic_llm.util.response_mapping import (
+    COHERE_FINISH_REASON_MAP,
+    map_finish_reason,
+    build_response,
+    build_stream_chunk,
+)
 
 
 class EngineCohere(BaseChat):
@@ -47,38 +54,61 @@ class EngineCohere(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
 
+    # ═══════════════════════════════════════════════════════════════════
+    # TRANSFORMATION METHODS
+    # ═══════════════════════════════════════════════════════════════════
+
+    def transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to Cohere request format.
+        Alias for prepare_data for standardized interface.
+
+        Note: Cohere does not support image inputs in the chat API.
+        """
+        return self.prepare_data(chat, **kwargs)
+
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform Cohere response to ModelChatResponse.
+        Uses shared response_mapping utilities.
+        """
+        return self.process_generate(raw)
+
+    def transform_stream_chunk(
+        self,
+        raw: Any,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform Cohere streaming chunk to ChatCompletionModel.
+
+        Args:
+            raw: Raw chunk string from Cohere stream
+            context: Dict with 'idx' and 'usage' for stateful transformations
+
+        Returns:
+            ChatCompletionModel or None if chunk should be skipped
+        """
+        context = context or {}
+        model, _, _ = self.process_chunk(
+            raw,
+            context.get('idx'),
+            context.get('usage')
+        )
+        return model
+
     def process_generate(self, r: dict) -> ModelChatResponse:
         """Process Cohere response and convert to ModelChatResponse"""
 
-        # Map Cohere finish reasons to OpenAI format
-        finish_reason_map = {
-            'COMPLETE': 'stop',
-            'MAX_TOKENS': 'length',
-            'ERROR': 'stop',
-            'ERROR_TOXIC': 'content_filter',
-            'ERROR_LIMIT': 'length',
-            'USER_CANCEL': 'stop'
-        }
-        finish_reason = finish_reason_map.get(
+        # Map Cohere finish reasons to OpenAI format using shared mapping
+        finish_reason = map_finish_reason(
             r.get('finish_reason', 'COMPLETE'),
-            'stop'
-        )
-
-        # Create message
-        message = Message(
-            role='assistant',
-            content=r.get('text', ''),
-            tool_calls=None,  # Cohere tool calls would need separate handling
-            refusal=None,
-            annotations=[]
-        )
-
-        # Create choice
-        choice = Choice(
-            index=0,
-            message=message,
-            logprobs=None,  # Cohere doesn't provide logprobs in this response
-            finish_reason=finish_reason
+            COHERE_FINISH_REASON_MAP,
+            default='stop'
         )
 
         # Create usage model
@@ -89,16 +119,13 @@ class EngineCohere(BaseChat):
             total_tokens=tokens['input_tokens'] + tokens['output_tokens']
         )
 
-        # Create response
-        return ModelChatResponse(
+        # Build standardized response
+        return build_response(
             id=r.get('response_id', r.get('generation_id', f"cohere_{int(time.time() * 1000)}")),
-            object='chat.completion',
-            created=int(time.time()),
             model='cohere',  # Cohere doesn't provide model name in response
-            choices=[choice],
-            usage=usage,
-            service_tier=None,  # Cohere doesn't provide this
-            system_fingerprint=None  # Cohere doesn't provide this
+            content=r.get('text', ''),
+            finish_reason=finish_reason,
+            usage=usage
         )
 
     @BaseChat.async_intercept_generate
@@ -194,14 +221,10 @@ class EngineCohere(BaseChat):
             )
             return None, idx, usage
 
-        delta = DeltaModel(content=event['text'], role=None)
-        choice = ChoiceModel(delta=delta, finish_reason=None, index=0)
-        model = ChatCompletionModel(
+        model = build_stream_chunk(
             id=idx,
-            choices=[choice],
-            created=int(time.time()),
             model=self.model,
-            object='chat.completion.chunk',
-            usage=usage or UsageModel(),
+            content=event['text'],
+            usage=usage
         )
         return model, idx, usage

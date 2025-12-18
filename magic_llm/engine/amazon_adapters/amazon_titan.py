@@ -1,27 +1,34 @@
 import json
 import time
-from typing import Dict
 
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
-from magic_llm.model import ModelChat
+from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.util.response_mapping import (
+    AMAZON_FINISH_REASON_MAP,
+    map_finish_reason,
+    build_response,
+    build_stream_chunk,
+)
 
 
 class ProviderAmazonTitan(AmazonBaseProvider):
     """
     Provider for Amazon Bedrock Titan models.
     """
-    
-    def prepare_data(self, chat: ModelChat, **kwargs) -> str:
+
+    def transform_request(self, chat: ModelChat, **kwargs) -> str:
         """
-        Prepare the request data for Titan models.
-        
+        Transform ModelChat to Titan request format.
+
         Args:
             chat: The chat model containing messages
             **kwargs: Additional parameters for the request
-            
+
         Returns:
             A JSON string containing the request body
+
+        Note: Titan models do not support image inputs.
         """
         body = json.dumps({
             "inputText": chat.generic_chat(format='titan'),
@@ -32,54 +39,62 @@ class ProviderAmazonTitan(AmazonBaseProvider):
                 "stopSequences": kwargs.get('stopSequences', ['User:']),
             }
         })
-        
+
         return body
-    
-    def process_response(self, response: dict) -> Dict:
+
+    def transform_response(self, response: dict) -> ModelChatResponse:
         """
-        Process the response from Titan models.
-        
+        Transform Titan response to ModelChatResponse.
+
         Args:
             response: The response from the model
-            
+
         Returns:
-            A dictionary containing the processed response
+            A ModelChatResponse object
         """
-        return {
-            'content': response['results'][0]['outputText'],
-            'role': 'assistant',
-            'usage': UsageModel(
-                prompt_tokens=response['inputTextTokenCount'],
-                completion_tokens=response['results'][0]['tokenCount'],
-                total_tokens=response['inputTextTokenCount'] + response['results'][0]['tokenCount'],
-            )
-        }
-    
-    def format_event_to_chunk(self, event: dict) -> ChatCompletionModel:
+        # Create usage model
+        usage = UsageModel(
+            prompt_tokens=response['inputTextTokenCount'],
+            completion_tokens=response['results'][0]['tokenCount'],
+            total_tokens=response['inputTextTokenCount'] + response['results'][0]['tokenCount'],
+        )
+
+        # Map completion reason to finish reason
+        completion_reason = response['results'][0].get('completionReason', 'FINISH')
+        finish_reason = map_finish_reason(
+            completion_reason,
+            AMAZON_FINISH_REASON_MAP,
+            default='stop'
+        )
+
+        # Build standardized response
+        return build_response(
+            id=f"titan_{int(time.time() * 1000)}",
+            model='amazon.titan',
+            content=response['results'][0]['outputText'],
+            finish_reason=finish_reason,
+            usage=usage
+        )
+
+    def transform_stream_chunk(self, event: dict) -> ChatCompletionModel:
         """
-        Format a streaming event from Titan models to a ChatCompletionModel.
-        
+        Transform streaming event from Titan models to ChatCompletionModel.
+
         Args:
             event: The event from the streaming response
-            
+
         Returns:
             A ChatCompletionModel containing the formatted event
         """
-        chunk = {
-            'id': '1',
-            'choices':
-                [{
-                    'delta':
-                        {
-                            'content': event['outputText'],
-                            'role': None
-                        },
-                    'finish_reason': 'stop' if event['completionReason'] == 'FINISH' else None,
-                    'index': event['index']
-                }],
-            'created': int(time.time()),
-            'model': self.model,
-            'object': 'chat.completion.chunk'
-        }
-        
-        return ChatCompletionModel(**chunk)
+        finish_reason = map_finish_reason(
+            event.get('completionReason'),
+            AMAZON_FINISH_REASON_MAP
+        ) if event.get('completionReason') else None
+
+        return build_stream_chunk(
+            id='1',
+            model=self.model,
+            content=event['outputText'],
+            finish_reason=finish_reason,
+            index=event.get('index', 0)
+        )

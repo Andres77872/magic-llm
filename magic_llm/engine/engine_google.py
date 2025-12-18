@@ -6,6 +6,7 @@ import json
 import mimetypes
 import time
 import wave
+from typing import Dict, Any, Tuple, Optional
 from urllib.parse import urlparse
 
 from magic_llm.engine.base_chat import BaseChat
@@ -17,6 +18,13 @@ from magic_llm.model.ModelChatStream import (ChatCompletionModel,
                                              ChoiceModel,
                                              DeltaModel)
 from magic_llm.util.http import AsyncHttpClient, HttpClient
+from magic_llm.util.response_mapping import (
+    GOOGLE_FINISH_REASON_MAP,
+    map_finish_reason,
+    build_response,
+    build_stream_chunk,
+    build_tool_call,
+)
 
 
 class EngineGoogle(BaseChat):
@@ -231,6 +239,64 @@ class EngineGoogle(BaseChat):
         json_bytes = json.dumps(data).encode("utf-8")
         return json_bytes, headers, data
 
+    # ═══════════════════════════════════════════════════════════════════
+    # TRANSFORMATION METHODS
+    # ═══════════════════════════════════════════════════════════════════
+
+    def transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to Google Gemini request format.
+        Note: This is a sync wrapper around prepare_data_sync.
+
+        Image support: Google Gemini requires images to be inlined as base64.
+        Remote images (HTTP/HTTPS) are automatically downloaded and embedded.
+        """
+        json_bytes, headers, _ = self.prepare_data_sync(chat, **kwargs)
+        return json_bytes, headers
+
+    async def async_transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to Google Gemini request format (async version).
+        Uses async HTTP client for downloading remote images.
+
+        Image support: Google Gemini requires images to be inlined as base64.
+        Remote images (HTTP/HTTPS) are automatically downloaded and embedded.
+        """
+        json_bytes, headers, _ = await self.prepare_data(chat, **kwargs)
+        return json_bytes, headers
+
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform Google Gemini response to ModelChatResponse.
+        Uses shared response_mapping utilities.
+        """
+        return self.process_generate(raw)
+
+    def transform_stream_chunk(
+        self,
+        raw: Any,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform Google Gemini streaming chunk to ChatCompletionModel.
+
+        Args:
+            raw: Raw chunk string from Gemini stream
+            context: Optional context dict (not used for Gemini)
+
+        Returns:
+            ChatCompletionModel
+        """
+        return self.prepare_stream_response(raw)
+
     def process_generate(self, gemini_response: dict) -> ModelChatResponse:
         """Convert Gemini API response to ModelChatResponse format"""
 
@@ -251,71 +317,41 @@ class EngineGoogle(BaseChat):
                     tool_calls = []
 
                 func_call = part['functionCall']
-                tool_call = (ToolCall(
+                tool_call = build_tool_call(
                     id=f"call_{len(tool_calls)}_{int(time.time() * 1000)}",  # Generate unique ID
-                    type='function',
-                    function=FunctionCall(
-                        name=func_call['name'],
-                        arguments=json.dumps(func_call.get('args', {}))
-                    )
-                ))
+                    name=func_call['name'],
+                    arguments=json.dumps(func_call.get('args', {}))
+                )
                 tool_calls.append(tool_call)
 
         # Combine text parts if any
         content = ''.join(content_parts) if content_parts else None
 
-        # Create the message
-        message = Message(
-            role='assistant',  # Gemini uses 'model' but we normalize to 'assistant'
-            content=content,
-            tool_calls=tool_calls,
-            refusal=None,
-            annotations=[]
-        )
-
-        # Map Gemini finish reasons to OpenAI format
-        finish_reason_map = {
-            'STOP': 'stop',
-            'MAX_TOKENS': 'length',
-            'SAFETY': 'content_filter',
-            'RECITATION': 'content_filter',
-            'OTHER': 'stop',
-            'FINISH_REASON_UNSPECIFIED': None
-        }
-        finish_reason = finish_reason_map.get(
+        # Map Gemini finish reasons to OpenAI format using shared mapping
+        finish_reason = map_finish_reason(
             candidate.get('finishReason', 'STOP'),
-            candidate.get('finishReason')
-        )
-
-        # Create the choice
-        choice = Choice(
-            index=0,
-            message=message,
-            logprobs=candidate.get('avgLogprobs'),  # Gemini provides average log probs
-            finish_reason=finish_reason
+            GOOGLE_FINISH_REASON_MAP,
+            default=candidate.get('finishReason')
         )
 
         # Create usage model
         usage_metadata = gemini_response['usageMetadata']
         usage = UsageModel(
             prompt_tokens=usage_metadata['promptTokenCount'],
-            completion_tokens=usage_metadata['candidatesTokenCount'],
+            completion_tokens=usage_metadata.get('candidatesTokenCount', 0),
             total_tokens=usage_metadata['totalTokenCount']
         )
 
-        # Create the final response
-        response = ModelChatResponse(
+        # Build standardized response
+        return build_response(
             id=gemini_response.get('responseId', f"gemini_{int(time.time() * 1000)}"),
-            object='chat.completion',
-            created=int(time.time()),  # Gemini doesn't provide timestamp
             model=gemini_response.get('modelVersion', 'gemini'),
-            choices=[choice],
+            content=content,
+            finish_reason=finish_reason,
+            tool_calls=tool_calls,
             usage=usage,
-            service_tier=None,  # Gemini doesn't provide this
-            system_fingerprint=None  # Gemini doesn't provide this
+            logprobs=candidate.get('avgLogprobs')
         )
-
-        return response
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
@@ -343,15 +379,12 @@ class EngineGoogle(BaseChat):
             completion_tokens=payload['usageMetadata'].get('candidatesTokenCount', 0),
             total_tokens=payload['usageMetadata']['totalTokenCount'],
         )
-        delta = DeltaModel(content=payload['candidates'][0]['content']['parts'][0]['text'], role='assistant')
-        choice = ChoiceModel(delta=delta, finish_reason=None, index=0)
-        return ChatCompletionModel(
+        return build_stream_chunk(
             id='1',
-            choices=[choice],
-            created=int(time.time()),
             model=self.model,
-            object='chat.completion.chunk',
-            usage=usage,
+            content=payload['candidates'][0]['content']['parts'][0]['text'],
+            role='assistant',
+            usage=usage
         )
 
     @BaseChat.sync_intercept_stream_generate
