@@ -9,6 +9,7 @@ class FunctionCall(BaseModel):
 
 
 class ToolCall(BaseModel):
+    index: Optional[int] = None
     id: Optional[str] = None
     type: Optional[str] = "function"
     function: Optional[FunctionCall] = None
