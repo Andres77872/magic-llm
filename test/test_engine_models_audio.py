@@ -1,13 +1,14 @@
 import difflib
 import json
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 from magic_llm import MagicLLM
 from magic_llm.model.ModelAudio import AudioTranscriptionsRequest, AudioSpeechRequest
+
+# All tests in this file require live provider access
+pytestmark = pytest.mark.provider_functional
 
 # Providers with audio cap
 AUDIO_PROVIDERS = [
@@ -26,18 +27,14 @@ TTS_PROVIDERS = [
     ("google", "google", {"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"}),
 ]
 
-# Locate keys file via environment variable or default to test/keys.json
-KEYS_FILE = os.getenv(
-    "MAGIC_LLM_KEYS",
-    "/home/andres/Documents/keys.json",
-)
-if not os.path.exists(KEYS_FILE):
+# Locate keys file via environment variable
+_KEYS_FILE = os.getenv("MAGIC_LLM_KEYS")
+if not _KEYS_FILE or not os.path.exists(_KEYS_FILE):
     pytest.skip(
-        f"No keys file found at {KEYS_FILE}. "
-        "Set MAGIC_LLM_KEYS env var or place keys.json in this directory.",
+        "MAGIC_LLM_KEYS env var must point to a valid keys file for integration tests.",
         allow_module_level=True,
     )
-with open(KEYS_FILE) as f:
+with open(_KEYS_FILE) as f:
     ALL_KEYS = json.load(f)
 
 def similarity(a, b):
@@ -57,8 +54,11 @@ EXPECTED_TEXT = (
     ids=[p[0] for p in AUDIO_PROVIDERS],
 )
 async def test_async_audio_transcriptions(key_name, provider, kwargs):
+    audio_path = os.getenv("MAGIC_LLM_AUDIO_FILE")
+    if not audio_path or not os.path.exists(audio_path):
+        pytest.skip("MAGIC_LLM_AUDIO_FILE env var must point to a valid .wav file.")
     keys = dict(ALL_KEYS[key_name])
-    with open('/home/andres/Music/speech.wav', 'rb') as f:
+    with open(audio_path, 'rb') as f:
         data = AudioTranscriptionsRequest(
             file=f.read(),
             **kwargs,

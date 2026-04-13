@@ -3,18 +3,14 @@ import time
 from abc import ABC, abstractmethod
 from typing import Dict, Tuple, Optional, Any
 
-import aioboto3
-import boto3
-
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
 class AmazonBaseProvider(ABC):
     def __init__(self,
-                 aws_access_key_id: str,
-                 aws_secret_access_key: str,
+                 aws_access_key_id: Optional[str] = None,
+                 aws_secret_access_key: Optional[str] = None,
                  region_name: str = 'us-east-1',
                  service_name: str = 'bedrock-runtime',
                  model: str | None = None,
@@ -25,20 +21,8 @@ class AmazonBaseProvider(ABC):
         self.service_name = service_name
         self.model = model
         self.kwargs = kwargs
-        
-        self.client = boto3.client(
-            service_name=service_name,
-            region_name=region_name,
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key
-        )
-        
-        self.aclient = aioboto3.Session().client(
-            service_name=service_name,
-            region_name=region_name,
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key
-        )
+        # No boto3/aioboto3 clients — raw HTTP + SigV4 signing is used by EngineAmazon
+        # Credentials may be resolved from ambient IAM chain at request time
 
     # ═══════════════════════════════════════════════════════════════════
     # TRANSFORMATION METHODS (Provider-specific, must be implemented)
@@ -134,22 +118,3 @@ class AmazonBaseProvider(ABC):
             A ChatCompletionModel containing the formatted event
         """
         return self.transform_stream_chunk(event)
-    
-    def audio_speech(self, data: AudioSpeechRequest, **kwargs):
-        """
-        Generate speech from text.
-        
-        Args:
-            data: The speech request data
-            **kwargs: Additional parameters for the request
-            
-        Returns:
-            The audio stream
-        """
-        response = self.client.synthesize_speech(
-            VoiceId=data.voice,
-            OutputFormat=data.response_format,
-            Text=data.input,
-            Engine=data.model,
-        )
-        return response['AudioStream']

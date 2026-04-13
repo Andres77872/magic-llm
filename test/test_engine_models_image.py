@@ -1,14 +1,15 @@
 import json
 import os
-import sys
 import base64
 from typing import Union
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 from magic_llm import MagicLLM
 from magic_llm.model import ModelChat
+
+# All tests in this file require live provider access
+pytestmark = pytest.mark.provider_functional
 
 # Providers with vision capabilities
 VISION_PROVIDERS = [
@@ -17,31 +18,33 @@ VISION_PROVIDERS = [
     ("anthropic", "anthropic", {"model": "claude-3-7-sonnet-20250219"}),
 ]
 
-# Locate keys file via environment variable or default to test/keys.json
-KEYS_FILE = os.getenv(
-    "MAGIC_LLM_KEYS",
-    "/home/andres/Documents/keys.json",
-)
-if not os.path.exists(KEYS_FILE):
+# Locate keys file via environment variable
+_KEYS_FILE = os.getenv("MAGIC_LLM_KEYS")
+if not _KEYS_FILE or not os.path.exists(_KEYS_FILE):
     pytest.skip(
-        f"No keys file found at {KEYS_FILE}. "
-        "Set MAGIC_LLM_KEYS env var or place keys.json in this directory.",
+        "MAGIC_LLM_KEYS env var must point to a valid keys file for integration tests.",
         allow_module_level=True,
     )
-with open(KEYS_FILE) as f:
+with open(_KEYS_FILE) as f:
     ALL_KEYS = json.load(f)
 
 # Sample image URL for testing
 SAMPLE_IMAGE_URL = "https://img.arz.ai/4HZBWr2x.webp"
 
-# Sample base64 encoded image (a small red square)
-SAMPLE_BASE64_IMAGE = open('/home/andres/Downloads/imageb64.txt', 'r').read()
+# Sample base64 encoded image — loaded from env var or skipped
+_IMAGE_B64_FILE = os.getenv("MAGIC_LLM_IMAGE_B64_FILE")
+if _IMAGE_B64_FILE and os.path.exists(_IMAGE_B64_FILE):
+    SAMPLE_BASE64_IMAGE = open(_IMAGE_B64_FILE, 'r').read()
+else:
+    SAMPLE_BASE64_IMAGE = None
 
 # Sample prompt to use with images
 SAMPLE_PROMPT = "What do you see in this image?"
 
 def get_sample_bytes_image():
     """Return a sample image as bytes"""
+    if not SAMPLE_BASE64_IMAGE:
+        pytest.skip("MAGIC_LLM_IMAGE_B64_FILE env var not set or file missing.")
     # Create a small image as bytes (decode the base64 sample)
     return base64.b64decode(SAMPLE_BASE64_IMAGE)
 
@@ -73,6 +76,8 @@ def test_image_url(key_name, provider, kwargs):
 )
 def test_image_base64(key_name, provider, kwargs):
     """Test adding an image as base64 string"""
+    if not SAMPLE_BASE64_IMAGE:
+        pytest.skip("MAGIC_LLM_IMAGE_B64_FILE env var not set or file missing.")
     keys = dict(ALL_KEYS[key_name])
     client = MagicLLM(**keys, **kwargs)
 

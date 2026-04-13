@@ -109,7 +109,7 @@ class EngineCloudFlare(BaseChat):
             response = await client.post_json(url=self.url,
                                               data=json_data,
                                               headers=headers,
-                                              timeout=kwargs.get('timeout'))
+                                              timeout=kwargs.get('timeout', 30))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
@@ -145,7 +145,7 @@ class EngineCloudFlare(BaseChat):
                                                url=self.url,
                                                data=data,
                                                headers=headers,
-                                               timeout=kwargs.get('timeout')):
+                                               timeout=kwargs.get('timeout', 30)):
                 if event != '\n' and event and event != 'data: [DONE]':
                     yield self.prepare_stream_response(event)
 
@@ -158,7 +158,7 @@ class EngineCloudFlare(BaseChat):
                     self.url,
                     data=json_data,
                     headers=headers,
-                    timeout=kwargs.get('timeout')
+                    timeout=kwargs.get('timeout', 30)
             ):
                 event = event.decode('utf-8').strip()
                 if event != '\n' and event and event != 'data: [DONE]':

@@ -35,9 +35,9 @@ class EngineGoogle(BaseChat):
                  **kwargs) -> None:
         super().__init__(**kwargs)
         base = 'https://generativelanguage.googleapis.com/v1beta/models/'
-        self.url_stream = f'{base}{self.model}:streamGenerateContent?alt=sse&key={api_key}'
-        self.url = f'{base}{self.model}:generateContent?key={api_key}'
-        self.url_tts = f'{base}gemini-2.5-flash-preview-tts:generateContent?key={api_key}'
+        self.url_stream = f'{base}{self.model}:streamGenerateContent?alt=sse'
+        self.url = f'{base}{self.model}:generateContent'
+        self.url_tts = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent'
         self.api_key = api_key
 
     def prepare_data_sync(self, chat: ModelChat, **kwargs):
@@ -60,6 +60,7 @@ class EngineGoogle(BaseChat):
         # ------------------------- Headers -------------------------------- #
         headers: dict[str, str] = {
             "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
             **self.headers,
         }
 
@@ -159,6 +160,7 @@ class EngineGoogle(BaseChat):
         # ------------------------- Headers -------------------------------- #
         headers: dict[str, str] = {
             "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
             **self.headers,
         }
 
@@ -360,7 +362,7 @@ class EngineGoogle(BaseChat):
             response = await client.post_json(url=self.url,
                                               data=json_data,
                                               headers=headers,
-                                              timeout=kwargs.get('timeout'))
+                                              timeout=kwargs.get('timeout', 30))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
@@ -369,7 +371,8 @@ class EngineGoogle(BaseChat):
         with HttpClient() as client:
             response = client.post_json(url=self.url,
                                         data=json_data,
-                                        headers=headers)
+                                        headers=headers,
+                                        timeout=kwargs.get('timeout', 30))
             return self.process_generate(response)
 
     def prepare_stream_response(self, chunk):
@@ -396,7 +399,7 @@ class EngineGoogle(BaseChat):
                                                self.url_stream,
                                                data=json_data,
                                                headers=headers,
-                                               timeout=kwargs.get('timeout')):
+                                               timeout=kwargs.get('timeout', 30)):
                 if chunk.strip():
                     yield self.prepare_stream_response(chunk)
 

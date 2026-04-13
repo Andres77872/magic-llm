@@ -137,6 +137,36 @@ class EngineOpenAI(BaseChat):
         """Backward compatible alias for transform_response."""
         return self.transform_response(r)
 
+    async def _poll_openrouter_usage_async(
+        self, id_generation: str, headers: dict, timeout: int = 30
+    ) -> dict | None:
+        """Poll OpenRouter /generation endpoint for usage data after streaming."""
+        url = f'https://openrouter.ai/api/v1/generation?id={id_generation}'
+        async with AsyncHttpClient() as client:
+            response = await client.request("GET", url, headers=headers, timeout=timeout)
+            data = json.loads(response.decode('utf-8'))
+            u = data['data']
+            return {
+                'completion_tokens': u['native_tokens_completion'],
+                'prompt_tokens': u['native_tokens_prompt'],
+                'total_tokens': u['native_tokens_prompt'] + u['native_tokens_completion'],
+            }
+
+    def _poll_openrouter_usage_sync(
+        self, id_generation: str, headers: dict, timeout: int = 30
+    ) -> dict | None:
+        """Sync poll OpenRouter /generation endpoint for usage data after streaming."""
+        url = f'https://openrouter.ai/api/v1/generation?id={id_generation}'
+        with HttpClient() as client:
+            response = client.request("GET", url, headers=headers, timeout=timeout)
+            data = json.loads(response.decode('utf-8'))
+            u = data['data']
+            return {
+                'completion_tokens': u['native_tokens_completion'],
+                'prompt_tokens': u['native_tokens_prompt'],
+                'total_tokens': u['native_tokens_prompt'] + u['native_tokens_completion'],
+            }
+
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self.base.prepare_data(chat, **kwargs)
@@ -144,7 +174,7 @@ class EngineOpenAI(BaseChat):
             response = await client.post_json(url=self.base.base_url + '/chat/completions',
                                               data=json_data,
                                               headers=headers,
-                                              timeout=kwargs.get('timeout'))
+                                              timeout=kwargs.get('timeout', 30))
             return self.prepare_response(response)
 
     @BaseChat.sync_intercept_generate
@@ -154,7 +184,8 @@ class EngineOpenAI(BaseChat):
         with HttpClient() as client:
             response = client.post_json(url=self.base.base_url + '/chat/completions',
                                         data=data,
-                                        headers=headers)
+                                        headers=headers,
+                                        timeout=kwargs.get('timeout', 30))
             return self.prepare_response(response)
 
     @BaseChat.sync_intercept_stream_generate
@@ -167,12 +198,23 @@ class EngineOpenAI(BaseChat):
                                                self.base.base_url + '/chat/completions',
                                                data=data,
                                                headers=headers,
-                                               timeout=kwargs.get('timeout')):
+                                               timeout=kwargs.get('timeout', 30)):
                 if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
                     if c.id:
                         id_generation = c.id
                     last_chunk = c
                     yield c
+
+            # OpenRouter usage polling at engine level (sync path)
+            if id_generation and isinstance(self.base, ProviderOpenRouter):
+                try:
+                    usage = self._poll_openrouter_usage_sync(
+                        id_generation, self.base.headers, kwargs.get('timeout', 30)
+                    )
+                    if last_chunk and usage:
+                        last_chunk.usage = UsageModel(**usage)
+                except Exception as e:
+                    logger.warning(f"OpenRouter usage polling failed: {e}")
 
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
@@ -183,13 +225,24 @@ class EngineOpenAI(BaseChat):
             async for chunk in client.post_stream(self.base.base_url + '/chat/completions',
                                                   data=json_data,
                                                   headers=headers,
-                                                  timeout=kwargs.get('timeout')):
+                                                  timeout=kwargs.get('timeout', 30)):
                 chunk = chunk.decode('utf-8')
                 if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
                     if c.id:
                         id_generation = c.id
                     last_chunk = c
                     yield c
+
+            # OpenRouter usage polling at engine level (non-blocking, after stream completes)
+            if id_generation and isinstance(self.base, ProviderOpenRouter):
+                try:
+                    usage = await self._poll_openrouter_usage_async(
+                        id_generation, self.base.headers, kwargs.get('timeout', 30)
+                    )
+                    if last_chunk and usage:
+                        last_chunk.usage = UsageModel(**usage)
+                except Exception as e:
+                    logger.warning(f"OpenRouter usage polling failed: {e}")
 
     def embedding(self, text: list[str] | str, **kwargs):
         with HttpClient() as client:
@@ -201,7 +254,7 @@ class EngineOpenAI(BaseChat):
             response = client.post_json(url=self.base.base_url + '/embeddings',
                                         data=json.dumps(data),
                                         headers=self.base.headers)
-            return response
+            return self.base.transform_embedding_response(response)
 
     async def async_embedding(self, text: list[str] | str, **kwargs):
         async with AsyncHttpClient() as client:
@@ -213,8 +266,8 @@ class EngineOpenAI(BaseChat):
             response = await client.post_json(url=self.base.base_url + '/embeddings',
                                               data=json.dumps(data),
                                               headers=self.base.headers,
-                                              timeout=kwargs.get('timeout'))
-            return response
+                                              timeout=kwargs.get('timeout', 30))
+            return self.base.transform_embedding_response(response)
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
         """

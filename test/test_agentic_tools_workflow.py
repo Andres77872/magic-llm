@@ -1,22 +1,23 @@
 import json
 import os
-import sys
 from typing import Any, Dict, List, Union
 
 import pytest
 import requests
 
-# add project root to import path
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
 from magic_llm import MagicLLM
 from magic_llm.model import ModelChat
 from magic_llm.util import run_agentic
 
-KEYS_FILE = os.getenv(
-    "MAGIC_LLM_KEYS",
-    "/home/andres/Documents/keys.json",
-)
+KEYS_FILE = os.getenv("MAGIC_LLM_KEYS")
+if not KEYS_FILE or not os.path.exists(KEYS_FILE):
+    pytest.skip(
+        "MAGIC_LLM_KEYS env var must point to a valid keys file for integration tests.",
+        allow_module_level=True,
+    )
+
+# All tests in this file require live provider access
+pytestmark = pytest.mark.provider_functional
 
 
 def _load_keys() -> Dict[str, Dict[str, str]]:
@@ -187,7 +188,7 @@ def _reranker_tool(
     - Returns selected metadata: page, page_image (jpg), abstract, title, date, authors.
     """
     if not jina_api_key:
-        jina_api_key = 'jina_3f102d8bbdfb4ac4aa02f36e2ff0b234iaLxSNZgGgIEetn76RSKojArV0GI'
+        jina_api_key = os.getenv("JINA_API_KEY")
     if not jina_api_key:
         pytest.skip("JINA_API_KEY is required for reranker tool")
 

@@ -8,6 +8,7 @@ import aiohttp
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
+from magic_llm.model.ModelEmbeddingResponse import ModelEmbeddingResponse
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 from magic_llm.util.tools_mapping import map_to_openai
 
@@ -113,6 +114,24 @@ class OpenAiBaseProvider(ABC):
         """
         return ModelChatResponse(**raw)
 
+    def transform_embedding_response(self, raw: Dict[str, Any]) -> ModelEmbeddingResponse:
+        """
+        Transform embedding API response to ModelEmbeddingResponse.
+
+        Embedding responses follow the OpenAI format across all providers:
+        - object: "list"
+        - data: list of {object, index, embedding}
+        - model: model identifier
+        - usage: optional token usage
+
+        Args:
+            raw: Raw dict from embedding API response
+
+        Returns:
+            Normalized ModelEmbeddingResponse
+        """
+        return ModelEmbeddingResponse(**raw)
+
     def transform_stream_chunk(
         self,
         raw: str,
@@ -141,7 +160,9 @@ class OpenAiBaseProvider(ABC):
                       id_generation: str = '',
                       last_chunk: ChatCompletionModel = None
                       ) -> ChatCompletionModel:
-        if chunk.startswith('data: ') and not chunk.endswith('[DONE]'):
+        if chunk.startswith('data: '):
+            if '[DONE]' in chunk:
+                return None
             chunk = json.loads(chunk[5:])
             # TODO improve server side error per provider
             if 'choices' not in chunk:

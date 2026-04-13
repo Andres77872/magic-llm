@@ -17,9 +17,9 @@ class ProviderFireworks(OpenAiBaseProvider):
         }
 
         if data.model == 'whisper-v3':
-            url = 'https://audio-prod.us-virginia-1.direct.fireworks.ai/v1'
+            url = 'https://audio-prod.api.fireworks.ai/v1'
         elif data.model == 'whisper-v3-turbo':
-            url = 'https://audio-turbo.us-virginia-1.direct.fireworks.ai/v1'
+            url = 'https://audio-turbo.api.fireworks.ai/v1'
         else:
             raise NotImplementedError
         async with AsyncHttpClient() as client:

@@ -47,7 +47,8 @@ AMAZON_FINISH_REASON_MAP = {
     'max_tokens': 'length',
     'content_filtered': 'content_filter',
     'tool_use': 'tool_calls',
-    'FINISH': 'stop'
+    'FINISH': 'stop',
+    'LENGTH': 'length',
 }
 
 

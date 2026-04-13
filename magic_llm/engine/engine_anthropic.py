@@ -430,7 +430,7 @@ class EngineAnthropic(BaseChat):
             response = await client.post_json(url=self.base_url,
                                               data=json_data,
                                               headers=headers,
-                                              timeout=kwargs.get('timeout'))
+                                              timeout=kwargs.get('timeout', 30))
 
             return self.process_generate(response)
 
@@ -440,7 +440,8 @@ class EngineAnthropic(BaseChat):
         with HttpClient() as client:
             response = client.post_json(url=self.base_url,
                                         data=json_data,
-                                        headers=headers)
+                                        headers=headers,
+                                        timeout=kwargs.get('timeout', 30))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_stream_generate
@@ -457,7 +458,7 @@ class EngineAnthropic(BaseChat):
                                                self.base_url,
                                                data=json_data,
                                                headers=headers,
-                                               timeout=kwargs.get('timeout')):
+                                               timeout=kwargs.get('timeout', 30)):
                 if chunk:
                     evt = chunk.split('data:')
                     if len(evt) != 2:
@@ -489,7 +490,8 @@ class EngineAnthropic(BaseChat):
             usage = None
             async for chunk in client.post_stream(self.base_url,
                                                   data=json_data,
-                                                  headers=headers):
+                                                  headers=headers,
+                                                  timeout=kwargs.get('timeout', 30)):
                 if chunk:
                     evt = chunk.decode().split('data:')
                     if len(evt) != 2:

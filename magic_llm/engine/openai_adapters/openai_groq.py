@@ -16,7 +16,9 @@ class ProviderGroq(OpenAiBaseProvider):
             id_generation: str = '',
             last_chunk: ChatCompletionModel = None
     ) -> ChatCompletionModel:
-        if chunk.startswith('data: ') and not chunk.endswith('[DONE]'):
+        if chunk.startswith('data: '):
+            if '[DONE]' in chunk:
+                return None
             chunk = json.loads(chunk[5:])
             chunk['usage'] = chunk.get('x_groq', {}).get('usage', {})
             if len(chunk['choices']) == 0:

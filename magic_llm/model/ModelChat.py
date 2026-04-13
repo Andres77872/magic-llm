@@ -1,6 +1,6 @@
 import base64
 import logging
-from typing import Union
+from typing import Any, Union
 
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChatResponse
@@ -295,6 +295,56 @@ class ModelChat:
         final_messages = truncated_messages[::-1]
         logger.info(f'Messages truncated to {self.num_tokens_from_messages(final_messages)} tokens')
         return final_messages
+
+    def add_tool_result(
+        self,
+        tool_call_id: str,
+        content: str,
+        is_error: bool = False,
+    ) -> None:
+        """Append a tool result message to the conversation history.
+
+        Args:
+            tool_call_id: The provider-specific tool call identifier.
+            content: The tool output content.
+            is_error: Flag indicating whether this is an error result.
+        """
+        self.messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": content,
+            "is_error": is_error,
+        })
+
+    def add_tool_call_message(
+        self,
+        tool_calls: list[dict[str, Any]],
+        content: str | None = None,
+    ) -> None:
+        """Append an assistant message with tool_calls to the conversation history.
+
+        Args:
+            tool_calls: The list of tool calls from the LLM response.
+            content: Optional text content from the assistant response.
+        """
+        self.messages.append({
+            "role": "assistant",
+            "content": content,
+            "tool_calls": tool_calls,
+        })
+
+    def add_tool_messages(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Append multiple messages to the conversation history.
+
+        Used by adapters to inject provider-formatted tool results.
+
+        Args:
+            messages: A list of message dicts to append.
+        """
+        self.messages.extend(messages)
 
     def __add__(self, chat: 'ModelChatResponse') -> 'ModelChat':
         """

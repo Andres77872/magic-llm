@@ -16,14 +16,16 @@ class ProviderDeepseek(OpenAiBaseProvider):
             id_generation: str = '',
             last_chunk: ChatCompletionModel = None
     ) -> ChatCompletionModel:
-        if chunk.startswith('data: ') and not chunk.endswith('[DONE]'):
+        if chunk.startswith('data: '):
+            if '[DONE]' in chunk:
+                return None
             chunk = json.loads(chunk[5:])
             if u := chunk.get('usage'):
                 chunk['usage'] = UsageModel(prompt_tokens=u['prompt_tokens'],
                                             completion_tokens=u['completion_tokens'],
                                             total_tokens=u['total_tokens'],
                                             prompt_tokens_details=PromptTokensDetailsModel(
-                                                cached_tokens=u['prompt_cache_hit_tokens']))
+                                                cached_tokens=u.get('prompt_cache_hit_tokens')))
             if len(chunk['choices']) == 0:
                 chunk['choices'] = [{}]
             chunk = ChatCompletionModel(**chunk)

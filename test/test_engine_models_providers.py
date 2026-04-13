@@ -1,13 +1,14 @@
 import json
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 from magic_llm import MagicLLM
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat
+
+# All tests in this file require live provider access
+pytestmark = pytest.mark.provider_functional
 
 # Provider configurations: (provider_name, key_name_in_json, success_model, fail_model)
 TEST_PROVIDERS = [
@@ -34,18 +35,14 @@ TEST_PROVIDERS = [
     ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507", "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
 ]
 
-# Locate keys file via environment variable or default to test/keys.json
-KEYS_FILE = os.getenv(
-    "MAGIC_LLM_KEYS",
-    "/home/andres/Documents/keys.json",
-)
-if not os.path.exists(KEYS_FILE):
+# Locate keys file via environment variable
+_KEYS_FILE = os.getenv("MAGIC_LLM_KEYS")
+if not _KEYS_FILE or not os.path.exists(_KEYS_FILE):
     pytest.skip(
-        f"No keys file found at {KEYS_FILE}. "
-        "Set MAGIC_LLM_KEYS env var or place keys.json in this directory.",
+        "MAGIC_LLM_KEYS env var must point to a valid keys file for integration tests.",
         allow_module_level=True,
     )
-with open(KEYS_FILE) as f:
+with open(_KEYS_FILE) as f:
     ALL_KEYS = json.load(f)
 
 # Filter providers for which keys are provided

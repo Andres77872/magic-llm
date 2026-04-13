@@ -1,3 +1,29 @@
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["test"]
+markers = [
+    "timeout: set test timeout in seconds",
+    "provider_health: provider health check tests",
+    "provider_functional: provider functional tests",
+]
+filterwarnings = [
+    "ignore:datetime.datetime.utcnow():DeprecationWarning",
+    "ignore::pytest.PytestDeprecationWarning:pytest_asyncio",
+]
+
+[tool.coverage.run]
+source = ["magic_llm"]
+
+[tool.coverage.report]
+fail_under = 60
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

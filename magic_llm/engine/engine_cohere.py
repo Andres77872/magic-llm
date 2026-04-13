@@ -135,7 +135,7 @@ class EngineCohere(BaseChat):
             response = await client.post_json(url=self.base_url,
                                               data=json_data,
                                               headers=headers,
-                                              timeout=kwargs.get('timeout'))
+                                              timeout=kwargs.get('timeout', 30))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
@@ -144,7 +144,8 @@ class EngineCohere(BaseChat):
         with HttpClient() as client:
             response = client.post_json(url=self.base_url,
                                         data=json_data,
-                                        headers=headers)
+                                        headers=headers,
+                                        timeout=kwargs.get('timeout', 30))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_stream_generate
@@ -157,7 +158,7 @@ class EngineCohere(BaseChat):
                                                self.base_url,
                                                data=json_data,
                                                headers=headers,
-                                               timeout=kwargs.get('timeout')):
+                                               timeout=kwargs.get('timeout', 30)):
                 if chunk:
                     if c := self.process_chunk(chunk.strip(), idx, usage):
                         idx = c[1]
@@ -184,7 +185,8 @@ class EngineCohere(BaseChat):
             usage = None
             async for chunk in client.post_stream(self.base_url,
                                                   data=json_data,
-                                                  headers=headers):
+                                                  headers=headers,
+                                                  timeout=kwargs.get('timeout', 30)):
                 if chunk:
                     if c := self.process_chunk(chunk.decode().strip(), idx, usage):
                         idx = c[1]
