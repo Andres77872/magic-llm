@@ -5,6 +5,8 @@ Covers:
 - Slice 20: _parse_tool_arguments
 - Slice 21: _safe_preview
 - Slice 22: _build_tool_registry
+- Slice A: _format_tool_feedback (TDD: agentic-tooling-flow-tests)
+- Slice B: _create_separator_chunk (TDD: agentic-tooling-flow-tests)
 """
 
 import json
@@ -17,6 +19,8 @@ from magic_llm.util.agentic import (
     _parse_tool_arguments,
     _safe_preview,
     _build_tool_registry,
+    _format_tool_feedback,
+    _create_separator_chunk,
 )
 
 
@@ -207,3 +211,103 @@ class TestBuildToolRegistry:
         fn = lambda x: x  # noqa: E731
         registry = _build_tool_registry([fn], None)
         assert "<lambda>" in registry
+
+
+# ─── Slice A: _format_tool_feedback ────────────────────────────────────────
+# TDD: agentic-tooling-flow-tests — Phase 1, Pure Unit
+
+class TestFormatToolFeedback:
+    """_format_tool_feedback produces the current plain-text tool result format.
+
+    NOTE: This is the CURRENT behavior. Tool results are formatted as plain text
+    and later injected as role:"user" messages. The SDD refactor will change this
+    to proper role:"tool" messages with tool_call_id.
+    """
+
+    def test_normal_args_and_output(self):
+        result = _format_tool_feedback(
+            name="get_weather",
+            input_str='{"city": "London"}',
+            output_str='{"temp": 18, "unit": "C"}',
+        )
+        assert result == (
+            "tool: get_weather\n"
+            "tool input: {\"city\": \"London\"}\n"
+            "tool output: {\"temp\": 18, \"unit\": \"C\"}"
+        )
+
+    def test_empty_input(self):
+        result = _format_tool_feedback(
+            name="list_items",
+            input_str="",
+            output_str="[]",
+        )
+        assert "tool: list_items" in result
+        assert "tool input: " in result
+        assert "tool output: []" in result
+
+    def test_empty_output(self):
+        result = _format_tool_feedback(
+            name="void_fn",
+            input_str="{}",
+            output_str="",
+        )
+        assert "tool: void_fn" in result
+        assert "tool output: " in result
+
+    def test_multiline_output(self):
+        result = _format_tool_feedback(
+            name="run_script",
+            input_str="{}",
+            output_str="line1\nline2\nline3",
+        )
+        assert "tool: run_script" in result
+        assert "line1\nline2\nline3" in result
+
+    def test_json_error_output(self):
+        """Error feedback from unknown tool or exception uses JSON error dict."""
+        result = _format_tool_feedback(
+            name="unknown_tool",
+            input_str="{}",
+            output_str='{"error": "Unknown tool: unknown_tool"}',
+        )
+        assert "tool: unknown_tool" in result
+        assert '"error"' in result
+
+
+# ─── Slice B: _create_separator_chunk ──────────────────────────────────────
+# TDD: agentic-tooling-flow-tests — Phase 1, Pure Unit
+
+class TestCreateSeparatorChunk:
+    """_create_separator_chunk creates a valid ChatCompletionModel with separator content."""
+
+    def test_normal_construction(self):
+        from magic_llm.model.ModelChatStream import ChatCompletionModel
+        chunk = _create_separator_chunk(
+            separator="\n\n",
+            model="test-model",
+            chunk_id="sep-1",
+        )
+        assert isinstance(chunk, ChatCompletionModel)
+        assert chunk.id == "sep-1"
+        assert chunk.model == "test-model"
+        assert len(chunk.choices) == 1
+        assert chunk.choices[0].delta.content == "\n\n"
+
+    def test_empty_model_fallback(self):
+        chunk = _create_separator_chunk(
+            separator="---",
+            model="",
+            chunk_id="sep-2",
+        )
+        assert chunk.model == ""
+        assert chunk.id == "sep-2"
+        assert chunk.choices[0].delta.content == "---"
+
+    def test_custom_separator(self):
+        chunk = _create_separator_chunk(
+            separator="<SEPARATOR>",
+            model="gpt-4",
+            chunk_id="custom-id",
+        )
+        assert chunk.choices[0].delta.content == "<SEPARATOR>"

@@ -169,28 +169,28 @@ class EngineOpenAI(BaseChat):
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        json_data, headers = self.base.prepare_data(chat, **kwargs)
+        json_data, headers = self.base.transform_request(chat, **kwargs)
         async with AsyncHttpClient() as client:
             response = await client.post_json(url=self.base.base_url + '/chat/completions',
                                               data=json_data,
                                               headers=headers,
                                               timeout=kwargs.get('timeout', 30))
-            return self.prepare_response(response)
+            return self.transform_response(response)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
-        data, headers = self.base.prepare_data(chat, **kwargs)
+        data, headers = self.base.transform_request(chat, **kwargs)
         with HttpClient() as client:
             response = client.post_json(url=self.base.base_url + '/chat/completions',
                                         data=data,
                                         headers=headers,
                                         timeout=kwargs.get('timeout', 30))
-            return self.prepare_response(response)
+            return self.transform_response(response)
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
-        data, headers = self.base.prepare_data(chat, stream=True, **kwargs)
+        data, headers = self.base.transform_request(chat, stream=True, **kwargs)
         with HttpClient() as client:
             id_generation = ''
             last_chunk = ''
@@ -218,7 +218,7 @@ class EngineOpenAI(BaseChat):
 
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
-        json_data, headers = self.base.prepare_data(chat, stream=True, **kwargs)
+        json_data, headers = self.base.transform_request(chat, stream=True, **kwargs)
         async with AsyncHttpClient() as client:
             id_generation = ''
             last_chunk = ''

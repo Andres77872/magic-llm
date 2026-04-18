@@ -240,7 +240,7 @@ print(resp)  # List[float]
 
 ## Agentic Tool Workflow (Function Calling)
 
-Use `run_agentic` to let the model call your Python tools iteratively until it produces a normal answer.
+Prefer the canonical `MagicLLM.run_agent()` API for new code. The legacy `run_agentic*` helpers remain available for backward compatibility, but they are not the primary path anymore.
 
 - **Callables**: simplest; the function's `__name__` is the tool name.
 - **JSON tool specs**: provide OpenAI-style schemas and map names to callables via `tool_functions`.
@@ -250,7 +250,6 @@ Use `run_agentic` to let the model call your Python tools iteratively until it p
 ```python
 from typing import Any, List
 from magic_llm import MagicLLM
-from magic_llm.util import run_agentic
 
 
 client = MagicLLM(engine='openai', model='gpt-4o-mini', private_key='sk-...')
@@ -264,8 +263,7 @@ def top_k(items: List[Any], k: int = 3) -> List[Any]:
     return list(items)[:k]
 
 
-resp = run_agentic(
-    client=client,
+resp = client.run_agent(
     user_input="Compute 17 + 25, then take the first 2 fruits from ['apple','banana','cherry'] and summarize.",
     system_prompt="Use tools for arithmetic and list selection before answering.",
     tools=[add, top_k],
@@ -280,7 +278,6 @@ print(resp.content)
 
 ```python
 from magic_llm import MagicLLM
-from magic_llm.util import run_agentic
 
 
 client = MagicLLM(engine='openai', model='gpt-4o-mini', private_key='sk-...')
@@ -309,8 +306,7 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
-resp = run_agentic(
-    client=client,
+resp = client.run_agent(
     user_input="Use the add tool to add 7 and 35, then explain the result.",
     tools=tool_specs,
     tool_functions={"add": add},
@@ -318,6 +314,10 @@ resp = run_agentic(
 
 print(resp.content)
 ```
+
+### Legacy compatibility helpers
+
+`magic_llm.util.run_agentic()` and related helpers still exist for older integrations and still delegate to the legacy procedural loop in `magic_llm/util/agentic.py`. Keep using them only when you need backward-compatible behavior during migration.
 
 For a complete end-to-end research + rerank demo using multiple tools (query rewriting, arXiv search, Jina reranker, and a follow-up vision analysis), see `test/test_agentic_tools_workflow.py`. The agent loop implementation lives in `magic_llm/util/agentic.py`.
 

@@ -7,6 +7,8 @@ import pytest
 
 from magic_llm.model import ModelChat, ModelChatResponse
 
+from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+
 # All tests in this file require live provider access
 pytestmark = pytest.mark.provider_functional
 
@@ -55,13 +57,10 @@ TEST_PROVIDERS = [
      "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
 ]
 CALL_DEF = {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}
-KEYS_FILE = os.getenv("MAGIC_LLM_KEYS")
-if not KEYS_FILE or not os.path.exists(KEYS_FILE):
-    pytest.skip(
-        "MAGIC_LLM_KEYS env var must point to a valid keys file for integration tests.",
-        allow_module_level=True,
-    )
-with open(KEYS_FILE) as f:
+
+# Resolve keys file with fallback — raises RuntimeError if missing
+_KEYS_FILE = resolve_keys_file()
+with open(_KEYS_FILE) as f:
     ALL_KEYS = json.load(f)
 PROVIDERS = [
     (provider, key_name, success_model, fail_model)
@@ -71,9 +70,11 @@ PROVIDERS = [
 
 
 def extract_body(engine, chat, **kwargs):
-    # choose appropriate prepare_data method
+    # choose canonical transform_request method when available
     if hasattr(engine, 'base'):
-        body_bytes, _ = engine.base.prepare_data(chat, **kwargs)
+        body_bytes, _ = engine.base.transform_request(chat, **kwargs)
+    elif hasattr(engine, 'transform_request'):
+        body_bytes, _ = engine.transform_request(chat, **kwargs)
     else:
         body_bytes, _ = engine.prepare_data(chat, **kwargs)
     return json.loads(body_bytes)

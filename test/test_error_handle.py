@@ -7,6 +7,8 @@ from magic_llm import MagicLLM
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat
 
+from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+
 # All tests in this file require live provider access
 pytestmark = pytest.mark.provider_functional
 
@@ -17,12 +19,8 @@ def _get_chat_builder():
     return chat
 
 
-_KEYS_FILE = os.getenv("MAGIC_LLM_KEYS")
-if not _KEYS_FILE or not os.path.exists(_KEYS_FILE):
-    pytest.skip(
-        "MAGIC_LLM_KEYS env var must point to a valid keys file for integration tests.",
-        allow_module_level=True,
-    )
+# Resolve keys file with fallback — raises RuntimeError if missing
+_KEYS_FILE = resolve_keys_file()
 OPENAI_KEY = json.load(open(_KEYS_FILE))['openai']
 
 

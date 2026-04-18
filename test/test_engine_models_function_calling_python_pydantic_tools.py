@@ -8,6 +8,8 @@ import pytest
 
 from magic_llm.model import ModelChat
 
+from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+
 try:
     from pydantic import BaseModel  # v2
 except Exception:  # pragma: no cover
@@ -23,13 +25,9 @@ TEST_PROVIDERS = [
     ("deepinfra", "deepinfra", "meta-llama/Meta-Llama-3.1-70B-Instruct", "microsoft/WizardLM-2-8x22B-model-fail"),
 ]
 
-KEYS_FILE = os.getenv("MAGIC_LLM_KEYS")
-if not KEYS_FILE or not os.path.exists(KEYS_FILE):
-    pytest.skip(
-        "MAGIC_LLM_KEYS env var must point to a valid keys file for integration tests.",
-        allow_module_level=True,
-    )
-with open(KEYS_FILE) as f:
+# Resolve keys file with fallback — raises RuntimeError if missing
+_KEYS_FILE = resolve_keys_file()
+with open(_KEYS_FILE) as f:
     ALL_KEYS = json.load(f)
 
 PROVIDERS = [

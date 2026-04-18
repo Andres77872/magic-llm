@@ -150,7 +150,7 @@ class EngineAmazon(BaseChat):
         )
 
         # Build request body and SigV4-signed prepared request
-        body = self.provider.prepare_data(chat, **kwargs)
+        body = self.provider.transform_request(chat, **kwargs)
         url = build_bedrock_url(region, self.model, stream=False)
         prepared = build_sigv4_prepared_request(
             method='POST',
@@ -179,7 +179,7 @@ class EngineAmazon(BaseChat):
                 headers=aiohttp_headers,
                 timeout=timeout,
             )
-            return self.provider.process_response(raw_bytes)
+            return self.provider.transform_response(raw_bytes)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
@@ -191,7 +191,7 @@ class EngineAmazon(BaseChat):
         )
 
         # Build request body and SigV4-signed URL/headers
-        body = self.provider.prepare_data(chat, **kwargs)
+        body = self.provider.transform_request(chat, **kwargs)
         url = build_bedrock_url(region, self.model, stream=False)
         sigv4_headers = build_sigv4_headers(
             method='POST',
@@ -215,7 +215,7 @@ class EngineAmazon(BaseChat):
                 headers=sigv4_headers,
                 timeout=timeout,
             )
-            return self.provider.process_response(raw_bytes)
+            return self.provider.transform_response(raw_bytes)
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
@@ -227,7 +227,7 @@ class EngineAmazon(BaseChat):
         )
 
         # Build request body and SigV4-signed URL/headers
-        body = self.provider.prepare_data(chat, **kwargs)
+        body = self.provider.transform_request(chat, **kwargs)
         url = build_bedrock_url(region, self.model, stream=True)
         sigv4_headers = build_sigv4_headers(
             method='POST',
@@ -256,7 +256,7 @@ class EngineAmazon(BaseChat):
                     if event_type == 'chunk' and isinstance(payload, dict):
                         # Bedrock wraps provider events in a 'bytes' field (base64-encoded JSON)
                         provider_event = self._decode_bedrock_chunk(payload)
-                        chunk = self.provider.format_event_to_chunk(provider_event)
+                        chunk = self.provider.transform_stream_chunk(provider_event)
                         metrics = payload.get('amazon-bedrock-invocationMetrics', {})
                         prompt_tokens = metrics.get('inputTokenCount', 0)
                         completion_tokens = metrics.get('outputTokenCount', 0)
@@ -284,7 +284,7 @@ class EngineAmazon(BaseChat):
         )
 
         # Build request body and SigV4-signed prepared request
-        body = self.provider.prepare_data(chat, **kwargs)
+        body = self.provider.transform_request(chat, **kwargs)
         url = build_bedrock_url(region, self.model, stream=True)
         prepared = build_sigv4_prepared_request(
             method='POST',
@@ -321,7 +321,7 @@ class EngineAmazon(BaseChat):
                     if event_type == 'chunk' and isinstance(payload, dict):
                         # Bedrock wraps provider events in a 'bytes' field (base64-encoded JSON)
                         provider_event = self._decode_bedrock_chunk(payload)
-                        chunk = self.provider.format_event_to_chunk(provider_event)
+                        chunk = self.provider.transform_stream_chunk(provider_event)
                         metrics = payload.get('amazon-bedrock-invocationMetrics', {})
                         prompt_tokens = metrics.get('inputTokenCount', 0)
                         completion_tokens = metrics.get('outputTokenCount', 0)

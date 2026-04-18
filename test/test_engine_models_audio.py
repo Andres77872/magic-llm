@@ -7,6 +7,8 @@ import pytest
 from magic_llm import MagicLLM
 from magic_llm.model.ModelAudio import AudioTranscriptionsRequest, AudioSpeechRequest
 
+from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+
 # All tests in this file require live provider access
 pytestmark = pytest.mark.provider_functional
 
@@ -27,13 +29,8 @@ TTS_PROVIDERS = [
     ("google", "google", {"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"}),
 ]
 
-# Locate keys file via environment variable
-_KEYS_FILE = os.getenv("MAGIC_LLM_KEYS")
-if not _KEYS_FILE or not os.path.exists(_KEYS_FILE):
-    pytest.skip(
-        "MAGIC_LLM_KEYS env var must point to a valid keys file for integration tests.",
-        allow_module_level=True,
-    )
+# Resolve keys file with fallback — raises RuntimeError if missing
+_KEYS_FILE = resolve_keys_file()
 with open(_KEYS_FILE) as f:
     ALL_KEYS = json.load(f)
 

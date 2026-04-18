@@ -10,21 +10,38 @@ import pytest
 
 # ─── Key / Resource Fixtures ───────────────────────────────────────────────
 
+DEFAULT_KEYS_FILE = "/home/andres/Documents/keys.json"
+
+
+def resolve_keys_file() -> str:
+    """Resolve the keys file path with fallback logic.
+
+    Priority:
+    1. MAGIC_LLM_KEYS env var (if set AND file exists)
+    2. DEFAULT_KEYS_FILE (if file exists)
+
+    Raises RuntimeError if no keys file can be found.
+    """
+    env_path = os.getenv("MAGIC_LLM_KEYS")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    if os.path.exists(DEFAULT_KEYS_FILE):
+        return DEFAULT_KEYS_FILE
+    raise RuntimeError(
+        f"No API keys file found. Set MAGIC_LLM_KEYS to a valid path, "
+        f"or ensure {DEFAULT_KEYS_FILE} exists."
+    )
+
+
 @pytest.fixture(scope="session")
 def keys_file_path() -> str:
-    """Return the path to the keys file, or empty string if not set."""
-    return os.getenv("MAGIC_LLM_KEYS", "")
+    """Return the path to the keys file. Raises if not set."""
+    return resolve_keys_file()
 
 
 @pytest.fixture(scope="session")
 def loaded_keys(keys_file_path: str) -> Dict[str, Any]:
-    """Load keys from the keys file. Skips the entire module if file is missing."""
-    if not keys_file_path or not os.path.exists(keys_file_path):
-        pytest.skip(
-            f"No keys file found at '{keys_file_path}'. "
-            "Set MAGIC_LLM_KEYS env var to run integration tests.",
-            allow_module_level=True,
-        )
+    """Load keys from the keys file. Raises if file is missing."""
     with open(keys_file_path) as f:
         return json.load(f)
 
@@ -148,3 +165,35 @@ def stream_chunk():
         ],
         usage=UsageModel(),
     )
+
+
+# ─── Agentic Loop Mock Builders ────────────────────────────────────────────
+
+def make_mock_client(responses: list):
+    """Create a mock client that returns responses in sequence from client.llm.generate."""
+    client = MagicMock()
+    client.llm.generate = MagicMock(side_effect=responses)
+    return client
+
+
+def make_response(content=None, tool_calls=None, finish_reason="stop", model="test-model"):
+    """Build a valid ModelChatResponse with optional tool_calls."""
+    from magic_llm.model.ModelChatResponse import (
+        ModelChatResponse, Choice, Message, UsageModel,
+    )
+    message = Message(role="assistant", content=content, tool_calls=tool_calls)
+    choice = Choice(index=0, message=message, finish_reason=finish_reason)
+    return ModelChatResponse(
+        id="test-1",
+        object="chat.completion",
+        created=1700000000.0,
+        model=model,
+        choices=[choice],
+        usage=UsageModel(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+    )
+
+
+def make_tool_call(id="call_1", name="get_weather", arguments='{"city":"London"}'):
+    """Build a valid ToolCall."""
+    from magic_llm.model.ModelChatResponse import ToolCall, FunctionCall
+    return ToolCall(id=id, function=FunctionCall(name=name, arguments=arguments))

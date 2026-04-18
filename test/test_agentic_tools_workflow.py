@@ -9,26 +9,15 @@ from magic_llm import MagicLLM
 from magic_llm.model import ModelChat
 from magic_llm.util import run_agentic
 
-KEYS_FILE = os.getenv("MAGIC_LLM_KEYS")
-if not KEYS_FILE or not os.path.exists(KEYS_FILE):
-    pytest.skip(
-        "MAGIC_LLM_KEYS env var must point to a valid keys file for integration tests.",
-        allow_module_level=True,
-    )
+from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+
+# Resolve keys file with fallback — raises RuntimeError if missing
+_KEYS_FILE = resolve_keys_file()
+with open(_KEYS_FILE) as f:
+    ALL_KEYS = json.load(f)
 
 # All tests in this file require live provider access
 pytestmark = pytest.mark.provider_functional
-
-
-def _load_keys() -> Dict[str, Dict[str, str]]:
-    if not os.path.exists(KEYS_FILE):
-        pytest.skip(
-            f"No keys file found at {KEYS_FILE}. "
-            "Set MAGIC_LLM_KEYS env var or place keys.json in this directory.",
-            allow_module_level=True,
-        )
-    with open(KEYS_FILE) as f:
-        return json.load(f)
 
 
 def _http_post_form(url: str, data: Dict[str, Any], timeout: int = 60) -> Dict[str, Any]:
@@ -241,8 +230,7 @@ def _reranker_tool(
 
 @pytest.mark.timeout(180)
 def test_agentic_tools_end_to_end_search_and_rerank():
-    keys = _load_keys()
-    key = keys['openrouter']
+    key = ALL_KEYS['openrouter']
     client = MagicLLM(model='openai/gpt-4.1', **key)
 
     # Define tools as callables
