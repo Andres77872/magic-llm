@@ -29,7 +29,10 @@ GOOGLE_FINISH_REASON_MAP = {
     'SAFETY': 'content_filter',
     'RECITATION': 'content_filter',
     'OTHER': 'stop',
-    'FINISH_REASON_UNSPECIFIED': None
+    'FINISH_REASON_UNSPECIFIED': None,
+    # Tool-call error signals
+    'MALFORMED_FUNCTION_CALL': 'tool_error',
+    'UNEXPECTED_TOOL_CALL': 'tool_error',
 }
 
 COHERE_FINISH_REASON_MAP = {

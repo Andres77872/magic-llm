@@ -7,5 +7,6 @@
 
 from magic_llm.agent.adapters.openai_adapter import OpenAIToolAdapter
 from magic_llm.agent.adapters.anthropic_adapter import AnthropicToolAdapter
+from magic_llm.agent.adapters.gemini_adapter import GeminiToolAdapter
 
-__all__ = ["OpenAIToolAdapter", "AnthropicToolAdapter"]
+__all__ = ["OpenAIToolAdapter", "AnthropicToolAdapter", "GeminiToolAdapter"]

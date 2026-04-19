@@ -17,7 +17,7 @@ from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Choice, Message, ToolCall, FunctionCall
 from magic_llm.agent.types import CanonicalToolCall, ToolResult
 from magic_llm.agent.tool_adapters import ToolAdapter, ToolAdapterFactory
-from magic_llm.agent.adapters import OpenAIToolAdapter, AnthropicToolAdapter
+from magic_llm.agent.adapters import OpenAIToolAdapter, AnthropicToolAdapter, GeminiToolAdapter
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -59,6 +59,9 @@ class TestToolAdapterProtocol:
         adapter2 = AnthropicToolAdapter()
         assert isinstance(adapter2, ToolAdapter)
 
+        adapter3 = GeminiToolAdapter()
+        assert isinstance(adapter3, ToolAdapter)
+
     def test_tool_adapter_protocol_has_required_methods(self):
         """All 6 methods present."""
         required_methods = [
@@ -72,6 +75,7 @@ class TestToolAdapterProtocol:
         for method_name in required_methods:
             assert hasattr(OpenAIToolAdapter, method_name), f"Missing {method_name}"
             assert hasattr(AnthropicToolAdapter, method_name), f"Missing {method_name}"
+            assert hasattr(GeminiToolAdapter, method_name), f"Missing {method_name}"
 
 
 # ─── Slice 6: OpenAIToolAdapter — serialize_tool_defs + deserialize_tool_calls
@@ -465,10 +469,10 @@ class TestToolAdapterFactory:
         adapter = ToolAdapterFactory.create_for_client(client)
         assert isinstance(adapter, OpenAIToolAdapter)
 
-    def test_factory_google_falls_back_to_openai(self):
-        """create('google') -> OpenAIToolAdapter (Gemini OUT OF SCOPE)."""
+    def test_factory_create_google_returns_gemini_adapter(self):
+        """create('google') -> GeminiToolAdapter (native Gemini tooling)."""
         adapter = ToolAdapterFactory.create("google")
-        assert isinstance(adapter, OpenAIToolAdapter)
+        assert isinstance(adapter, GeminiToolAdapter)
 
     def test_factory_amazon_falls_back_to_openai(self):
         """create('amazon') -> OpenAIToolAdapter (Bedrock OUT OF SCOPE)."""
@@ -505,3 +509,9 @@ class TestAdapterReExports:
         from magic_llm.agent.adapters import AnthropicToolAdapter as ReExported
 
         assert ReExported is AnthropicToolAdapter
+
+    def test_adapters_package_reexports_gemini_adapter(self):
+        """from magic_llm.agent.adapters import GeminiToolAdapter works."""
+        from magic_llm.agent.adapters import GeminiToolAdapter as ReExported
+
+        assert ReExported is GeminiToolAdapter

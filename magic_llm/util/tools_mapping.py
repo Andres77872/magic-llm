@@ -502,6 +502,76 @@ def map_to_openai(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice) ->
     return openai_tools, openai_choice
 
 
+def map_to_gemini(
+    tools: Optional[List[OpenAITool]],
+    tool_choice: ToolChoice,
+) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
+    """Map OpenAI-style tools/tool_choice into Gemini functionDeclarations schema.
+
+    Returns (gemini_tools, gemini_tool_config):
+        gemini_tools = [
+            {"name": "...", "description": "...", "parametersJsonSchema": {...}},
+            ...
+        ]
+        gemini_tool_config = {"functionCallingConfig": {"mode": "AUTO"|"ANY"|"NONE"}}
+
+    Key transformations:
+        - tool_choice "auto" → mode "AUTO"
+        - tool_choice "required" → mode "ANY"
+        - tool_choice "none" → mode "NONE"
+        - tool_choice {"name": "foo"} → mode "ANY" + allowedFunctionNames ["foo"]
+        - Schema: adds additionalProperties: false (Gemini requirement)
+        - Inlines $ref entries via _inline_local_refs (reuses existing helper)
+    """
+    normalized_tools = normalize_openai_tools(tools)
+    normalized_choice = normalize_openai_tool_choice(tool_choice)
+
+    gemini_tools: Optional[List[Dict[str, Any]]] = None
+    if normalized_tools:
+        gemini_tools = []
+        for t in normalized_tools:
+            params = t.get("parameters", {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            })
+            # Inline local $refs and strip $defs
+            if isinstance(params, dict):
+                params = _inline_local_refs(params)
+            # Gemini requires additionalProperties: false
+            if isinstance(params, dict):
+                params["additionalProperties"] = False
+
+            gemini_tools.append({
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "parametersJsonSchema": params,
+            })
+
+    # Map tool_choice to Gemini functionCallingConfig mode
+    gemini_tool_config: Optional[Dict[str, Any]] = None
+    if isinstance(normalized_choice, str):
+        mode_map = {
+            "auto": "AUTO",
+            "required": "ANY",
+            "none": "NONE",
+        }
+        mode = mode_map.get(normalized_choice)
+        if mode:
+            gemini_tool_config = {
+                "functionCallingConfig": {"mode": mode},
+            }
+    elif isinstance(normalized_choice, dict) and normalized_choice.get("name"):
+        gemini_tool_config = {
+            "functionCallingConfig": {
+                "mode": "ANY",
+                "allowedFunctionNames": [normalized_choice["name"]],
+            },
+        }
+
+    return gemini_tools, gemini_tool_config
+
+
 def coerce_tool_choice_to_string(tool_choice: ToolChoice, default: str = "auto") -> Optional[str]:
     """
     For providers that only accept string tool_choice, convert dict/directives to a string.

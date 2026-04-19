@@ -106,9 +106,11 @@ def _register_builtin_adapters() -> None:
     """
     from magic_llm.agent.adapters.openai_adapter import OpenAIToolAdapter
     from magic_llm.agent.adapters.anthropic_adapter import AnthropicToolAdapter
+    from magic_llm.agent.adapters.gemini_adapter import GeminiToolAdapter
 
     ToolAdapterFactory.register("openai", OpenAIToolAdapter)
     ToolAdapterFactory.register("anthropic", AnthropicToolAdapter)
+    ToolAdapterFactory.register("google", GeminiToolAdapter)
 
     # OpenAI-compatible providers (all use OpenAIToolAdapter)
     for provider in (
@@ -131,8 +133,8 @@ def _register_builtin_adapters() -> None:
     ):
         ToolAdapterFactory.register(provider, OpenAIToolAdapter)
 
-    # NOTE: "google" and "amazon" are NOT registered — they fall back to
-    # OpenAIToolAdapter. GeminiToolAdapter and BedrockToolAdapter are OUT OF SCOPE.
+    # NOTE: "amazon" is NOT registered — it falls back to
+    # OpenAIToolAdapter. BedrockToolAdapter is OUT OF SCOPE.
 
 
 # Auto-register adapters on import
