@@ -8,8 +8,9 @@ if TYPE_CHECKING:
     from magic_llm.model.ModelChatResponse import ModelChatResponse
     from magic_llm.model.ModelChatStream import ChatCompletionModel
     from magic_llm.util.agentic import ToolSpec
-    from magic_llm.agent.types import AgentBudget
+    from magic_llm.agent.types import AgentBudget, TaskManifest
     from magic_llm.agent.hooks import AgentHooks
+    from magic_llm.agent.task_executor import TaskExecutor
 
 __version__ = '0.1.28-dev1'
 
@@ -29,6 +30,49 @@ class MagicLLM(MagicLlmBase):
                          private_key=private_key,
                          callback=callback,
                          **kwargs)
+        # Task executor for task/subagent registration (lazy init)
+        self._task_executor: Optional["TaskExecutor"] = None
+
+    # ─── Task/Subagent Registration API ────────────────────────────────────────
+
+    def register_task(
+        self,
+        manifest: "TaskManifest",
+        callable: Callable[..., Any],
+    ) -> None:
+        """Register a task/subagent for agent loop execution.
+
+        This is the primary API for wrappers like magic-agents to register
+        task subagents with runtime safeguards (depth, timeout, concurrency).
+
+        The registered task becomes available as a tool in subsequent
+        run_agent_async() calls when the internal TaskExecutor is used.
+
+        Args:
+            manifest: TaskManifest with policy (id, timeout, concurrency, depth).
+            callable: Async callable to execute (graph-side implementation).
+
+        Example:
+            >>> client = MagicLLM(engine="openai", model="gpt-4")
+            >>> from magic_llm.agent.types import TaskManifest
+            >>> manifest = TaskManifest(
+            ...     id="web_search",
+            ...     name="Web Search",
+            ...     description="Search the web",
+            ...     input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+            ...     timeout_seconds=30,
+            ...     max_concurrency=5,
+            ...     max_depth=3,
+            ... )
+            >>> async def search(query: str) -> dict:
+            ...     return {"results": [...]}
+            >>> client.register_task(manifest, search)
+            >>> # Now run_agent_async can use 'web_search' as a tool
+        """
+        if self._task_executor is None:
+            from magic_llm.agent.task_executor import TaskExecutor
+            self._task_executor = TaskExecutor()
+        self._task_executor.register_task(manifest, callable)
 
     def download_embedding_search_model(self):
         """
@@ -374,6 +418,7 @@ class MagicLLM(MagicLlmBase):
         extra_messages: Optional[List[Dict[str, Any]]] = None,
         content_separator: str = "\n\n",
         deduplicate: bool = False,
+        task_executor: Optional["TaskExecutor"] = None,
         **kwargs: Any,
     ) -> "ModelChatResponse":
         """Execute a ReAct-style agent loop asynchronously using AsyncAgentLoop.
@@ -388,6 +433,7 @@ class MagicLLM(MagicLlmBase):
         - Structured state inspection via ``.state`` property
         - Concurrency guards (RuntimeError on concurrent calls)
         - Tool deduplication (opt-in)
+        - Task subagent support via TaskExecutor (depth, timeout, concurrency)
 
         Args:
             user_input: The primary user message.
@@ -402,6 +448,8 @@ class MagicLLM(MagicLlmBase):
             extra_messages: Optional pre-existing messages.
             content_separator: String to join content between iterations.
             deduplicate: Enable tool deduplication.
+            task_executor: Optional TaskExecutor override. If None and tasks were
+                registered via register_task(), uses the internal TaskExecutor.
             **kwargs: Extra args passed to async_generate.
 
         Returns:
@@ -416,7 +464,7 @@ class MagicLLM(MagicLlmBase):
             >>> async def fetch_url(url: str) -> str:
             ...     async with aiohttp.ClientSession() as session:
             ...         async with session.get(url) as resp:
-            ...             return await resp.text()
+            ...         ...     return await resp.text()
             >>> response = await client.run_agent_async(
             ...     user_input="Fetch example.com",
             ...     tools=[fetch_url],
@@ -432,6 +480,9 @@ class MagicLLM(MagicLlmBase):
         if model is not None:
             loop_kwargs["model"] = model
 
+        # Use provided task_executor, or internal one if tasks were registered
+        executor = task_executor or self._task_executor
+
         loop = AsyncAgentLoop(
             client=self,
             tools=tools,
@@ -441,6 +492,7 @@ class MagicLLM(MagicLlmBase):
             content_separator=content_separator,
             tool_choice=tool_choice,
             deduplicate=deduplicate,
+            tool_executor=executor,
             **loop_kwargs,
         )
 

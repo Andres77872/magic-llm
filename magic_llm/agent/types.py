@@ -8,14 +8,21 @@ This module defines the foundational types used across the agent package:
 - AgentLoopError: Base exception for agent loop errors.
 - AgentBudgetExceeded: Raised when a budget constraint is violated.
 - ToolExecutionError: Raised when a tool execution fails critically.
+
+Task subagent types (for runtime contract):
+- TaskManifest: Machine-readable subagent identity, schema, and policy.
+- TaskResult: Structured output envelope with status, summary, error.
+- TaskError: Error taxonomy for task failures.
+- TaskBudget: AgentBudget extended with max_depth field.
+- TaskState: AgentState extended with task_depths for observability.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, ClassVar, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ToolResult(BaseModel):
@@ -117,6 +124,117 @@ class AgentState:
     total_output_tokens: int = 0
     executed_fingerprints: set[str] = field(default_factory=set)
     start_time: Optional[float] = None
+
+
+# ─── Task Subagent Runtime Contract Types ─────────────────────────────────────
+
+
+class TaskManifest(BaseModel):
+    """Runtime manifest for task/subagent execution.
+
+    Passed to MagicLLM.register_task() by wrappers like magic-agents.
+    Contains only fields needed for execution safeguards (runtime subset).
+
+    This is distinct from SubagentManifest in magic-agents, which contains
+    YAML-specific fields like apiVersion, kind, source_file.
+
+    Attributes:
+        id: Stable registry ID (matches tool name).
+        name: Human-readable name for display/logging.
+        description: When-to-use summary for routing.
+        input_schema: JSON Schema for input validation.
+        timeout_seconds: Per-task timeout (default: 30s).
+        max_concurrency: Concurrent instances allowed (default: 5).
+        max_depth: Recursion depth limit (default: 3).
+    """
+
+    id: str = Field(..., pattern=r'^[a-z0-9._-]+$')
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    timeout_seconds: int = Field(default=30, ge=1, le=600)
+    max_concurrency: int = Field(default=5, ge=1, le=20)
+    max_depth: int = Field(default=3, ge=1, le=10)
+
+
+class TaskError(BaseModel):
+    """Structured error representation for TaskResult.
+
+    Every task failure produces explicit classification.
+    Never silently swallow exceptions.
+
+    Attributes:
+        error_type: Classification constant (ValidationError, TimeoutError, etc.).
+        message: Human-readable error description.
+        retryable: Whether retry might succeed (default: False).
+    """
+
+    error_type: str
+    message: str
+    retryable: bool = False
+
+    # Classification constants (ClassVar for Pydantic compatibility)
+    VALIDATION: ClassVar[str] = "ValidationError"
+    TIMEOUT: ClassVar[str] = "TimeoutError"
+    EXECUTION: ClassVar[str] = "ExecutionError"
+    DEPTH_LIMIT: ClassVar[str] = "DepthLimitError"
+
+
+class TaskResult(BaseModel):
+    """Structured output envelope for task/subagent execution.
+
+    Main return surface is plain-text Markdown summary.
+    Serialized as ToolResult.content for parent LLM injection.
+
+    Attributes:
+        task_id: Unique invocation ID (UUID-like).
+        task_type: Matches TaskManifest.id for correlation.
+        status: Execution outcome (ok, failed, timeout, cancelled).
+        summary: Plain-text Markdown for parent LLM consumption.
+        error: Optional TaskError when status != "ok".
+    """
+
+    task_id: str
+    task_type: str
+    status: Literal["ok", "failed", "timeout", "cancelled"]
+    summary: str
+    error: Optional[TaskError] = None
+
+    def to_tool_result_json(self) -> str:
+        """Serialize for ToolResult.content injection.
+
+        Returns minimal JSON with summary as primary field.
+        Parent LLM receives summary directly in role="tool" message.
+        """
+        return self.model_dump_json(exclude_none=True)
+
+
+@dataclass
+class TaskBudget(AgentBudget):
+    """AgentBudget extended with task-specific limits.
+
+    Attributes:
+        max_depth: Global depth cap for all tasks (default: 10).
+    """
+
+    max_depth: int = 10
+
+
+@dataclass
+class TaskState(AgentState):
+    """AgentState extended with task depth tracking.
+
+    NOTE: ContextVar is used for async task isolation.
+    TaskState.task_depths is for observability/debugging only.
+
+    Attributes:
+        task_depths: Dict of task_id -> current depth (observability).
+    """
+
+    task_depths: dict[str, int] = field(default_factory=dict)
+
+
+# ─── Exceptions ───────────────────────────────────────────────────────────────
 
 
 class AgentLoopError(Exception):
