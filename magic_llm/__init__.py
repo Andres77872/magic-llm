@@ -1,5 +1,6 @@
 import logging
 import warnings
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Union
 
 from magic_llm.base import MagicLlmBase
@@ -11,8 +12,11 @@ if TYPE_CHECKING:
     from magic_llm.agent.types import AgentBudget, TaskManifest
     from magic_llm.agent.hooks import AgentHooks
     from magic_llm.agent.task_executor import TaskExecutor
+    from magic_llm.agent.registry import SubagentRegistry
+    from magic_llm.agent.bundle import SubagentBundle
+    from magic_llm.agent.definitions import SubagentManifest
 
-__version__ = '0.1.28-dev1'
+__version__ = '0.1.28'  # Subagent architecture complete (definitions/loader/registry/binder/bundle/decorator/config)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,8 @@ class MagicLLM(MagicLlmBase):
                          **kwargs)
         # Task executor for task/subagent registration (lazy init)
         self._task_executor: Optional["TaskExecutor"] = None
+        # Instance-scoped subagent registry (NO GLOBAL STATE)
+        self._subagent_registry: Optional["SubagentRegistry"] = None
 
     # ─── Task/Subagent Registration API ────────────────────────────────────────
 
@@ -73,6 +79,141 @@ class MagicLLM(MagicLlmBase):
             from magic_llm.agent.task_executor import TaskExecutor
             self._task_executor = TaskExecutor()
         self._task_executor.register_task(manifest, callable)
+
+    # ─── Unified Subagent Loading API ────────────────────────────────────────
+
+    async def load_subagents(
+        self,
+        manifest_dir: Path,
+        code_registry: Optional[Dict[str, Callable]] = None,
+    ) -> "SubagentBundle":
+        """Unified entrypoint for subagent loading.
+
+        Orchestrates complete subagent lifecycle:
+        1. Discovery: ManifestLoader.load_all(manifest_dir)
+        2. Binding: Binder.join() for each manifest + callable
+        3. Registration: TaskExecutor.register_task() with safeguards
+
+        magic-llm is repo-agnostic — caller passes explicit manifest_dir.
+        NO global state — registry is instance-scoped.
+
+        Args:
+            manifest_dir: Directory containing *.agent.yaml files (explicit path).
+            code_registry: Dict populated by @subagent decorator (optional).
+
+        Returns:
+            SubagentBundle with schemas for agent loop injection.
+
+        Example:
+            >>> client = MagicLLM(engine="openai", model="gpt-4")
+            >>> code_registry = {}
+            >>>
+            >>> @subagent("research.web", registry=code_registry)
+            >>> async def research_web(query: str) -> str:
+            >>>     return execute_agent_loop(...)
+            >>>
+            >>> bundle = await client.load_subagents(
+            >>>     manifest_dir=Path("subagents"),
+            >>>     code_registry=code_registry
+            >>> )
+            >>> # Now run_agent_async can use registered subagents
+        """
+        from magic_llm.agent.config import is_subagents_enabled
+        from magic_llm.agent.registry import SubagentRegistry
+        from magic_llm.agent.loader import ManifestLoader
+        from magic_llm.agent.binder import Binder
+        from magic_llm.agent.bundle import SubagentBundle
+        from magic_llm.agent.types import TaskManifest
+
+        # Check feature flag at repo-level
+        if not is_subagents_enabled():
+            logger.debug("Subagents feature disabled at repo-level — returning empty bundle")
+            return SubagentBundle()
+
+        # Initialize instance-scoped registry (NO GLOBAL STATE)
+        if self._subagent_registry is None:
+            self._subagent_registry = SubagentRegistry()
+
+        registry = self._subagent_registry
+
+        # 1. Discovery: load manifests from explicit directory
+        loader = ManifestLoader(manifest_dir)
+        manifests = await loader.load_all()
+
+        # 2. Register manifests
+        for manifest in manifests:
+            registry.register_manifest(manifest)
+
+        # 3. Register callables from code_registry dict
+        if code_registry:
+            for agent_id, callable in code_registry.items():
+                registry.register_callable(agent_id, callable)
+
+        # 4. Bind and register with TaskExecutor
+        registered_count = 0
+        for manifest in registry.list_manifests():
+            callable = registry.get_callable(manifest.id)
+            if callable is None:
+                logger.warning(f"No callable for manifest '{manifest.id}'")
+                continue
+
+            # Bind (signature validation)
+            bound_manifest, bound_callable = Binder.join(manifest, callable)
+
+            # Convert to runtime manifest
+            task_manifest = self._to_task_manifest(bound_manifest)
+
+            # Register with TaskExecutor (creates semaphore, wraps callable)
+            self.register_task(task_manifest, bound_callable)
+            registered_count += 1
+
+        registry.mark_initialized()
+
+        # 5. Build bundle for agent loop
+        bundle = SubagentBundle.from_registry(registry)
+
+        logger.info(
+            f"Loaded {registered_count} subagents from {manifest_dir} "
+            f"(bundle has {bundle.registered_count} ready for injection)"
+        )
+
+        return bundle
+
+    def _to_task_manifest(
+        self,
+        subagent_manifest: "SubagentManifest"
+    ) -> "TaskManifest":
+        """Convert SubagentManifest to TaskManifest for runtime.
+
+        Excludes YAML-specific fields (apiVersion, kind, version, source_file).
+        TaskManifest is the runtime subset used by TaskExecutor.
+
+        Args:
+            subagent_manifest: SubagentManifest from YAML discovery.
+
+        Returns:
+            TaskManifest for TaskExecutor.register_task().
+        """
+        from magic_llm.agent.types import TaskManifest
+
+        return TaskManifest(
+            id=subagent_manifest.id,
+            name=subagent_manifest.name,
+            description=subagent_manifest.description,
+            input_schema=subagent_manifest.input_schema,
+            timeout_seconds=subagent_manifest.timeout_seconds,
+            max_concurrency=subagent_manifest.max_concurrency,
+            max_depth=subagent_manifest.max_depth,
+        )
+
+    def reset_depths(self) -> None:
+        """Reset depth counters for new graph execution.
+
+        Called internally by TaskExecutor or externally by wrapper.
+        Depth tracking uses ContextVar for async task isolation.
+        """
+        from magic_llm.agent.task_executor import reset_depths
+        reset_depths()
 
     def download_embedding_search_model(self):
         """

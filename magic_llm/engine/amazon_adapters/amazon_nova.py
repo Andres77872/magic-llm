@@ -17,6 +17,7 @@ class ProviderAmazonNova(AmazonBaseProvider):
     """
     Provider for Amazon Bedrock Nova models.
     """
+    supports_vision: bool = True
 
     def transform_request(self, chat: ModelChat, **kwargs) -> str:
         """

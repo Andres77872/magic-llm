@@ -26,14 +26,17 @@ class ProviderAmazonMeta(AmazonBaseProvider):
         Returns:
             A JSON string containing the request body
 
+        Raises:
+            ChatException: If request contains images
+
         Note: Meta Llama models do not support image inputs.
         """
+        self._validate_vision_support(chat)
         body = json.dumps({
             "prompt": chat.generic_chat(format='llama2'),
             "max_gen_len": kwargs.get('max_gen_len', 1024),
             "temperature": kwargs.get('temperature', 0.2),
             "top_p": kwargs.get('top_p', 1),
-            # "stop_sequences": kwargs.get('stop_sequences', ["[/INST]"]),
         })
 
         return body

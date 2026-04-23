@@ -28,9 +28,13 @@ class ProviderAmazonAnthropic(AmazonBaseProvider):
         Returns:
             A JSON string containing the request body
 
+        Raises:
+            ChatException: If request contains images
+
         Note: This is for legacy Claude format via Bedrock. Image support
         would require updating to the Messages API format.
         """
+        self._validate_vision_support(chat)
         body = json.dumps({
             "prompt": chat.generic_chat(format='claude'),
             "max_tokens_to_sample": kwargs.get('max_tokens_to_sample', 1024),
@@ -38,7 +42,6 @@ class ProviderAmazonAnthropic(AmazonBaseProvider):
             "top_k": kwargs.get('top_k', 250),
             "top_p": kwargs.get('top_p', 1),
             "stop_sequences": kwargs.get('stop_sequences', ["\n\nHuman:"]),
-            # "anthropic_version": "bedrock-2023-05-31"
         })
 
         return body

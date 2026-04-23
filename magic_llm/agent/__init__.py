@@ -31,8 +31,60 @@ from magic_llm.agent.types import (
 )
 
 # Task/Subagent Runtime Components
-from magic_llm.agent.task_executor import TaskExecutor
+from magic_llm.agent.task_executor import TaskExecutor, reset_depths
 from magic_llm.agent.normalizer import ResultNormalizer
+
+# ─── Subagent Architecture (magic-llm owns ALL) ──────────────────────────────
+
+# Definitions (YAML manifest model)
+from magic_llm.agent.definitions import (
+    SubagentManifest,
+    BoundSubagent,
+)
+
+# Loader (YAML discovery)
+from magic_llm.agent.loader import (
+    ManifestLoader,
+    ManifestLoadError,
+)
+
+# Registry (instance-scoped, NO global state)
+from magic_llm.agent.registry import (
+    SubagentRegistry,
+    RegistryBackend,
+)
+
+# Binder (manifest + callable joiner)
+from magic_llm.agent.binder import Binder
+
+# Bundle (schema/callable container)
+from magic_llm.agent.bundle import SubagentBundle
+
+# Decorator (explicit registry dict, NO global state)
+from magic_llm.agent.decorator import (
+    subagent,
+    register_callable,
+)
+
+# Config (repo-level flags and defaults)
+from magic_llm.agent.config import (
+    is_subagents_enabled,
+    enable_subagents,
+    disable_subagents,
+    ENABLE_SUBAGENTS,
+    MAX_SUMMARY_LENGTH,
+    DEFAULT_TIMEOUT_SECONDS,
+    DEFAULT_MAX_CONCURRENCY,
+    DEFAULT_MAX_DEPTH,
+)
+
+# Errors (registration/validation/lookup errors)
+from magic_llm.agent.errors import (
+    DuplicateSubagentError,
+    SubagentValidationError,
+    BinderValidationError,
+    UnknownSubagentError,
+)
 
 __all__ = [
     # Builtin tools
@@ -50,4 +102,36 @@ __all__ = [
     # Task/Subagent Runtime Components
     "TaskExecutor",
     "ResultNormalizer",
+    "reset_depths",
+    # ─── Subagent Architecture (magic-llm owns ALL) ───
+    # Definitions
+    "SubagentManifest",
+    "BoundSubagent",
+    # Loader
+    "ManifestLoader",
+    "ManifestLoadError",
+    # Registry
+    "SubagentRegistry",
+    "RegistryBackend",
+    # Binder
+    "Binder",
+    # Bundle
+    "SubagentBundle",
+    # Decorator
+    "subagent",
+    "register_callable",
+    # Config
+    "is_subagents_enabled",
+    "enable_subagents",
+    "disable_subagents",
+    "ENABLE_SUBAGENTS",
+    "MAX_SUMMARY_LENGTH",
+    "DEFAULT_TIMEOUT_SECONDS",
+    "DEFAULT_MAX_CONCURRENCY",
+    "DEFAULT_MAX_DEPTH",
+    # Errors
+    "DuplicateSubagentError",
+    "SubagentValidationError",
+    "BinderValidationError",
+    "UnknownSubagentError",
 ]

@@ -28,8 +28,12 @@ class ProviderAmazonTitan(AmazonBaseProvider):
         Returns:
             A JSON string containing the request body
 
+        Raises:
+            ChatException: If request contains images
+
         Note: Titan models do not support image inputs.
         """
+        self._validate_vision_support(chat)
         body = json.dumps({
             "inputText": chat.generic_chat(format='titan'),
             "textGenerationConfig": {

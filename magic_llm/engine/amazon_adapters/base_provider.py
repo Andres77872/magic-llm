@@ -3,11 +3,25 @@ import time
 from abc import ABC, abstractmethod
 from typing import Dict, Tuple, Optional, Any
 
+from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
 
+def _has_image_content(messages: list[dict]) -> bool:
+    """Check if any message contains image content."""
+    for msg in messages:
+        content = msg.get('content')
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get('type') == 'image_url':
+                    return True
+    return False
+
+
 class AmazonBaseProvider(ABC):
+    supports_vision: bool = False
+    
     def __init__(self,
                  aws_access_key_id: Optional[str] = None,
                  aws_secret_access_key: Optional[str] = None,
@@ -21,8 +35,6 @@ class AmazonBaseProvider(ABC):
         self.service_name = service_name
         self.model = model
         self.kwargs = kwargs
-        # No boto3/aioboto3 clients — raw HTTP + SigV4 signing is used by EngineAmazon
-        # Credentials may be resolved from ambient IAM chain at request time
 
     # ═══════════════════════════════════════════════════════════════════
     # TRANSFORMATION METHODS (Provider-specific, must be implemented)
@@ -40,10 +52,29 @@ class AmazonBaseProvider(ABC):
         Returns:
             A JSON string containing the request body
 
+        Raises:
+            ChatException: If request contains images but provider doesn't support vision
+
         Note: Image support varies by Amazon Bedrock model. Override this
         method in subclasses to handle images for models that support them.
+        Subclasses should call _validate_vision_support(chat) before processing.
         """
         pass
+
+    def _validate_vision_support(self, chat: ModelChat) -> None:
+        """
+        Validate that provider supports images if the chat contains them.
+        
+        Raises:
+            ChatException: If request contains images but provider doesn't support vision
+        """
+        messages = chat.get_messages()
+        if _has_image_content(messages) and not self.supports_vision:
+            raise ChatException(
+                message=f"Provider '{self.__class__.__name__}' does not support image/vision inputs. "
+                        f"Model '{self.model}' cannot process images. Remove images or use a vision-capable model.",
+                error_code='VISION_NOT_SUPPORTED'
+            )
 
     @abstractmethod
     def transform_response(self, response: dict) -> ModelChatResponse:
