@@ -619,6 +619,59 @@ class TestAsyncAgentLoopToolFunctions:
 
         asyncio.run(run_and_check())
 
+    def test_async_run_schema_name_mismatch_returns_unknown_tool_error(self):
+        """Schema function.name mismatch with tool_functions key produces UnknownToolError."""
+        tool_spec = {
+            "type": "function",
+            "function": {
+                "name": "schema_tool_name",
+                "description": "A tool",
+                "parameters": {"type": "object", "properties": {"q": {"type": "string"}}},
+            },
+        }
+        client = MagicMock()
+        client.llm = MagicMock()
+        tc = _make_tool_call(name="schema_tool_name", arguments='{"q":"test"}')
+
+        client.llm.async_generate = AsyncMock(
+            side_effect=[
+                _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls"),
+                _make_response(content="handled error", finish_reason="stop"),
+            ]
+        )
+
+        tool_calls = [CanonicalToolCall(id="call_1", name="schema_tool_name", arguments={"q": "test"})]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
+        adapter.is_finished.side_effect = [False, True]
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        def different_key_callable(q):
+            return {"results": [q]}
+
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[tool_spec],
+            tool_functions={"different_key": different_key_callable},
+            adapter=adapter,
+        )
+
+        async def run_and_check():
+            response = await loop.run("test mismatch")
+            assert response.content == "handled error"
+            serialize_call = adapter.serialize_tool_results.call_args
+            results = serialize_call[0][0]
+            assert len(results) == 1
+            assert results[0].is_error is True
+            assert "Unknown tool" in results[0].error
+            assert results[0].name == "schema_tool_name"
+
+        asyncio.run(run_and_check())
+
 
 # ─── Slice 12: AsyncAgentLoop.stream()
 
@@ -685,6 +738,54 @@ class TestAsyncAgentLoopStream:
             assert len(result) == 5
             for i, chunk in enumerate(result):
                 assert chunk.id == f"chunk-{i}"
+
+        asyncio.run(collect_and_check())
+
+    def test_async_stream_uses_initial_chat_multimodal_content(self):
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        captured = {}
+        chunk = ChatCompletionModel(
+            id="chunk-mm",
+            model="test-model",
+            choices=[
+                ChoiceModel(
+                    index=0,
+                    delta=DeltaModel(content="done"),
+                    finish_reason="stop",
+                )
+            ],
+        )
+
+        async def async_gen(chat, **kwargs):
+            captured["chat_messages"] = chat.messages
+            yield chunk
+
+        client.llm.async_stream_generate = async_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+
+        initial_chat = ModelChat(system="sys")
+        initial_chat.add_user_message(
+            "Describe this image",
+            image=["data:image/png;base64,abc"],
+        )
+
+        async def collect_and_check():
+            result = []
+            async for stream_chunk in loop.stream(initial_chat=initial_chat):
+                result.append(stream_chunk)
+
+            assert len(result) == 1
+            sent_messages = captured["chat_messages"]
+            assert sent_messages[0]["role"] == "system"
+            assert sent_messages[1]["role"] == "user"
+            assert isinstance(sent_messages[1]["content"], list)
+            assert sent_messages[1]["content"][1]["type"] == "image_url"
+            assert initial_chat.messages[0]["content"] == "sys"
 
         asyncio.run(collect_and_check())
 
@@ -823,3 +924,19 @@ class TestAsyncAgentLoopState:
 
         sync_state.step = 100
         assert async_state.step != 100
+
+
+class TestBuildInitialChatInitialChat:
+    def test_build_initial_chat_clones_initial_chat(self):
+        initial_chat = ModelChat(system="sys")
+        initial_chat.add_user_message(
+            "Describe this image",
+            image=["data:image/png;base64,abc"],
+        )
+
+        cloned = _build_initial_chat(initial_chat=initial_chat)
+
+        assert cloned is not initial_chat
+        assert cloned.messages == initial_chat.messages
+        cloned.messages[0]["content"] = "mutated"
+        assert initial_chat.messages[0]["content"] == "sys"

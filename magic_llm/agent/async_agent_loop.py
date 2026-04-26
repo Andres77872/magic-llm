@@ -36,6 +36,9 @@ from magic_llm.agent._loop_shared import (
     _finalize_response,
     _invoke_hook_safely,
     _register_tools_with_executor,
+    # Parent context ContextVars for nested LLM node execution
+    PARENT_BUDGET,
+    PARENT_STATE,
 )
 
 
@@ -146,9 +149,10 @@ class AsyncAgentLoop:
 
     async def run(
         self,
-        user_input: str,
+        user_input: Optional[str] = None,
         system_prompt: Optional[str] = None,
         extra_messages: Optional[list[dict[str, Any]]] = None,
+        initial_chat: Optional[ModelChat] = None,
     ) -> ModelChatResponse:
         """Execute the full ReAct loop asynchronously.
 
@@ -164,6 +168,7 @@ class AsyncAgentLoop:
             user_input: The primary user message.
             system_prompt: Optional system prompt.
             extra_messages: Optional list of message dicts before user_input.
+            initial_chat: Optional prebuilt chat to use directly.
 
         Returns:
             The final ModelChatResponse with concatenated content.
@@ -177,6 +182,7 @@ class AsyncAgentLoop:
             user_input=user_input,
             system_prompt=system_prompt,
             extra_messages=extra_messages,
+            initial_chat=initial_chat,
         )
 
         # Register tools
@@ -196,6 +202,12 @@ class AsyncAgentLoop:
             step=0,
             start_time=time.monotonic(),
         )
+
+        # Set parent budget/state ContextVars for nested LLM node execution
+        # Child tasks can read these via PARENT_BUDGET.get() and PARENT_STATE.get()
+        # Capture tokens for cleanup in finally block (prevent cross-run contamination)
+        parent_budget_token = PARENT_BUDGET.set(self._budget)
+        parent_state_token = PARENT_STATE.set(self._state)
 
         collected_content: list[str] = []
         response: Optional[ModelChatResponse] = None
@@ -312,6 +324,10 @@ class AsyncAgentLoop:
 
         finally:
             self._release_lock()
+            # Reset parent budget/state ContextVars (prevent cross-run contamination)
+            # Use tokens captured at set() to restore previous values
+            PARENT_BUDGET.reset(parent_budget_token)
+            PARENT_STATE.reset(parent_state_token)
 
         # Finalize response
         if response is not None:
@@ -331,9 +347,10 @@ class AsyncAgentLoop:
 
     async def stream(
         self,
-        user_input: str,
+        user_input: Optional[str] = None,
         system_prompt: Optional[str] = None,
         extra_messages: Optional[list[dict[str, Any]]] = None,
+        initial_chat: Optional[ModelChat] = None,
     ) -> AsyncIterator[ChatCompletionModel]:
         """Stream chunks from the LLM asynchronously, executing tools between iterations.
 
@@ -343,6 +360,7 @@ class AsyncAgentLoop:
             user_input: The primary user message.
             system_prompt: Optional system prompt.
             extra_messages: Optional list of message dicts before user_input.
+            initial_chat: Optional prebuilt chat to use directly.
 
         Yields:
             ChatCompletionModel chunks from the streaming LLM.
@@ -356,6 +374,7 @@ class AsyncAgentLoop:
             user_input=user_input,
             system_prompt=system_prompt,
             extra_messages=extra_messages,
+            initial_chat=initial_chat,
         )
 
         # Register tools
@@ -375,6 +394,12 @@ class AsyncAgentLoop:
             step=0,
             start_time=time.monotonic(),
         )
+
+        # Set parent budget/state ContextVars for nested LLM node execution
+        # Child tasks can read these via PARENT_BUDGET.get() and PARENT_STATE.get()
+        # Capture tokens for cleanup in finally block (prevent cross-run contamination)
+        parent_budget_token = PARENT_BUDGET.set(self._budget)
+        parent_state_token = PARENT_STATE.set(self._state)
 
         # Acquire concurrency guard
         self._acquire_lock()
@@ -566,3 +591,7 @@ class AsyncAgentLoop:
 
         finally:
             self._release_lock()
+            # Reset parent budget/state ContextVars (prevent cross-run contamination)
+            # Use tokens captured at set() to restore previous values
+            PARENT_BUDGET.reset(parent_budget_token)
+            PARENT_STATE.reset(parent_state_token)

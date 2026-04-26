@@ -404,11 +404,16 @@ class EngineAnthropic(BaseChat):
             default=claude_response.get('stop_reason')
         )
 
-        # Create usage model
+        # Create usage model (include cache tokens for accurate accounting)
+        usage_meta = claude_response['usage']
+        cache_read = usage_meta.get('cache_read_input_tokens', 0)
+        cache_creation = usage_meta.get('cache_creation_input_tokens', 0)
+        prompt_tokens = usage_meta['input_tokens'] + cache_read + cache_creation
         usage = UsageModel(
-            prompt_tokens=claude_response['usage']['input_tokens'],
-            completion_tokens=claude_response['usage']['output_tokens'],
-            total_tokens=claude_response['usage']['input_tokens'] + claude_response['usage']['output_tokens'],
+            prompt_tokens=prompt_tokens,
+            completion_tokens=usage_meta['output_tokens'],
+            total_tokens=prompt_tokens + usage_meta['output_tokens'],
+            prompt_tokens_details=PromptTokensDetailsModel(cached_tokens=cache_read),
         )
 
         # Build standardized response

@@ -6,6 +6,15 @@ Handles BOTH task tools AND ordinary tools via routing:
 - If NO: delegate to super().execute_async() (ordinary tool behavior)
 
 This design enables ONE executor injection point with automatic fallback.
+
+Nested LLM Node Support:
+When a task manifest contains nested_tools, the wrapped callable instantiates
+a child AsyncAgentLoop instead of invoking the provided callable. The child
+loop runs to completion (buffered), returning a TaskResult JSON string.
+
+Global depth tracking (GLOBAL_DEPTH) prevents unbounded nesting across
+different task IDs. Per-task depth tracking (TASK_DEPTH) continues for
+observability/debugging.
 """
 from __future__ import annotations
 
@@ -18,6 +27,9 @@ import uuid
 from typing import Any, Callable, Optional
 
 from magic_llm.agent.types import (
+    AgentBudget,
+    AgentBudgetExceeded,
+    AgentState,
     CanonicalToolCall,
     TaskError,
     TaskManifest,
@@ -26,6 +38,25 @@ from magic_llm.agent.types import (
 )
 from magic_llm.agent.tool_executor import ToolExecutor
 from magic_llm.agent.normalizer import ResultNormalizer
+
+# Global depth helpers and budget cascade helper
+from magic_llm.agent._loop_shared import (
+    GLOBAL_DEPTH,
+    PARENT_BUDGET,
+    PARENT_STATE,
+    get_global_depth,
+    increment_global_depth,
+    decrement_global_depth,
+    reset_global_depth,
+    _compute_child_budget,
+    _register_tools_with_executor,
+)
+
+# Config for nested LLM node feature flag and depth cap
+from magic_llm.agent.config import (
+    MAX_GLOBAL_DEPTH,
+    is_nested_llm_nodes_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,17 +81,27 @@ class TaskExecutor(ToolExecutor):
     making it seamless for AsyncAgentLoop to use task subagents alongside
     regular tools (MCP, Fetch, etc.).
 
+    Nested LLM Node Support:
+        When a task manifest contains nested_tools, the wrapped callable
+        instantiates a child AsyncAgentLoop using the provided client reference.
+        The child uses the same MagicLLM instance with optional model override.
+
     Args:
+        client: Optional MagicLLM client instance for nested LLM node execution.
+            Required when tasks have nested_tools config.
         per_tool_timeout: Default timeout for ordinary tools (default: 30.0).
         enable_dedup: Enable fingerprint-based deduplication (default: False).
     """
 
     def __init__(
         self,
+        client: Optional[Any] = None,
         per_tool_timeout: float = 30.0,
         enable_dedup: bool = False,
     ) -> None:
         super().__init__(per_tool_timeout=per_tool_timeout, enable_dedup=enable_dedup)
+        # Client reference for nested LLM node execution (same MagicLLM instance reuse)
+        self._client = client
         # Task-specific registry (manifest + wrapped callable)
         self._task_registry: dict[str, TaskManifest] = {}
         # Per-task semaphores for concurrency control
@@ -164,22 +205,26 @@ class TaskExecutor(ToolExecutor):
         manifest: TaskManifest,
         callable: Callable[..., Any],
     ) -> Callable[..., Any]:
-        """Wrap callable with safeguards.
+        """Wrap callable with safeguards and optional nested LLM node support.
 
         Safeguards (in order):
             1. Generate unique task_id
-            2. Validate input against manifest.input_schema (optional, soft validation)
-            3. Check depth limit (ContextVar) — return early if exceeded
+            2. Check GLOBAL_DEPTH limit (safety cap for unbounded nesting)
+            3. Check TASK_DEPTH limit (per-task-id depth tracking)
             4. Acquire semaphore
-            5. Increment depth
+            5. Increment both depth counters
             6. Apply timeout wrapper
-            7. Execute callable
+            7. Execute: nested_tools → child AsyncAgentLoop, else → callable
             8. Normalize result via ResultNormalizer
-            9. Decrement depth (finally)
+            9. Decrement both depth counters (finally)
             10. Release semaphore (finally)
 
+        Nested LLM Node Detection:
+            - If manifest.nested_tools is provided AND feature enabled → child AsyncAgentLoop
+            - If manifest.nested_tools is None OR feature disabled → legacy callable
+
         Args:
-            manifest: TaskManifest with policy.
+            manifest: TaskManifest with policy and optional nested config.
             callable: Async callable from wrapper (graph-side implementation).
 
         Returns:
@@ -189,8 +234,8 @@ class TaskExecutor(ToolExecutor):
         async def wrapped(**kwargs: Any) -> str:
             task_id = uuid.uuid4().hex[:8]
 
-            # Step 1: Check depth limit BEFORE acquiring semaphore
-            # This prevents deadlock when depth is exceeded
+            # Step 1: Check TASK_DEPTH limit (per-task-id depth tracking)
+            # This prevents recursion for a specific task ID (applies to ALL tasks)
             current_depth = _get_depth(manifest.id)
             if current_depth >= manifest.max_depth:
                 result = TaskResult(
@@ -210,19 +255,65 @@ class TaskExecutor(ToolExecutor):
                 )
                 return result.to_tool_result_json()
 
-            # Step 2: Acquire semaphore (queues if limit reached)
+            # Step 2: Check GLOBAL_DEPTH limit for nested LLM nodes only
+            # This prevents runaway nesting across different task IDs
+            # Legacy tasks (nested_tools=None) are NOT subject to global depth check
+            if manifest.nested_tools is not None:
+                current_global_depth = get_global_depth()
+                if current_global_depth >= MAX_GLOBAL_DEPTH:
+                    result = TaskResult(
+                        task_id=task_id,
+                        task_type=manifest.id,
+                        status="cancelled",
+                        summary=(
+                            f"## Task Cancelled\n\n"
+                            f"Global depth limit exceeded.\n\n"
+                            f"Current global depth: {current_global_depth}, max allowed: {MAX_GLOBAL_DEPTH}"
+                        ),
+                        error=TaskError(
+                            error_type=TaskError.DEPTH_LIMIT,
+                            message=f"Global depth {current_global_depth} >= MAX_GLOBAL_DEPTH {MAX_GLOBAL_DEPTH}",
+                            retryable=False,
+                        ),
+                    )
+                    return result.to_tool_result_json()
+
+            # Step 3: Acquire semaphore (queues if limit reached)
             async with self._task_semaphores[manifest.id]:
-                # Step 3: Increment depth (before execution)
+                # Step 4: Increment depth counters (before execution)
+                # NOTE: GLOBAL_DEPTH only increments for nested LLM nodes
+                # Legacy tasks (nested_tools=None) use per-task depth only (backward compatibility)
+                if manifest.nested_tools is not None:
+                    increment_global_depth()
                 _increment_depth(manifest.id)
 
                 try:
-                    # Step 4: Apply timeout and execute
-                    raw_output = await asyncio.wait_for(
-                        callable(**kwargs),
-                        timeout=manifest.timeout_seconds,
-                    )
+                    # Step 5: Detect nested LLM node configuration
+                    if manifest.nested_tools is not None and is_nested_llm_nodes_enabled():
+                        # Nested LLM node: instantiate child AsyncAgentLoop
+                        raw_output = await self._execute_nested_llm_node(
+                            manifest=manifest,
+                            kwargs=kwargs,
+                            task_id=task_id,
+                        )
+                    elif manifest.nested_tools is not None and not is_nested_llm_nodes_enabled():
+                        # Feature disabled: log warning and fall back to legacy callable
+                        logger.warning(
+                            f"Task '{manifest.id}' has nested_tools config but "
+                            f"ENABLE_NESTED_LLM_NODES=False. Falling back to legacy callable."
+                        )
+                        raw_output = await asyncio.wait_for(
+                            callable(**kwargs),
+                            timeout=manifest.timeout_seconds,
+                        )
+                    else:
+                        # Legacy callable pattern (no nested config)
+                        raw_output = await asyncio.wait_for(
+                            callable(**kwargs),
+                            timeout=manifest.timeout_seconds,
+                        )
 
-                    # Step 5: Normalize result
+                    # Step 6: Normalize result
                     result = ResultNormalizer.normalize(
                         raw_output=raw_output,
                         manifest=manifest,
@@ -243,6 +334,24 @@ class TaskExecutor(ToolExecutor):
                             error_type=TaskError.TIMEOUT,
                             message=f"Timeout after {manifest.timeout_seconds}s",
                             retryable=True,
+                        ),
+                    )
+
+                except AgentBudgetExceeded as exc:
+                    # Budget exceeded (from child loop or callable)
+                    result = TaskResult(
+                        task_id=task_id,
+                        task_type=manifest.id,
+                        status="cancelled",
+                        summary=(
+                            f"## Task Cancelled\n\n"
+                            f"Budget exceeded: {exc.budget_type}\n\n"
+                            f"Limit: {exc.limit}, current: {exc.current}"
+                        ),
+                        error=TaskError(
+                            error_type=TaskError.DEPTH_LIMIT if exc.budget_type == "max_iterations" else TaskError.EXECUTION,
+                            message=f"Budget exceeded: {exc.budget_type} limit={exc.limit}, current={exc.current}",
+                            retryable=False,
                         ),
                     )
 
@@ -281,12 +390,100 @@ class TaskExecutor(ToolExecutor):
                     )
 
                 finally:
-                    # Step 6: Decrement depth (after execution, success or failure)
+                    # Step 7: Decrement depth counters (after execution, success or failure)
+                    # NOTE: GLOBAL_DEPTH only decrements for nested LLM nodes (symmetric with increment)
+                    if manifest.nested_tools is not None:
+                        decrement_global_depth()
                     _decrement_depth(manifest.id)
 
                 return result.to_tool_result_json()
 
         return wrapped
+
+    async def _execute_nested_llm_node(
+        self,
+        manifest: TaskManifest,
+        kwargs: dict[str, Any],
+        task_id: str,
+    ) -> str:
+        """Execute a nested LLM node (child AsyncAgentLoop).
+
+        Child execution uses:
+            - Fresh ToolExecutor (isolated from parent)
+            - manifest.nested_tools (explicit, NOT inherited from parent)
+            - Child budget computed via _compute_child_budget()
+            - Same MagicLLM client with optional model override
+            - No hooks (child hooks default to none)
+
+        Buffered execution: child runs to completion, returns single result.
+
+        Args:
+            manifest: TaskManifest with nested_tools, nested_budget, nested_model_override.
+            kwargs: Arguments from parent tool call (passed as user_input to child).
+            task_id: Task invocation ID for logging.
+
+        Returns:
+            Raw output string (content from child ModelChatResponse).
+        """
+        # Import AsyncAgentLoop locally to avoid circular import at module level
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+
+        # Get parent budget/state from ContextVar for cascade computation
+        parent_budget = PARENT_BUDGET.get()
+        parent_state = PARENT_STATE.get()
+
+        # Compute child budget based on cascade policy
+        child_budget = _compute_child_budget(
+            manifest=manifest,
+            parent_budget=parent_budget,
+            parent_state=parent_state,
+        )
+
+        # Create fresh ToolExecutor for child (isolated from parent)
+        child_executor = ToolExecutor()
+
+        # Register child's own tools (explicit, NOT inherited)
+        _register_tools_with_executor(
+            executor=child_executor,
+            tools=manifest.nested_tools,
+        )
+
+        # Build kwargs for child AsyncAgentLoop
+        child_kwargs: dict[str, Any] = {
+            "client": self._client,
+            "tools": manifest.nested_tools,
+            "budget": child_budget,
+            "tool_executor": child_executor,
+            "hooks": None,  # Child hooks default to none
+        }
+
+        # Add model override if specified
+        if manifest.nested_model_override is not None:
+            child_kwargs["model"] = manifest.nested_model_override
+
+        # Instantiate child AsyncAgentLoop
+        child_loop = AsyncAgentLoop(**child_kwargs)
+
+        # Build user_input from kwargs (fallback to string representation)
+        user_input = kwargs.get("query") or kwargs.get("input") or str(kwargs)
+
+        logger.debug(
+            f"Nested LLM node '{manifest.id}' starting child loop "
+            f"(task_id={task_id}, budget={child_budget}, tools={len(manifest.nested_tools or [])})"
+        )
+
+        # Run child loop to completion (buffered)
+        child_response = await child_loop.run(user_input=user_input)
+
+        # Extract content from response
+        raw_output = child_response.content or ""
+
+        logger.debug(
+            f"Nested LLM node '{manifest.id}' completed "
+            f"(task_id={task_id}, content_length={len(raw_output)})"
+        )
+
+        return raw_output
 
     def unregister_task(self, task_id: str) -> bool:
         """Remove a registered task by ID.
@@ -380,8 +577,10 @@ def reset_depths() -> None:
     """Reset all depth counters.
 
     Used at execution start to ensure clean state.
+    Resets both TASK_DEPTH (per-task-id) and GLOBAL_DEPTH (total nesting).
     """
     TASK_DEPTH.set({})
+    reset_global_depth()
 
 
 def get_all_depths() -> dict[str, int]:

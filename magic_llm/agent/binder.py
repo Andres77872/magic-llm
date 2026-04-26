@@ -11,6 +11,7 @@ from typing import Callable, Tuple, get_type_hints
 
 from magic_llm.agent.definitions import SubagentManifest
 from magic_llm.agent.errors import SubagentValidationError, BinderValidationError
+from magic_llm.util import is_async_callable
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class Binder:
             BinderValidationError: If signature mismatches schema.
         """
         # Validate callable is async
-        if not inspect.iscoroutinefunction(callable):
+        if not is_async_callable(callable):
             raise SubagentValidationError(
                 agent_id=manifest.id,
                 message=f"Callable must be async function, got {type(callable).__name__}",

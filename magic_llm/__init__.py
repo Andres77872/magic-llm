@@ -77,7 +77,8 @@ class MagicLLM(MagicLlmBase):
         """
         if self._task_executor is None:
             from magic_llm.agent.task_executor import TaskExecutor
-            self._task_executor = TaskExecutor()
+            # Pass self (MagicLLM instance) for nested LLM node execution
+            self._task_executor = TaskExecutor(client=self)
         self._task_executor.register_task(manifest, callable)
 
     # ─── Unified Subagent Loading API ────────────────────────────────────────

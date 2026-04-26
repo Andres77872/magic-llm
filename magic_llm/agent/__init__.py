@@ -28,10 +28,25 @@ from magic_llm.agent.types import (
     TaskError,
     TaskBudget,
     TaskState,
+    AgentBudget,
+    AgentState,
 )
 
 # Task/Subagent Runtime Components
 from magic_llm.agent.task_executor import TaskExecutor, reset_depths
+
+# Global Depth Helpers (for nested LLM node depth tracking)
+from magic_llm.agent._loop_shared import (
+    GLOBAL_DEPTH,
+    PARENT_BUDGET,
+    PARENT_STATE,
+    get_global_depth,
+    increment_global_depth,
+    decrement_global_depth,
+    reset_global_depth,
+)
+
+# Result Normalizer
 from magic_llm.agent.normalizer import ResultNormalizer
 
 # ─── Subagent Architecture (magic-llm owns ALL) ──────────────────────────────
@@ -76,6 +91,12 @@ from magic_llm.agent.config import (
     DEFAULT_TIMEOUT_SECONDS,
     DEFAULT_MAX_CONCURRENCY,
     DEFAULT_MAX_DEPTH,
+    # Nested LLM node config
+    is_nested_llm_nodes_enabled,
+    enable_nested_llm_nodes,
+    disable_nested_llm_nodes,
+    ENABLE_NESTED_LLM_NODES,
+    MAX_GLOBAL_DEPTH,
 )
 
 # Errors (registration/validation/lookup errors)
@@ -99,10 +120,20 @@ __all__ = [
     "TaskError",
     "TaskBudget",
     "TaskState",
+    "AgentBudget",
+    "AgentState",
     # Task/Subagent Runtime Components
     "TaskExecutor",
     "ResultNormalizer",
     "reset_depths",
+    # Global Depth Helpers
+    "GLOBAL_DEPTH",
+    "PARENT_BUDGET",
+    "PARENT_STATE",
+    "get_global_depth",
+    "increment_global_depth",
+    "decrement_global_depth",
+    "reset_global_depth",
     # ─── Subagent Architecture (magic-llm owns ALL) ───
     # Definitions
     "SubagentManifest",
@@ -129,6 +160,12 @@ __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "DEFAULT_MAX_CONCURRENCY",
     "DEFAULT_MAX_DEPTH",
+    # Nested LLM node config
+    "is_nested_llm_nodes_enabled",
+    "enable_nested_llm_nodes",
+    "disable_nested_llm_nodes",
+    "ENABLE_NESTED_LLM_NODES",
+    "MAX_GLOBAL_DEPTH",
     # Errors
     "DuplicateSubagentError",
     "SubagentValidationError",

@@ -264,6 +264,23 @@ class TestRegisterToolsWithExecutor:
         )
         assert "search_db" not in executor._registry
 
+    def test_register_tools_with_executor_schema_name_mismatch_tool_functions_key(self):
+        """Schema function.name MUST match tool_functions dict key for resolution."""
+        tool_spec = {
+            "type": "function",
+            "function": {"name": "schema_tool_name", "description": "Search"},
+        }
+        def actual_callable(query):
+            return {"results": []}
+        executor = ToolExecutor()
+        _register_tools_with_executor(
+            executor,
+            tools=[tool_spec],
+            tool_functions={"different_key": actual_callable},
+        )
+        assert "schema_tool_name" not in executor._registry
+        assert "different_key" in executor._registry
+
 
 class TestFinalizeResponse:
     """_finalize_response concatenates content into the final response."""

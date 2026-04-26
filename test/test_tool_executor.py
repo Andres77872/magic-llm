@@ -327,3 +327,91 @@ class TestToolExecutorAsync:
         assert all(r.is_error is False for r in results)
         # Should complete in ~1s, not 3s (proves parallelism)
         assert elapsed < 2.0, f"Async parallel execution took {elapsed:.1f}s, expected <2s"
+
+    @pytest.mark.asyncio
+    async def test_execute_async_callable_instance_with_async_call(self):
+        """Callable instance with async __call__ is detected and awaited properly."""
+        executor = ToolExecutor()
+
+        class AsyncCallableInstance:
+            __name__ = "async_instance_tool"
+
+            async def __call__(self, value: str) -> dict:
+                await asyncio.sleep(0.05)
+                return {"async_instance": True, "value": value}
+
+        executor.register("async_instance_tool", AsyncCallableInstance())
+        result = await executor.execute_async(_make_call("async_instance_tool", {"value": "test"}))
+
+        assert result.is_error is False
+        parsed = json.loads(result.content)
+        assert parsed["async_instance"] is True
+        assert parsed["value"] == "test"
+
+    @pytest.mark.asyncio
+    async def test_execute_async_sync_callable_instance(self):
+        """Sync callable instance runs in executor without issues."""
+        executor = ToolExecutor()
+
+        class SyncCallableInstance:
+            __name__ = "sync_instance_tool"
+
+            def __call__(self, value: str) -> dict:
+                time.sleep(0.05)
+                return {"sync_instance": True, "value": value}
+
+        executor.register("sync_instance_tool", SyncCallableInstance())
+        result = await executor.execute_async(_make_call("sync_instance_tool", {"value": "test"}))
+
+        assert result.is_error is False
+        parsed = json.loads(result.content)
+        assert parsed["sync_instance"] is True
+        assert parsed["value"] == "test"
+
+
+class TestIsAsyncCallable:
+    """Regression tests for is_async_callable helper."""
+
+    def test_bare_async_function_detected(self):
+        """Bare async def function is detected as async callable."""
+        from magic_llm.util import is_async_callable
+
+        async def async_fn():
+            return "ok"
+
+        assert is_async_callable(async_fn) is True
+
+    def test_sync_function_not_detected(self):
+        """Sync function is not detected as async callable."""
+        from magic_llm.util import is_async_callable
+
+        def sync_fn():
+            return "ok"
+
+        assert is_async_callable(sync_fn) is False
+
+    def test_callable_instance_with_async_call_detected(self):
+        """Callable instance with async __call__ is detected as async callable."""
+        from magic_llm.util import is_async_callable
+
+        class AsyncCallable:
+            async def __call__(self):
+                return "ok"
+
+        assert is_async_callable(AsyncCallable()) is True
+
+    def test_callable_instance_with_sync_call_not_detected(self):
+        """Callable instance with sync __call__ is not detected as async callable."""
+        from magic_llm.util import is_async_callable
+
+        class SyncCallable:
+            def __call__(self):
+                return "ok"
+
+        assert is_async_callable(SyncCallable()) is False
+
+    def test_lambda_not_detected(self):
+        """Lambda is not detected as async callable."""
+        from magic_llm.util import is_async_callable
+
+        assert is_async_callable(lambda x: x) is False

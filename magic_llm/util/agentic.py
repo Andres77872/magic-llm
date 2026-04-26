@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, 
 
 from magic_llm.model.ModelChatResponse import ModelChatResponse, ToolCall, FunctionCall
 from magic_llm.model.ModelChatStream import ChatCompletionModel, DeltaModel, ChoiceModel
+from magic_llm.util import is_async_callable
 
 if TYPE_CHECKING:
     from magic_llm.model.ModelChat import ModelChat
@@ -436,7 +437,7 @@ async def run_agentic_async(
 
     Mirrors run_agentic() but:
     1. Uses `await client.llm.async_generate(...)` instead of `client.llm.generate(...)`
-    2. Supports async tool callables: `if asyncio.iscoroutinefunction(fn): result = await fn(**args)`
+    2. Supports async tool callables: `if is_async_callable(fn): result = await fn(**args)`
     3. Executes tools sequentially (parallel via asyncio.gather is a future enhancement)
 
     Args:
@@ -532,7 +533,7 @@ async def run_agentic_async(
                         + _safe_preview(parsed_args, 600)
                     )
                     # Detect async tool callables and await them
-                    if asyncio.iscoroutinefunction(fn):
+                    if is_async_callable(fn):
                         if isinstance(parsed_args, dict):
                             result = await fn(**parsed_args)
                         elif parsed_args is None or parsed_args == "":
@@ -691,7 +692,7 @@ async def run_agentic_stream_async(
             else:
                 try:
                     # Detect async tool callables and await them
-                    if asyncio.iscoroutinefunction(fn):
+                    if is_async_callable(fn):
                         if isinstance(parsed_args, dict):
                             result = await fn(**parsed_args)
                         elif parsed_args is None or parsed_args == "":

@@ -15,6 +15,17 @@ Task subagent types (for runtime contract):
 - TaskError: Error taxonomy for task failures.
 - TaskBudget: AgentBudget extended with max_depth field.
 - TaskState: AgentState extended with task_depths for observability.
+
+Global Depth API (re-exported from _loop_shared and config for public convenience):
+- GLOBAL_DEPTH: ContextVar for global nesting depth tracking.
+- MAX_GLOBAL_DEPTH: Configurable constant for maximum global depth (default: 10).
+- get_global_depth: Helper to get current global depth value.
+- increment_global_depth: Helper to increment global depth.
+- decrement_global_depth: Helper to decrement global depth.
+- reset_global_depth: Helper to reset global depth to 0.
+
+NOTE: These are RE-EXPORTS from _loop_shared and config. The actual runtime objects
+are defined there, ensuring consumers of types.py observe the same state as TaskExecutor.
 """
 
 from __future__ import annotations
@@ -146,6 +157,23 @@ class TaskManifest(BaseModel):
         timeout_seconds: Per-task timeout (default: 30s).
         max_concurrency: Concurrent instances allowed (default: 5).
         max_depth: Recursion depth limit (default: 3).
+
+    Nested LLM Node Configuration (optional):
+        nested_tools: Child's own tools (explicit list, NOT inherited from parent).
+        nested_budget: Child's token/iteration limits (independent from parent budget).
+        nested_model_override: Child's model name (else uses parent's model).
+        budget_cascade: When True, child inherits remaining parent budget; when False, child uses own budget.
+
+    Example:
+        >>> manifest = TaskManifest(
+        ...     id="research_task",
+        ...     name="Research Task",
+        ...     description="Search the web for information",
+        ...     input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        ...     nested_tools=[web_search, web_fetch],  # Child's own tools
+        ...     nested_budget=AgentBudget(max_iterations=5),
+        ...     budget_cascade=False,  # Child uses own budget
+        ... )
     """
 
     id: str = Field(..., pattern=r'^[a-z0-9._-]+$')
@@ -155,6 +183,14 @@ class TaskManifest(BaseModel):
     timeout_seconds: int = Field(default=30, ge=1, le=600)
     max_concurrency: int = Field(default=5, ge=1, le=20)
     max_depth: int = Field(default=3, ge=1, le=10)
+
+    # Nested LLM node configuration (optional)
+    # When nested_tools is provided, the task is treated as a native nested LLM node
+    # When nested_tools is None, the task behaves as a wrapped callable (current behavior)
+    nested_tools: Optional[list[Any]] = None  # Child's own tools (explicit, no inheritance)
+    nested_budget: Optional[AgentBudget] = None  # Child's token/iteration limits
+    nested_model_override: Optional[str] = None  # Child's model name (else parent model)
+    budget_cascade: bool = False  # Child inherits remaining parent budget when True
 
 
 class TaskError(BaseModel):
@@ -273,3 +309,19 @@ class ToolExecutionError(AgentLoopError):
         self.tool_name = tool_name
         self.error = error
         super().__init__(f"Tool '{tool_name}' failed: {error}")
+
+
+# ─── Global Depth API Re-Exports (from _loop_shared and config) ─────────────────
+# These are RE-EXPORTS, not new definitions. The actual runtime objects are in
+# _loop_shared.py (GLOBAL_DEPTH, helpers) and config.py (MAX_GLOBAL_DEPTH).
+# This ensures consumers of types.py observe the same state as TaskExecutor.
+
+from magic_llm.agent._loop_shared import (
+    GLOBAL_DEPTH,
+    get_global_depth,
+    increment_global_depth,
+    decrement_global_depth,
+    reset_global_depth,
+)
+
+from magic_llm.agent.config import MAX_GLOBAL_DEPTH

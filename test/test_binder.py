@@ -290,6 +290,37 @@ class TestBinderNonAsyncCallable:
         assert exc_info.value.validation_type == "signature"
         assert "async" in str(exc_info.value).lower()
 
+    def test_callable_instance_with_async_call_accepted(self):
+        """join() accepts callable instance with async __call__."""
+        manifest = _make_manifest()
+
+        class AsyncCallableInstance:
+            __name__ = "async_callable"
+
+            async def __call__(self, query: str) -> str:
+                return query
+
+        instance = AsyncCallableInstance()
+        bound_manifest, bound_callable = Binder.join(manifest, instance)
+
+        assert bound_manifest == manifest
+        assert bound_callable == instance
+
+    def test_callable_instance_with_sync_call_rejected(self):
+        """join() rejects callable instance with sync __call__."""
+        manifest = _make_manifest()
+
+        class SyncCallableInstance:
+            __name__ = "sync_callable"
+
+            def __call__(self, query: str) -> str:
+                return query
+
+        with pytest.raises(SubagentValidationError) as exc_info:
+            Binder.join(manifest, SyncCallableInstance())
+
+        assert "async" in str(exc_info.value).lower()
+
     def test_lambda_raises_error(self):
         """join() raises error for lambda (non-async)."""
         manifest = _make_manifest()

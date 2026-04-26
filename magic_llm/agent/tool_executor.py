@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from typing import Any, Callable
 
 from magic_llm.agent.types import CanonicalToolCall, ToolResult
+from magic_llm.util import is_async_callable
 
 
 class ToolExecutor:
@@ -217,7 +218,7 @@ class ToolExecutor:
             return result
 
         try:
-            if asyncio.iscoroutinefunction(fn):
+            if is_async_callable(fn):
                 output = await asyncio.wait_for(
                     fn(**tool_call.arguments), timeout=self._per_tool_timeout
                 )
