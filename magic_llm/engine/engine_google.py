@@ -3,9 +3,11 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import mimetypes
 import time
 import wave
+from typing import Dict, Any, Tuple, Optional
 from urllib.parse import urlparse
 
 from magic_llm.engine.base_chat import BaseChat
@@ -17,6 +19,16 @@ from magic_llm.model.ModelChatStream import (ChatCompletionModel,
                                              ChoiceModel,
                                              DeltaModel)
 from magic_llm.util.http import AsyncHttpClient, HttpClient
+from magic_llm.util.response_mapping import (
+    GOOGLE_FINISH_REASON_MAP,
+    map_finish_reason,
+    build_response,
+    build_stream_chunk,
+    build_tool_call,
+    build_stream_tool_call,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class EngineGoogle(BaseChat):
@@ -27,9 +39,9 @@ class EngineGoogle(BaseChat):
                  **kwargs) -> None:
         super().__init__(**kwargs)
         base = 'https://generativelanguage.googleapis.com/v1beta/models/'
-        self.url_stream = f'{base}{self.model}:streamGenerateContent?alt=sse&key={api_key}'
-        self.url = f'{base}{self.model}:generateContent?key={api_key}'
-        self.url_tts = f'{base}gemini-2.5-flash-preview-tts:generateContent?key={api_key}'
+        self.url_stream = f'{base}{self.model}:streamGenerateContent?alt=sse'
+        self.url = f'{base}{self.model}:generateContent'
+        self.url_tts = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent'
         self.api_key = api_key
 
     def prepare_data_sync(self, chat: ModelChat, **kwargs):
@@ -52,6 +64,7 @@ class EngineGoogle(BaseChat):
         # ------------------------- Headers -------------------------------- #
         headers: dict[str, str] = {
             "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
             **self.headers,
         }
 
@@ -96,10 +109,22 @@ class EngineGoogle(BaseChat):
                     mime, b64 = _http_image_to_b64(url, client)
                     return {"inline_data": {"mime_type": mime, "data": b64}}
 
+            # ---------- Already Gemini format (passthrough) -------------- #
+            if "functionResponse" in part:
+                return part
+            if "functionCall" in part:
+                return part
+            if "inline_data" in part:
+                return part
+            if "executableCode" in part:
+                return part
+            if "code_execution_result" in part:
+                return part
+
             raise ValueError(f"Unsupported part encountered: {part!r}")
 
         # ------------------------------------------------------------------ #
-        # Convert every message to the Gemini “content” structure
+        # Convert every message to the Gemini "content" structure
         # ------------------------------------------------------------------ #
         with HttpClient() as client:
             api_contents: list[dict] = []
@@ -110,6 +135,9 @@ class EngineGoogle(BaseChat):
                     parts = [{"text": raw}]
                 elif isinstance(raw, list):
                     parts = [_convert_part(p, client) for p in raw]
+                elif raw is None:
+                    # Assistant messages with only tool_calls have content=None
+                    parts = [{"text": ""}]
                 else:
                     raise ValueError(f"Unknown content type: {type(raw)!r}")
 
@@ -121,12 +149,39 @@ class EngineGoogle(BaseChat):
                 )
 
         # ----------------------- Final payload ---------------------------- #
+        # Extract tools/tool_choice BEFORE building generationConfig (they are not JSON serializable)
+        openai_tools = kwargs.pop('tools', None) or self.kwargs.get('tools', None)
+        openai_tool_choice = kwargs.pop('tool_choice', None) or self.kwargs.get('tool_choice', None)
+
         data: dict = {
             "contents": api_contents,
             "generationConfig": {**self.kwargs, **kwargs},
         }
         if preamble:
             data["systemInstruction"] = {"parts": [{"text": preamble}]}
+
+        if openai_tools is not None:
+            # Detect already-serialized Gemini tools from GeminiToolAdapter
+            # (format: [{"functionDeclarations": [...]}])
+            if (isinstance(openai_tools, list) and len(openai_tools) == 1
+                    and isinstance(openai_tools[0], dict)
+                    and "functionDeclarations" in openai_tools[0]):
+                # Already in Gemini format — pass through directly
+                data["tools"] = openai_tools
+                # Still map tool_choice if provided
+                if openai_tool_choice is not None:
+                    from magic_llm.util.tools_mapping import map_to_gemini
+                    _, gemini_tool_config = map_to_gemini(None, openai_tool_choice)
+                    if gemini_tool_config:
+                        data["toolConfig"] = gemini_tool_config
+            else:
+                # OpenAI format or raw callables — convert via map_to_gemini
+                from magic_llm.util.tools_mapping import map_to_gemini
+                gemini_tools, gemini_tool_config = map_to_gemini(openai_tools, openai_tool_choice)
+                if gemini_tools:
+                    data["tools"] = [{"functionDeclarations": gemini_tools}]
+                if gemini_tool_config:
+                    data["toolConfig"] = gemini_tool_config
 
         json_bytes = json.dumps(data).encode("utf-8")
         return json_bytes, headers, data
@@ -151,6 +206,7 @@ class EngineGoogle(BaseChat):
         # ------------------------- Headers -------------------------------- #
         headers: dict[str, str] = {
             "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
             **self.headers,
         }
 
@@ -195,10 +251,22 @@ class EngineGoogle(BaseChat):
                     mime, b64 = await _http_image_to_b64(url, client)
                     return {"inline_data": {"mime_type": mime, "data": b64}}
 
+            # ---------- Already Gemini format (passthrough) -------------- #
+            if "functionResponse" in part:
+                return part
+            if "functionCall" in part:
+                return part
+            if "inline_data" in part:
+                return part
+            if "executableCode" in part:
+                return part
+            if "code_execution_result" in part:
+                return part
+
             raise ValueError(f"Unsupported part encountered: {part!r}")
 
         # ------------------------------------------------------------------ #
-        # Convert every message to the Gemini “content” structure
+        # Convert every message to the Gemini "content" structure
         # ------------------------------------------------------------------ #
         async with AsyncHttpClient() as client:
             api_contents: list[dict] = []
@@ -210,6 +278,9 @@ class EngineGoogle(BaseChat):
                 elif isinstance(raw, list):
                     parts_tasks = [_convert_part(p, client) for p in raw]
                     parts = await asyncio.gather(*parts_tasks)
+                elif raw is None:
+                    # Assistant messages with only tool_calls have content=None
+                    parts = [{"text": ""}]
                 else:
                     raise ValueError(f"Unknown content type: {type(raw)!r}")
 
@@ -221,6 +292,10 @@ class EngineGoogle(BaseChat):
                 )
 
         # ----------------------- Final payload ---------------------------- #
+        # Extract tools/tool_choice BEFORE building generationConfig (they are not JSON serializable)
+        openai_tools = kwargs.pop('tools', None) or self.kwargs.get('tools', None)
+        openai_tool_choice = kwargs.pop('tool_choice', None) or self.kwargs.get('tool_choice', None)
+
         data: dict = {
             "contents": api_contents,
             "generationConfig": {**self.kwargs, **kwargs},
@@ -228,8 +303,89 @@ class EngineGoogle(BaseChat):
         if preamble:
             data["systemInstruction"] = {"parts": [{"text": preamble}]}
 
+        if openai_tools is not None:
+            # Detect already-serialized Gemini tools from GeminiToolAdapter
+            # (format: [{"functionDeclarations": [...]}])
+            if (isinstance(openai_tools, list) and len(openai_tools) == 1
+                    and isinstance(openai_tools[0], dict)
+                    and "functionDeclarations" in openai_tools[0]):
+                # Already in Gemini format — pass through directly
+                data["tools"] = openai_tools
+                # Still map tool_choice if provided
+                if openai_tool_choice is not None:
+                    from magic_llm.util.tools_mapping import map_to_gemini
+                    _, gemini_tool_config = map_to_gemini(None, openai_tool_choice)
+                    if gemini_tool_config:
+                        data["toolConfig"] = gemini_tool_config
+            else:
+                # OpenAI format or raw callables — convert via map_to_gemini
+                from magic_llm.util.tools_mapping import map_to_gemini
+                gemini_tools, gemini_tool_config = map_to_gemini(openai_tools, openai_tool_choice)
+                if gemini_tools:
+                    data["tools"] = [{"functionDeclarations": gemini_tools}]
+                if gemini_tool_config:
+                    data["toolConfig"] = gemini_tool_config
+
         json_bytes = json.dumps(data).encode("utf-8")
         return json_bytes, headers, data
+
+    # ═══════════════════════════════════════════════════════════════════
+    # TRANSFORMATION METHODS
+    # ═══════════════════════════════════════════════════════════════════
+
+    def transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to Google Gemini request format.
+        Note: This is a sync wrapper around prepare_data_sync.
+
+        Image support: Google Gemini requires images to be inlined as base64.
+        Remote images (HTTP/HTTPS) are automatically downloaded and embedded.
+        """
+        json_bytes, headers, _ = self.prepare_data_sync(chat, **kwargs)
+        return json_bytes, headers
+
+    async def async_transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to Google Gemini request format (async version).
+        Uses async HTTP client for downloading remote images.
+
+        Image support: Google Gemini requires images to be inlined as base64.
+        Remote images (HTTP/HTTPS) are automatically downloaded and embedded.
+        """
+        json_bytes, headers, _ = await self.prepare_data(chat, **kwargs)
+        return json_bytes, headers
+
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform Google Gemini response to ModelChatResponse.
+        Uses shared response_mapping utilities.
+        """
+        return self.process_generate(raw)
+
+    def transform_stream_chunk(
+        self,
+        raw: Any,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform Google Gemini streaming chunk to ChatCompletionModel.
+
+        Args:
+            raw: Raw chunk string from Gemini stream
+            context: Optional context dict (not used for Gemini)
+
+        Returns:
+            ChatCompletionModel
+        """
+        return self.prepare_stream_response(raw)
 
     def process_generate(self, gemini_response: dict) -> ModelChatResponse:
         """Convert Gemini API response to ModelChatResponse format"""
@@ -247,75 +403,58 @@ class EngineGoogle(BaseChat):
                 content_parts.append(part['text'])
             elif 'functionCall' in part:
                 # Function/tool call
+                func_call = part['functionCall']
+
+                # Handle missing name field — skip with warning
+                func_name = func_call.get('name')
+                if not func_name:
+                    logger.warning(
+                        "Gemini functionCall part missing 'name' field, skipping: %s",
+                        func_call,
+                    )
+                    continue
+
                 if tool_calls is None:
                     tool_calls = []
 
-                func_call = part['functionCall']
-                tool_call = (ToolCall(
-                    id=f"call_{len(tool_calls)}_{int(time.time() * 1000)}",  # Generate unique ID
-                    type='function',
-                    function=FunctionCall(
-                        name=func_call['name'],
-                        arguments=json.dumps(func_call.get('args', {}))
-                    )
-                ))
+                # Capture native id when available, fallback to synthetic ID
+                call_id = func_call.get('id') or f"call_{len(tool_calls)}_{int(time.time() * 1000)}"
+
+                tool_call = build_tool_call(
+                    id=call_id,
+                    name=func_name,
+                    arguments=json.dumps(func_call.get('args', {}))
+                )
                 tool_calls.append(tool_call)
 
         # Combine text parts if any
         content = ''.join(content_parts) if content_parts else None
 
-        # Create the message
-        message = Message(
-            role='assistant',  # Gemini uses 'model' but we normalize to 'assistant'
-            content=content,
-            tool_calls=tool_calls,
-            refusal=None,
-            annotations=[]
-        )
-
-        # Map Gemini finish reasons to OpenAI format
-        finish_reason_map = {
-            'STOP': 'stop',
-            'MAX_TOKENS': 'length',
-            'SAFETY': 'content_filter',
-            'RECITATION': 'content_filter',
-            'OTHER': 'stop',
-            'FINISH_REASON_UNSPECIFIED': None
-        }
-        finish_reason = finish_reason_map.get(
+        # Map Gemini finish reasons to OpenAI format using shared mapping
+        finish_reason = map_finish_reason(
             candidate.get('finishReason', 'STOP'),
-            candidate.get('finishReason')
-        )
-
-        # Create the choice
-        choice = Choice(
-            index=0,
-            message=message,
-            logprobs=candidate.get('avgLogprobs'),  # Gemini provides average log probs
-            finish_reason=finish_reason
+            GOOGLE_FINISH_REASON_MAP,
+            default=candidate.get('finishReason')
         )
 
         # Create usage model
         usage_metadata = gemini_response['usageMetadata']
         usage = UsageModel(
             prompt_tokens=usage_metadata['promptTokenCount'],
-            completion_tokens=usage_metadata['candidatesTokenCount'],
+            completion_tokens=usage_metadata.get('candidatesTokenCount', 0),
             total_tokens=usage_metadata['totalTokenCount']
         )
 
-        # Create the final response
-        response = ModelChatResponse(
+        # Build standardized response
+        return build_response(
             id=gemini_response.get('responseId', f"gemini_{int(time.time() * 1000)}"),
-            object='chat.completion',
-            created=int(time.time()),  # Gemini doesn't provide timestamp
             model=gemini_response.get('modelVersion', 'gemini'),
-            choices=[choice],
+            content=content,
+            finish_reason=finish_reason,
+            tool_calls=tool_calls,
             usage=usage,
-            service_tier=None,  # Gemini doesn't provide this
-            system_fingerprint=None  # Gemini doesn't provide this
+            logprobs=candidate.get('avgLogprobs')
         )
-
-        return response
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
@@ -324,7 +463,7 @@ class EngineGoogle(BaseChat):
             response = await client.post_json(url=self.url,
                                               data=json_data,
                                               headers=headers,
-                                              timeout=kwargs.get('timeout'))
+                                              timeout=kwargs.get('timeout', 30))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
@@ -333,7 +472,8 @@ class EngineGoogle(BaseChat):
         with HttpClient() as client:
             response = client.post_json(url=self.url,
                                         data=json_data,
-                                        headers=headers)
+                                        headers=headers,
+                                        timeout=kwargs.get('timeout', 30))
             return self.process_generate(response)
 
     def prepare_stream_response(self, chunk):
@@ -343,15 +483,43 @@ class EngineGoogle(BaseChat):
             completion_tokens=payload['usageMetadata'].get('candidatesTokenCount', 0),
             total_tokens=payload['usageMetadata']['totalTokenCount'],
         )
-        delta = DeltaModel(content=payload['candidates'][0]['content']['parts'][0]['text'], role='assistant')
-        choice = ChoiceModel(delta=delta, finish_reason=None, index=0)
-        return ChatCompletionModel(
+
+        candidate = payload['candidates'][0]
+        parts = candidate['content']['parts']
+
+        # Extract text and tool calls from all parts
+        content = None
+        tool_calls = None
+
+        for part in parts:
+            if 'text' in part:
+                content = part['text']
+            elif 'functionCall' in part:
+                # AI Studio: full functionCall arrives atomically (no partial args)
+                func_call = part['functionCall']
+                func_name = func_call.get('name')
+                if not func_name:
+                    logger.warning(
+                        "Streaming functionCall part missing 'name' field, skipping: %s",
+                        func_call,
+                    )
+                    continue
+                if tool_calls is None:
+                    tool_calls = []
+                tool_call = build_stream_tool_call(
+                    id=func_call.get('id', f"call_{len(tool_calls)}_{int(time.time() * 1000)}"),
+                    name=func_name,
+                    arguments=json.dumps(func_call.get('args', {}))
+                )
+                tool_calls.append(tool_call)
+
+        return build_stream_chunk(
             id='1',
-            choices=[choice],
-            created=int(time.time()),
             model=self.model,
-            object='chat.completion.chunk',
-            usage=usage,
+            content=content or '',
+            role='assistant',
+            tool_calls=tool_calls,
+            usage=usage
         )
 
     @BaseChat.sync_intercept_stream_generate
@@ -363,7 +531,7 @@ class EngineGoogle(BaseChat):
                                                self.url_stream,
                                                data=json_data,
                                                headers=headers,
-                                               timeout=kwargs.get('timeout')):
+                                               timeout=kwargs.get('timeout', 30)):
                 if chunk.strip():
                     yield self.prepare_stream_response(chunk)
 

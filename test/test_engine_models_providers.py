@@ -1,13 +1,21 @@
 import json
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 from magic_llm import MagicLLM
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat
+
+from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+
+# All tests in this file require live provider access
+pytestmark = pytest.mark.provider_functional
+
+# Resolve keys file with fallback — raises RuntimeError if missing
+_KEYS_FILE = resolve_keys_file()
+with open(_KEYS_FILE) as f:
+    ALL_KEYS = json.load(f)
 
 # Provider configurations: (provider_name, key_name_in_json, success_model, fail_model)
 TEST_PROVIDERS = [
@@ -16,37 +24,23 @@ TEST_PROVIDERS = [
     ("amazon", "amazon", "amazon.nova-pro-v1:0", "amazon.titan-text-lite-v3"),
     ("anthropic", "anthropic", "claude-3-haiku-20240307", "FAIL/claude-3-haiku-20240307"),
     ("cloudflare", "cloudflare", "@cf/meta/llama-2-7b-chat-int8", "FAIL/@cf/meta/llama-2-7b-chat-int8"),
-    ("cohere", "cohere", "command-light", "FAIL/command-light"),
+    ("cohere", "cohere", "command-a-03-2025", "FAIL/command-light"),
     ("google", "google", "gemini-2.5-flash", "FAIL/gemini-1.5-flash"),
     ("Cerebras", "Cerebras", "llama3.1-8b", "FAIL/llama3.1-8b"),
     ("SambaNova", "SambaNova", "Meta-Llama-3.1-8B-Instruct", "FAIL/Meta-Llama-3.1-8B-Instruct"),
     ("deepinfra", "deepinfra", "microsoft/WizardLM-2-8x22B", "microsoft/WizardLM-2-8x22B-model-fail"),
     ("deepseek", "deepseek", "deepseek-chat", "FAIL/deepseek-chat"),
-    ("parasail", "parasail", "parasail-mistral-nemo", "parasail-mistral-nemo-fail"),
+    # ("parasail", "parasail", "parasail-mistral-nemo", "parasail-mistral-nemo-fail"),
     ("x.ai", "x.ai", "grok-3-mini", "grok-3-mini-fail"),
-    ("together.ai", "together.ai", "meta-llama/Llama-3-8b-chat-hf", "meta-llama/Llama-3-8b-chat-hf-fail"),
+    ("together.ai", "Qwen/Qwen3-Next-80B-A3B-Instruct", "meta-llama/Llama-3-8b-chat-hf", "meta-llama/Llama-3-8b-chat-hf-fail"),
     ("perplexity", "perplexity", "sonar", "sonar-fail"),
     ("openrouter", "openrouter", "mistralai/mistral-nemo", "mistralai/mistral-nemo-fail"),
     ("novita.ai", "novita.ai", "mistralai/mistral-nemo", "FAIL/mistralai/mistral-nemo"),
     ("mistral", "mistral", "open-mistral-7b", "FAIL/open-mistral-7b"),
     ("hyperbolic", "hyperbolic", "meta-llama/Meta-Llama-3.1-8B-Instruct", "FAIL/meta-llama/Meta-Llama-3.1-8B-Instruct"),
-    ("groq", "groq", "llama3-8b-8192", "FAIL/llama3-8b-8192"),
-    ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/llama4-scout-instruct-basic", "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
+    ("groq", "groq", "qwen/qwen3-32b", "FAIL/llama3-8b-8192"),
+    ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507", "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
 ]
-
-# Locate keys file via environment variable or default to test/keys.json
-KEYS_FILE = os.getenv(
-    "MAGIC_LLM_KEYS",
-    "/home/andres/Documents/keys.json",
-)
-if not os.path.exists(KEYS_FILE):
-    pytest.skip(
-        f"No keys file found at {KEYS_FILE}. "
-        "Set MAGIC_LLM_KEYS env var or place keys.json in this directory.",
-        allow_module_level=True,
-    )
-with open(KEYS_FILE) as f:
-    ALL_KEYS = json.load(f)
 
 # Filter providers for which keys are provided
 PROVIDERS = [

@@ -1,83 +1,91 @@
 import json
 import time
-from typing import Dict
 
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
-from magic_llm.model import ModelChat
+from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.util.response_mapping import (
+    build_response,
+    build_stream_chunk,
+)
 
 
 class ProviderAmazonMeta(AmazonBaseProvider):
     """
     Provider for Meta Llama models via Amazon Bedrock.
     """
-    
-    def prepare_data(self, chat: ModelChat, **kwargs) -> str:
+
+    def transform_request(self, chat: ModelChat, **kwargs) -> str:
         """
-        Prepare the request data for Meta Llama models.
-        
+        Transform ModelChat to Meta Llama request format.
+
         Args:
             chat: The chat model containing messages
             **kwargs: Additional parameters for the request
-            
+
         Returns:
             A JSON string containing the request body
+
+        Raises:
+            ChatException: If request contains images
+
+        Note: Meta Llama models do not support image inputs.
         """
+        self._validate_vision_support(chat)
         body = json.dumps({
             "prompt": chat.generic_chat(format='llama2'),
             "max_gen_len": kwargs.get('max_gen_len', 1024),
             "temperature": kwargs.get('temperature', 0.2),
             "top_p": kwargs.get('top_p', 1),
-            # "stop_sequences": kwargs.get('stop_sequences', ["[/INST]"]),
         })
-        
+
         return body
-    
-    def process_response(self, response: dict) -> Dict:
+
+    def transform_response(self, response: dict) -> ModelChatResponse:
         """
-        Process the response from Meta Llama models.
-        
+        Transform Meta Llama response to ModelChatResponse.
+
         Args:
             response: The response from the model
-            
+
         Returns:
-            A dictionary containing the processed response
+            A ModelChatResponse object
         """
-        return {
-            'content': response['generation'],
-            'role': 'assistant',
-            'usage': UsageModel(
-                prompt_tokens=response['prompt_token_count'],
-                completion_tokens=response['generation_token_count'],
-                total_tokens=response['prompt_token_count'] + response['generation_token_count']
-            )
-        }
-    
-    def format_event_to_chunk(self, event: dict) -> ChatCompletionModel:
+        # Create usage model
+        usage = UsageModel(
+            prompt_tokens=response['prompt_token_count'],
+            completion_tokens=response['generation_token_count'],
+            total_tokens=response['prompt_token_count'] + response['generation_token_count']
+        )
+
+        # Determine finish reason
+        stop_reason = response.get('stop_reason')
+        finish_reason = 'stop' if stop_reason else None
+
+        # Build standardized response
+        return build_response(
+            id=f"llama_{int(time.time() * 1000)}",
+            model='meta.llama',
+            content=response['generation'],
+            finish_reason=finish_reason,
+            usage=usage
+        )
+
+    def transform_stream_chunk(self, event: dict) -> ChatCompletionModel:
         """
-        Format a streaming event from Meta Llama models to a ChatCompletionModel.
-        
+        Transform streaming event from Meta Llama to ChatCompletionModel.
+
         Args:
             event: The event from the streaming response
-            
+
         Returns:
             A ChatCompletionModel containing the formatted event
         """
-        chunk = {
-            'id': '1',
-            'choices':
-                [{
-                    'delta':
-                        {
-                            'content': event['generation'],
-                            'role': None
-                        },
-                    'finish_reason': 'stop' if event.get('stop_reason') else None,
-                    'index': 0
-                }],
-            'created': int(time.time()),
-            'model': self.model,
-            'object': 'chat.completion.chunk'
-        }
-        
-        return ChatCompletionModel(**chunk)
+        finish_reason = 'stop' if event.get('stop_reason') else None
+
+        return build_stream_chunk(
+            id='1',
+            model=self.model,
+            content=event['generation'],
+            finish_reason=finish_reason
+        )

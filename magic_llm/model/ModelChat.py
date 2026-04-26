@@ -1,6 +1,6 @@
 import base64
 import logging
-from typing import Union
+from typing import Any, Union
 
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChatResponse
@@ -203,9 +203,55 @@ class ModelChat:
         return "\n".join([f"{message['role']}: {message['content']}" for message in self.get_messages()])
         # return self.num_tokens_from_messages()
 
+    def _estimate_image_tokens(self, image_url: str) -> int:
+        """
+        Estimate token count for an image based on base64 payload size.
+        
+        For data URIs: extracts base64 payload and estimates tokens.
+        For HTTP URLs: uses a fixed low estimate (provider fetches separately).
+        
+        Base64 token estimation: ~4 characters per token (tiktoken approximation).
+        """
+        if image_url.startswith('data:'):
+            try:
+                _, payload = image_url.split(',', 1)
+                return len(payload) // 4
+            except ValueError:
+                return 85
+        return 85
+
+    def _count_content_tokens(self, content) -> int:
+        """
+        Count tokens for message content, handling both string and multimodal (list) formats.
+        
+        Args:
+            content: Either a string or a list of content parts (multimodal)
+            
+        Returns:
+            Estimated token count
+        """
+        if isinstance(content, str):
+            return len(from_openai(content))
+        elif isinstance(content, list):
+            tokens = 0
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get('type') == 'text':
+                        tokens += len(from_openai(part.get('text', '')))
+                    elif part.get('type') == 'image_url':
+                        url = part.get('image_url', {}).get('url', '')
+                        tokens += self._estimate_image_tokens(url)
+                elif isinstance(part, str):
+                    tokens += len(from_openai(part))
+            return tokens
+        return 0
+
     def num_tokens_from_messages(self, messages: list[dict] = None) -> int:
         """
         Calculate the total number of tokens in messages.
+        
+        Handles both string content and multimodal content (lists with text/image parts).
+        Image tokens are estimated based on base64 payload size.
 
         Args:
             messages: Optional list of messages. If None, uses self.messages
@@ -218,9 +264,10 @@ class ModelChat:
         for message in messages or self.messages:
             num_tokens += self.TOKENS_PER_MESSAGE
             for key, value in message.items():
-                # TODO: Add image handle for the tokenizer
-                value_str = value if isinstance(value, str) else ''
-                num_tokens += len(from_openai(value_str))
+                if key == 'content':
+                    num_tokens += self._count_content_tokens(value)
+                elif isinstance(value, str):
+                    num_tokens += len(from_openai(value))
                 if key == "name":
                     num_tokens += self.TOKENS_PER_NAME
 
@@ -281,20 +328,70 @@ class ModelChat:
         for msg in reversed(self.messages):
             if msg['role'] in {'user', 'assistant'}:
                 msg_tokens = (
-                        len(from_openai(msg['content'])) +
+                        self._count_content_tokens(msg['content']) +
                         len(from_openai(msg['role'])) +
-                        self.TOKENS_PER_MESSAGE  # Base tokens per message
+                        self.TOKENS_PER_MESSAGE
                 )
 
                 if current_tokens + msg_tokens + self.ASSISTANT_PRIME_TOKENS <= self.max_input_tokens:
                     truncated_messages.append(msg)
                     current_tokens += msg_tokens
-            else:  # system messages
+            else:
                 truncated_messages.append(msg)
 
         final_messages = truncated_messages[::-1]
         logger.info(f'Messages truncated to {self.num_tokens_from_messages(final_messages)} tokens')
         return final_messages
+
+    def add_tool_result(
+        self,
+        tool_call_id: str,
+        content: str,
+        is_error: bool = False,
+    ) -> None:
+        """Append a tool result message to the conversation history.
+
+        Args:
+            tool_call_id: The provider-specific tool call identifier.
+            content: The tool output content.
+            is_error: Flag indicating whether this is an error result.
+        """
+        self.messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": content,
+            "is_error": is_error,
+        })
+
+    def add_tool_call_message(
+        self,
+        tool_calls: list[dict[str, Any]],
+        content: str | None = None,
+    ) -> None:
+        """Append an assistant message with tool_calls to the conversation history.
+
+        Args:
+            tool_calls: The list of tool calls from the LLM response.
+            content: Optional text content from the assistant response.
+        """
+        self.messages.append({
+            "role": "assistant",
+            "content": content,
+            "tool_calls": tool_calls,
+        })
+
+    def add_tool_messages(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Append multiple messages to the conversation history.
+
+        Used by adapters to inject provider-formatted tool results.
+
+        Args:
+            messages: A list of message dicts to append.
+        """
+        self.messages.extend(messages)
 
     def __add__(self, chat: 'ModelChatResponse') -> 'ModelChat':
         """

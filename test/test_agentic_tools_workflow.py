@@ -1,33 +1,23 @@
 import json
 import os
-import sys
 from typing import Any, Dict, List, Union
 
 import pytest
 import requests
 
-# add project root to import path
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
 from magic_llm import MagicLLM
 from magic_llm.model import ModelChat
 from magic_llm.util import run_agentic
 
-KEYS_FILE = os.getenv(
-    "MAGIC_LLM_KEYS",
-    "/home/andres/Documents/keys.json",
-)
+from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
 
+# Resolve keys file with fallback — raises RuntimeError if missing
+_KEYS_FILE = resolve_keys_file()
+with open(_KEYS_FILE) as f:
+    ALL_KEYS = json.load(f)
 
-def _load_keys() -> Dict[str, Dict[str, str]]:
-    if not os.path.exists(KEYS_FILE):
-        pytest.skip(
-            f"No keys file found at {KEYS_FILE}. "
-            "Set MAGIC_LLM_KEYS env var or place keys.json in this directory.",
-            allow_module_level=True,
-        )
-    with open(KEYS_FILE) as f:
-        return json.load(f)
+# All tests in this file require live provider access
+pytestmark = pytest.mark.provider_functional
 
 
 def _http_post_form(url: str, data: Dict[str, Any], timeout: int = 60) -> Dict[str, Any]:
@@ -187,7 +177,7 @@ def _reranker_tool(
     - Returns selected metadata: page, page_image (jpg), abstract, title, date, authors.
     """
     if not jina_api_key:
-        jina_api_key = 'jina_'
+        jina_api_key = os.getenv("JINA_API_KEY")
     if not jina_api_key:
         pytest.skip("JINA_API_KEY is required for reranker tool")
 
@@ -240,8 +230,7 @@ def _reranker_tool(
 
 @pytest.mark.timeout(180)
 def test_agentic_tools_end_to_end_search_and_rerank():
-    keys = _load_keys()
-    key = keys['openrouter']
+    key = ALL_KEYS['openrouter']
     client = MagicLLM(model='openai/gpt-4.1', **key)
 
     # Define tools as callables

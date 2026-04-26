@@ -242,12 +242,11 @@ print(res)
 
 ## 6) Agentic tool workflow (multi-turn tool loops)
 
-Use `magic_llm.util.agentic.run_agentic()` to let the model call tools iteratively until it produces normal content. See `magic_llm/util/agentic.py` for behavior.
+Prefer `MagicLLM.run_agent()` for new code. The legacy `magic_llm.util.agentic.run_agentic()` helper still exists for backward compatibility, but it should be treated as a migration path rather than the default API.
 
 ```python
 from typing import Any, List
 from magic_llm import MagicLLM
-from magic_llm.util.agentic import run_agentic
 
 client = MagicLLM(engine="openai", model="gpt-4o", private_key="sk-...")
 
@@ -257,8 +256,7 @@ def add(a: int, b: int) -> int:
 def top_k(items: List[Any], k: int = 3) -> List[Any]:
     return list(items)[:k]
 
-resp = run_agentic(
-    client=client,
+resp = client.run_agent(
     user_input="Compute 17 + 25, then take the first 2 fruits from ['apple','banana','cherry'] and summarize.",
     system_prompt="Use tools for arithmetic and list selection before answering.",
     tools=[add, top_k],
@@ -271,8 +269,6 @@ print(resp.content)
 OpenAI-style tool specs with a Python function map:
 
 ```python
-from magic_llm.util.agentic import run_agentic
-
 specs = [{
     "type": "function",
     "function": {
@@ -289,14 +285,15 @@ specs = [{
 def add(a: int, b: int) -> int:
     return a + b
 
-resp = run_agentic(
-    client=client,
+resp = client.run_agent(
     user_input="Use the add tool to add 7 and 35, then explain the result.",
     tools=specs,
     tool_functions={"add": add},
 )
 print(resp.content)
 ```
+
+Legacy note: `magic_llm.util.agentic.run_agentic()` and `run_agentic_stream()` remain available while older integrations migrate, and their implementation still lives in `magic_llm/util/agentic.py`.
 
 ---
 

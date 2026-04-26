@@ -1,18 +1,32 @@
 import json
 import mimetypes
 from abc import ABC
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional, Any
 
 import aiohttp
 
-from magic_llm.model import ModelChat
+from magic_llm.exception.ChatException import ChatException
+from magic_llm.model import ModelChat, ModelChatResponse, ModelEmbeddingResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 from magic_llm.util.tools_mapping import map_to_openai
 
 
+def _has_image_content(messages: list[dict]) -> bool:
+    """Check if any message contains image content."""
+    for msg in messages:
+        content = msg.get('content')
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get('type') == 'image_url':
+                    return True
+    return False
+
+
 class OpenAiBaseProvider(ABC):
+    supports_vision: bool = True
+    
     def __init__(self,
                  base_url: str,
                  api_key: str,
@@ -41,8 +55,46 @@ class OpenAiBaseProvider(ABC):
                      chat:
                      ModelChat,
                      **kwargs) -> Tuple[bytes, Dict[str, str]]:
-        # Construct the header and data to be sent in the request.
+        """
+        Prepare the request data for OpenAI-compatible APIs.
+        Alias for transform_request for backward compatibility.
+
+        Note: Image handling is built into this method. OpenAI-compatible providers
+        that support images will pass through the image_url content type.
+        Providers that don't support images may need to override this method
+        or handle the transformation in their specific implementation.
+        """
+        return self.transform_request(chat, **kwargs)
+
+    def transform_request(self,
+                          chat: ModelChat,
+                          **kwargs) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to OpenAI-compatible request format.
+
+        Args:
+            chat: The input chat model
+            **kwargs: Additional parameters (stream, tools, etc.)
+
+        Returns:
+            Tuple of (request_body_bytes, headers_dict)
+
+        Raises:
+            ChatException: If request contains images but provider doesn't support vision
+
+        Note: Image support is provider-dependent. The base implementation
+        passes through image_url content types. Providers that don't support
+        images can override this method to filter or transform image content.
+        """
         messages = chat.get_messages()
+        
+        if _has_image_content(messages) and not self.supports_vision:
+            raise ChatException(
+                message=f"Provider '{self.__class__.__name__}' does not support image/vision inputs. "
+                        f"Model '{self.model}' cannot process images. Remove images or use a vision-capable provider.",
+                error_code='VISION_NOT_SUPPORTED'
+            )
+        
         for message in messages:
             if message['role'] == 'user' and isinstance(message['content'], list):
                 for item in message['content']:
@@ -53,7 +105,6 @@ class OpenAiBaseProvider(ABC):
         data = {
             "model": self.model,
             "messages": messages,
-            # init-time defaults first, call-time overrides second
             **self.kwargs,
             **kwargs,
         }
@@ -62,7 +113,6 @@ class OpenAiBaseProvider(ABC):
         if 'fallback' in data:
             data.pop('fallback')
 
-        # Normalize OpenAI-style tools and tool_choice for consistency
         tools_mapped, choice_mapped = map_to_openai(data.get('tools'), data.get('tool_choice'))
         if tools_mapped is not None:
             data['tools'] = tools_mapped
@@ -72,12 +122,68 @@ class OpenAiBaseProvider(ABC):
         json_data = json.dumps(data).encode('utf-8')
         return json_data, self.headers
 
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform OpenAI API response to ModelChatResponse.
+        OpenAI responses are already in the correct format.
+
+        Args:
+            raw: Raw response from OpenAI-compatible API
+
+        Returns:
+            Normalized ModelChatResponse
+        """
+        return ModelChatResponse(**raw)
+
+    def transform_embedding_response(self, raw: Dict[str, Any]) -> ModelEmbeddingResponse:
+        """
+        Transform embedding API response to ModelEmbeddingResponse.
+
+        Embedding responses follow the OpenAI format across all providers:
+        - object: "list"
+        - data: list of {object, index, embedding}
+        - model: model identifier
+        - usage: optional token usage
+
+        Args:
+            raw: Raw dict from embedding API response
+
+        Returns:
+            Normalized ModelEmbeddingResponse
+        """
+        return ModelEmbeddingResponse(**raw)
+
+    def transform_stream_chunk(
+        self,
+        raw: str,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform streaming chunk to ChatCompletionModel.
+        Alias for process_chunk for backward compatibility.
+
+        Args:
+            raw: Raw chunk string from provider stream
+            context: Optional context dict with 'id_generation' and 'last_chunk'
+
+        Returns:
+            Normalized ChatCompletionModel or None if chunk should be skipped
+        """
+        context = context or {}
+        return self.process_chunk(
+            raw,
+            context.get('id_generation', ''),
+            context.get('last_chunk')
+        )
+
     def process_chunk(self,
                       chunk: str | dict,
                       id_generation: str = '',
                       last_chunk: ChatCompletionModel = None
                       ) -> ChatCompletionModel:
-        if chunk.startswith('data: ') and not chunk.endswith('[DONE]'):
+        if chunk.startswith('data: '):
+            if '[DONE]' in chunk:
+                return None
             chunk = json.loads(chunk[5:])
             # TODO improve server side error per provider
             if 'choices' not in chunk:

@@ -2,10 +2,11 @@ import abc
 import asyncio
 import functools
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any
+from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any, Dict, Tuple
 
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse
@@ -99,6 +100,56 @@ class BaseChat(abc.ABC):
         except Exception as e:
             logger.error(f"Callback execution failed: {e}")
 
+    def _execute_callback_sync(
+            self,
+            chat: ModelChat,
+            response_content: str,
+            usage: Optional[UsageModel],
+            model: str,
+            meta: Optional[ChatMetaModel]
+    ) -> None:
+        """Execute callback from synchronous context without asyncio.run().
+
+        Uses a dedicated thread with its own event loop to avoid
+        'event loop already running' errors in async environments.
+        """
+        if not self.callback:
+            return
+
+        try:
+            if asyncio.iscoroutinefunction(self.callback):
+                result = []
+                exception = []
+
+                def _run_in_thread():
+                    try:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        loop.run_until_complete(
+                            self.callback(chat, response_content, usage, model, meta)
+                        )
+                    except Exception as e:
+                        exception.append(e)
+                    finally:
+                        loop.close()
+
+                t = threading.Thread(target=_run_in_thread, daemon=True)
+                t.start()
+                t.join()
+                if exception:
+                    raise exception[0]
+            else:
+                self.executor.submit(
+                    self.callback,
+                    chat,
+                    response_content,
+                    usage,
+                    model,
+                    meta
+                ).result()
+        except Exception as e:
+            logger.error(f"Callback execution failed: {e}")
+
     def _update_metrics(self, item: ChatCompletionModel, metrics: Metrics, usage: Optional[UsageModel]) -> None:
         """Update metrics for a chat completion item."""
         try:
@@ -183,7 +234,7 @@ class BaseChat(abc.ABC):
                                 yield i
                         else:
                             yield ChatCompletionModel(**{
-                                'model': self.model,
+                                'model': self.model or 'unknown',
                                 'id': 'id',
                                 'choices': [
                                     {
@@ -246,13 +297,13 @@ class BaseChat(abc.ABC):
                             metrics.calculate_ttf(),
                             usage
                         )
-                        asyncio.run(self._execute_callback(chat, response_content, usage, model, meta))
+                        self._execute_callback_sync(chat, response_content, usage, model, meta)
                     break
 
                 except Exception as e:
                     er = f"Sync stream generation attempt {attempt + 1} failed: {e}"
                     logger.error(er)
-                    asyncio.run(self._execute_callback(chat,
+                    self._execute_callback_sync(chat,
                                                        response_content,
                                                        usage,
                                                        model,
@@ -260,7 +311,7 @@ class BaseChat(abc.ABC):
                                                            TTFB=time.time() - metrics.start_time,
                                                            TTF=0,
                                                            TPS=0,
-                                                           status='ERROR: ' + er)))
+                                                           status='ERROR: ' + er))
 
                     if attempt == self.retry_config.attempts - 1:
                         fallback = self._handle_fallback(is_async=False)
@@ -343,13 +394,13 @@ class BaseChat(abc.ABC):
                     usage.tps = meta.TPS
                     usage.ttf = meta.TTF
                     usage.ttft = meta.TTFB
-                    asyncio.run(self._execute_callback(chat, response.content, usage, model, meta))
+                    self._execute_callback_sync(chat, response.content, usage, model, meta)
                     return response
 
                 except Exception as e:
                     er = f"Sync generation attempt {attempt + 1} failed: {e}"
                     logger.error(er)
-                    asyncio.run(self._execute_callback(chat,
+                    self._execute_callback_sync(chat,
                                                        None,
                                                        usage,
                                                        model,
@@ -357,7 +408,7 @@ class BaseChat(abc.ABC):
                                                            TTFB=time.time() - start_time,
                                                            TTF=0,
                                                            TPS=0,
-                                                           status='ERROR: ' + er)))
+                                                           status='ERROR: ' + er))
 
                     if attempt == self.retry_config.attempts - 1:
                         if self.fallback:
@@ -376,6 +427,114 @@ class BaseChat(abc.ABC):
         """Cleanup resources."""
         if hasattr(self, 'executor'):
             self.executor.shutdown(wait=False)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # VALIDATION METHODS (Provider-agnostic)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def validate_input(self, chat: ModelChat) -> ModelChat:
+        """
+        Validate input chat before transformation.
+        Override in subclass for provider-specific validation.
+
+        Raises:
+            ChatException: If validation fails
+        """
+        if not chat.messages:
+            raise ChatException(
+                message="Chat must have at least one message",
+                error_code="EMPTY_CHAT"
+            )
+        return chat
+
+    def validate_output(self, response: ModelChatResponse) -> ModelChatResponse:
+        """
+        Validate output response after transformation.
+        Ensures response conforms to expected schema.
+
+        Raises:
+            ChatException: If validation fails
+        """
+        if not response.choices:
+            raise ChatException(
+                message="Response must have at least one choice",
+                error_code="EMPTY_RESPONSE"
+            )
+        return response
+
+    def validate_stream_chunk(self, chunk: ChatCompletionModel) -> ChatCompletionModel:
+        """
+        Validate streaming chunk after transformation.
+        """
+        if not chunk.choices:
+            raise ChatException(
+                message="Stream chunk must have at least one choice",
+                error_code="EMPTY_CHUNK"
+            )
+        return chunk
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ABSTRACT TRANSFORMATION METHODS (Provider-specific)
+    # ═══════════════════════════════════════════════════════════════════
+
+    def transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to provider request format.
+
+        Args:
+            chat: The input chat model
+            **kwargs: Additional parameters (stream, tools, etc.)
+
+        Returns:
+            Tuple of (request_body_bytes, headers_dict)
+
+        Note: This method should be implemented by each engine.
+        Default implementation raises NotImplementedError.
+        """
+        raise NotImplementedError("Subclasses must implement transform_request")
+
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform provider response to ModelChatResponse.
+
+        Args:
+            raw: Raw response from provider API
+
+        Returns:
+            Normalized ModelChatResponse
+
+        Note: This method should be implemented by each engine.
+        Default implementation raises NotImplementedError.
+        """
+        raise NotImplementedError("Subclasses must implement transform_response")
+
+    def transform_stream_chunk(
+        self,
+        raw: Any,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform streaming chunk to ChatCompletionModel.
+
+        Args:
+            raw: Raw chunk from provider stream
+            context: Optional context dict for stateful transformations
+
+        Returns:
+            Normalized ChatCompletionModel or None if chunk should be skipped
+
+        Note: This method should be implemented by each engine.
+        Default implementation raises NotImplementedError.
+        """
+        raise NotImplementedError("Subclasses must implement transform_stream_chunk")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ABSTRACT GENERATION METHODS
+    # ═══════════════════════════════════════════════════════════════════
 
     @abc.abstractmethod
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
@@ -396,6 +555,10 @@ class BaseChat(abc.ABC):
     async def async_stream_generate(self, chat: ModelChat, **kwargs) -> AsyncIterator[ChatCompletionModel]:
         """Stream generate a chat response asynchronously."""
         pass
+
+    # ═══════════════════════════════════════════════════════════════════
+    # OPTIONAL METHODS (Not all providers support these)
+    # ═══════════════════════════════════════════════════════════════════
 
     def embedding(self, text: Union[List[str], str], **kwargs) -> Any:
         """Generate embeddings for the given text."""

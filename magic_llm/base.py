@@ -58,4 +58,8 @@ class MagicLlmBase:
         if engine not in {EngineAmazon.engine, EngineAzure.engine}:
             engine_params['api_key'] = private_key
 
+        # For Amazon, map private_key to aws_access_key_id for backward compatibility
+        if engine == EngineAmazon.engine and private_key:
+            engine_params['aws_access_key_id'] = private_key
+
         self.llm: BaseChat = engine_class(**engine_params)

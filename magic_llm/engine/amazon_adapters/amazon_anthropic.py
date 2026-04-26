@@ -1,28 +1,40 @@
 import json
 import time
-from typing import Dict
 
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
-from magic_llm.model import ModelChat
+from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.util.response_mapping import (
+    ANTHROPIC_FINISH_REASON_MAP,
+    map_finish_reason,
+    build_response,
+    build_stream_chunk,
+)
 
 
 class ProviderAmazonAnthropic(AmazonBaseProvider):
     """
     Provider for Anthropic Claude models via Amazon Bedrock.
     """
-    
-    def prepare_data(self, chat: ModelChat, **kwargs) -> str:
+
+    def transform_request(self, chat: ModelChat, **kwargs) -> str:
         """
-        Prepare the request data for Anthropic Claude models.
-        
+        Transform ModelChat to Anthropic Claude (Bedrock) request format.
+
         Args:
             chat: The chat model containing messages
             **kwargs: Additional parameters for the request
-            
+
         Returns:
             A JSON string containing the request body
+
+        Raises:
+            ChatException: If request contains images
+
+        Note: This is for legacy Claude format via Bedrock. Image support
+        would require updating to the Messages API format.
         """
+        self._validate_vision_support(chat)
         body = json.dumps({
             "prompt": chat.generic_chat(format='claude'),
             "max_tokens_to_sample": kwargs.get('max_tokens_to_sample', 1024),
@@ -30,56 +42,58 @@ class ProviderAmazonAnthropic(AmazonBaseProvider):
             "top_k": kwargs.get('top_k', 250),
             "top_p": kwargs.get('top_p', 1),
             "stop_sequences": kwargs.get('stop_sequences', ["\n\nHuman:"]),
-            # "anthropic_version": "bedrock-2023-05-31"
         })
-        
+
         return body
-    
-    def process_response(self, response: dict) -> Dict:
+
+    def transform_response(self, response: dict) -> ModelChatResponse:
         """
-        Process the response from Anthropic Claude models.
-        
+        Transform Anthropic Claude (Bedrock) response to ModelChatResponse.
+
         Args:
             response: The response from the model
-            
+
         Returns:
-            A dictionary containing the processed response
+            A ModelChatResponse object
         """
-        return {
-            'content': response['completion'],
-            'role': 'assistant',
-            'usage': UsageModel(
-                prompt_tokens=len(response.get('prompt', '')),
-                completion_tokens=len(response['completion']),
-                total_tokens=len(response.get('prompt', '')) + len(response['completion'])
-            )
-        }
-    
-    def format_event_to_chunk(self, event: dict) -> ChatCompletionModel:
+        # Create usage model (approximate tokens from character count)
+        usage = UsageModel(
+            prompt_tokens=len(response.get('prompt', '')),
+            completion_tokens=len(response['completion']),
+            total_tokens=len(response.get('prompt', '')) + len(response['completion'])
+        )
+
+        # Map stop_reason to finish_reason
+        finish_reason = map_finish_reason(
+            response.get('stop_reason'),
+            ANTHROPIC_FINISH_REASON_MAP,
+            default='stop'
+        )
+
+        # Build standardized response
+        return build_response(
+            id=f"bedrock_claude_{int(time.time() * 1000)}",
+            model='anthropic.claude',
+            content=response['completion'],
+            finish_reason=finish_reason,
+            usage=usage
+        )
+
+    def transform_stream_chunk(self, event: dict) -> ChatCompletionModel:
         """
-        Format a streaming event from Anthropic Claude models to a ChatCompletionModel.
-        
+        Transform streaming event from Anthropic Claude to ChatCompletionModel.
+
         Args:
             event: The event from the streaming response
-            
+
         Returns:
             A ChatCompletionModel containing the formatted event
         """
-        chunk = {
-            'id': '1',
-            'choices':
-                [{
-                    'delta':
-                        {
-                            'content': event['completion'],
-                            'role': None
-                        },
-                    'finish_reason': 'stop' if event['stop_reason'] else None,
-                    'index': 0
-                }],
-            'created': int(time.time()),
-            'model': self.model,
-            'object': 'chat.completion.chunk'
-        }
-        
-        return ChatCompletionModel(**chunk)
+        finish_reason = 'stop' if event.get('stop_reason') else None
+
+        return build_stream_chunk(
+            id='1',
+            model=self.model,
+            content=event['completion'],
+            finish_reason=finish_reason
+        )

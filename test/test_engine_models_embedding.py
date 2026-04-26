@@ -1,12 +1,12 @@
 import json
 import os
-import sys
 import asyncio
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 from magic_llm import MagicLLM
+
+from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
 
 # Providers with embedding cap
 EMBEDDING_PROVIDERS = [
@@ -17,19 +17,13 @@ EMBEDDING_PROVIDERS = [
     ("together.ai", "openai", {"model": "BAAI/bge-base-en-v1.5"}),
 ]
 
-# Locate keys file via environment variable or default to test/keys.json
-KEYS_FILE = os.getenv(
-    "MAGIC_LLM_KEYS",
-    "/home/andres/Documents/keys.json",
-)
-if not os.path.exists(KEYS_FILE):
-    pytest.skip(
-        f"No keys file found at {KEYS_FILE}. "
-        "Set MAGIC_LLM_KEYS env var or place keys.json in this directory.",
-        allow_module_level=True,
-    )
-with open(KEYS_FILE) as f:
+# Resolve keys file with fallback — raises RuntimeError if missing
+_KEYS_FILE = resolve_keys_file()
+with open(_KEYS_FILE) as f:
     ALL_KEYS = json.load(f)
+
+# All tests in this file require live provider access
+pytestmark = pytest.mark.provider_functional
 
 EXPECTED_TEXT = (
     "Dado que se trata de un único pago por el proyecto completo, debes tener en cuenta "
@@ -47,7 +41,12 @@ def test_sync_embedding_single(key_name, provider, kwargs):
     keys = dict(ALL_KEYS[key_name])
     client = MagicLLM(**keys, **kwargs)
     resp = client.llm.embedding(text=EXPECTED_TEXT)
-    print(resp)
+
+    # resp is now a ModelEmbeddingResponse (not a raw dict)
+    assert resp is not None
+    assert len(resp.data) > 0, "Embedding response should contain at least one vector"
+    assert len(resp.data[0].embedding) > 0, "Each embedding vector should be non-empty"
+    assert all(isinstance(v, float) for v in resp.data[0].embedding), "Embedding values should be floats"
 
 
 @pytest.mark.parametrize(
@@ -60,4 +59,9 @@ async def test_async_embedding_single(key_name, provider, kwargs):
     keys = dict(ALL_KEYS[key_name])
     client = MagicLLM(**keys, **kwargs)
     resp = await client.llm.async_embedding(text=EXPECTED_TEXT)
-    print(resp)
+
+    # resp is now a ModelEmbeddingResponse (not a raw dict)
+    assert resp is not None
+    assert len(resp.data) > 0, "Embedding response should contain at least one vector"
+    assert len(resp.data[0].embedding) > 0, "Each embedding vector should be non-empty"
+    assert all(isinstance(v, float) for v in resp.data[0].embedding), "Embedding values should be floats"

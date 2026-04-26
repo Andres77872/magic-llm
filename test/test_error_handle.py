@@ -1,13 +1,16 @@
 import json
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import pytest
 
 from magic_llm import MagicLLM
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat
+
+from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+
+# All tests in this file require live provider access
+pytestmark = pytest.mark.provider_functional
 
 
 def _get_chat_builder():
@@ -16,7 +19,9 @@ def _get_chat_builder():
     return chat
 
 
-OPENAI_KEY = json.load(open('/home/andres/Documents/keys.json'))['openai']
+# Resolve keys file with fallback — raises RuntimeError if missing
+_KEYS_FILE = resolve_keys_file()
+OPENAI_KEY = json.load(open(_KEYS_FILE))['openai']
 
 
 def _get_fallback_client():

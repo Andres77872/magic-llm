@@ -1,17 +1,16 @@
-import json
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import pytest
 from tokenizers import Encoding
 
 from magic_llm.util import tokenizer
 
-OPENAI_KEY = json.load(open('/home/andres/Documents/keys.json'))['openai']
 
-
-def test_sync_openai_base_stream_generate_2():
-    res: Encoding = tokenizer.from_hf('meta-llama/Llama-3.1-70B-Instruct', '''ML in Sales: Developed and maintained the “Celonis Quality Index” (CQI) model to predict likelihood of sales
-conversion. Guided development of custom API to enable near-real-time predictions''')
-    print(res)
-    print(res)
+def test_sync_hf_tokenizer_returns_tokens():
+    """Verify tokenizer.from_hf returns a valid Encoding with non-empty tokens."""
+    res: Encoding = tokenizer.from_hf(
+        'meta-llama/Llama-3.1-70B-Instruct',
+        'ML in Sales: Developed and maintained the Celonis Quality Index model.',
+    )
+    assert isinstance(res, Encoding)
+    assert len(res.ids) > 0
+    assert len(res.tokens) > 0
+    assert len(res.ids) == len(res.tokens)

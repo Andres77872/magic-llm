@@ -56,7 +56,7 @@ class AsyncHttpClient:
         :raises: HttpError if the request fails or returns a non-200 status code.
         """
         self._ensure_session()
-        timeout = aiohttp.ClientTimeout(total=kwargs.pop('timeout', None))
+        timeout = aiohttp.ClientTimeout(total=kwargs.pop('timeout', 30))
         try:
             async with self.session.request(
                     method,
@@ -118,7 +118,7 @@ class AsyncHttpClient:
         """
         self._ensure_session()
 
-        timeout = aiohttp.ClientTimeout(total=kwargs.pop('timeout', None))
+        timeout = aiohttp.ClientTimeout(total=kwargs.pop('timeout', 30))
         try:
             async with self.session.request(
                     method,
@@ -189,6 +189,7 @@ class HttpClient:
         :raises: HttpError, requests.exceptions.RequestException
         """
         self._ensure_session()
+        kwargs.setdefault('timeout', 30)
         try:
             response = self.session.request(method, url, **kwargs)
             if response.status_code != 200:
@@ -267,6 +268,51 @@ class HttpClient:
                         yield line.decode('utf-8')
         except RequestException as e:
             # Add context to the error if possible
+            if hasattr(e, 'response') and hasattr(e.response, 'content'):
+                error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
+                logger.error(f"Streaming request to {url} failed: {error_message}")
+                raise HttpError(error_message,
+                               getattr(e.response, 'status_code', None),
+                               getattr(e.response, 'content', None))
+            logger.error(f"Streaming request to {url} failed with requests error: {str(e)}")
+            raise HttpError(f"requests streaming error: {str(e)}")
+
+    def stream_request_bytes(
+            self,
+            method: str,
+            url: str,
+            chunk_size: int = 8192,
+            **kwargs
+    ) -> Generator[bytes, None, None]:
+        """
+        Makes a streaming HTTP request yielding raw binary chunks.
+
+        Unlike stream_request (which yields decoded text lines), this yields
+        raw bytes — needed for binary protocols like AWS EventStream.
+
+        :param method: The HTTP method (e.g., 'POST', 'GET', etc.).
+        :param url: The endpoint URL.
+        :param chunk_size: Size of each chunk in bytes (default 8192).
+        :param kwargs: Additional arguments for requests.
+        :yield: Raw bytes chunks from the response.
+        :raises: HttpError
+        """
+        self._ensure_session()
+
+        kwargs['stream'] = True
+        if (d := kwargs.get('data')) and isinstance(d, dict):
+            kwargs['data'] = json.dumps(d)
+        try:
+            with self.session.request(method, url, **kwargs) as response:
+                if response.status_code != 200:
+                    error_msg = f"HTTP {response.status_code}: {response.content.decode('utf-8', errors='replace')}"
+                    logger.error(f"Streaming request to {url} failed: {error_msg}")
+                    raise HttpError(error_msg, response.status_code, response.content)
+
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if chunk:
+                        yield chunk
+        except RequestException as e:
             if hasattr(e, 'response') and hasattr(e.response, 'content'):
                 error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
                 logger.error(f"Streaming request to {url} failed: {error_message}")

@@ -1,6 +1,7 @@
 # https://docs.anthropic.com/claude/reference/messages-streaming
 import json
 import time
+from typing import Dict, Any, Tuple, Optional
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.model import ModelChat, ModelChatResponse
@@ -21,6 +22,14 @@ from magic_llm.model.ModelChatStream import (
 )
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 from magic_llm.util.tools_mapping import map_to_anthropic
+from magic_llm.util.response_mapping import (
+    ANTHROPIC_FINISH_REASON_MAP,
+    map_finish_reason,
+    build_response,
+    build_stream_chunk,
+    build_tool_call,
+    build_stream_tool_call,
+)
 
 
 class EngineAnthropic(BaseChat):
@@ -62,13 +71,11 @@ class EngineAnthropic(BaseChat):
         # Map Anthropic stop_reason to OpenAI-style finish_reason and persist it
         finish_reason = event.get('delta', {}).get('stop_reason', None)
         if finish_reason:
-            finish_reason_map = {
-                'tool_use': 'tool_calls',
-                'stop_sequence': 'stop',
-                'max_tokens': 'length',
-                'end_turn': 'stop'
-            }
-            self._finish_reason = finish_reason_map.get(finish_reason, finish_reason)
+            self._finish_reason = map_finish_reason(
+                finish_reason,
+                ANTHROPIC_FINISH_REASON_MAP,
+                default=finish_reason
+            )
 
         # Debug helper (disabled to avoid noisy output)
         # print('event:', event)
@@ -83,13 +90,11 @@ class EngineAnthropic(BaseChat):
         if event['type'] == 'message_stop':
             sr = event.get('message', {}).get('stop_reason') or event.get('stop_reason')
             if sr:
-                finish_reason_map = {
-                    'tool_use': 'tool_calls',
-                    'stop_sequence': 'stop',
-                    'max_tokens': 'length',
-                    'end_turn': 'stop'
-                }
-                self._finish_reason = finish_reason_map.get(sr, sr)
+                self._finish_reason = map_finish_reason(
+                    sr,
+                    ANTHROPIC_FINISH_REASON_MAP,
+                    default=sr
+                )
             return None, idx, usage
         # Track start/stop of content blocks to properly handle tool_use
         if event['type'] == 'content_block_start':
@@ -110,15 +115,12 @@ class EngineAnthropic(BaseChat):
 
             # Text delta (normal content)
             if 'text' in d:
-                delta = DeltaModel(content=d.get('text', ''), role=None)
-                choice = ChoiceModel(delta=delta, finish_reason=finish_reason, index=0)
-                model = ChatCompletionModel(
+                model = build_stream_chunk(
                     id=idx,
-                    choices=[choice],
-                    created=int(time.time()),
                     model=self.model,
-                    object='chat.completion.chunk',
-                    usage=usage or UsageModel(),
+                    content=d.get('text', ''),
+                    finish_reason=finish_reason,
+                    usage=usage
                 )
                 return model, idx, usage
 
@@ -132,23 +134,18 @@ class EngineAnthropic(BaseChat):
                     block_ctx['args'] = block_ctx.get('args', '') + partial
                     self._active_blocks[event['index']] = block_ctx
 
-                    tool_call = StreamToolCall(
+                    tool_call = build_stream_tool_call(
                         id=block.get('id'),
-                        type='function',
-                        function=StreamFunctionCall(
-                            name=block.get('name'),
-                            arguments=block_ctx['args']
-                        )
+                        name=block.get('name'),
+                        arguments=block_ctx['args']
                     )
-                    delta = DeltaModel(content='', role=None, tool_calls=[tool_call])
-                    choice = ChoiceModel(delta=delta, finish_reason=finish_reason, index=0)
-                    model = ChatCompletionModel(
+                    model = build_stream_chunk(
                         id=idx,
-                        choices=[choice],
-                        created=int(time.time()),
                         model=self.model,
-                        object='chat.completion.chunk',
-                        usage=usage or UsageModel(),
+                        content='',
+                        finish_reason=finish_reason,
+                        tool_calls=[tool_call],
+                        usage=usage
                     )
                     return model, idx, usage
 
@@ -323,6 +320,54 @@ class EngineAnthropic(BaseChat):
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
 
+    # ═══════════════════════════════════════════════════════════════════
+    # TRANSFORMATION METHODS
+    # ═══════════════════════════════════════════════════════════════════
+
+    def transform_request(
+        self,
+        chat: ModelChat,
+        **kwargs
+    ) -> Tuple[bytes, Dict[str, str]]:
+        """
+        Transform ModelChat to Anthropic request format.
+        Alias for prepare_data for standardized interface.
+
+        Note: Image support is built into this method. Anthropic supports
+        both data URIs (base64) and HTTP/HTTPS URLs for images.
+        """
+        return self.prepare_data(chat, **kwargs)
+
+    def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
+        """
+        Transform Anthropic response to ModelChatResponse.
+        Uses shared response_mapping utilities.
+        """
+        return self.process_generate(raw)
+
+    def transform_stream_chunk(
+        self,
+        raw: Any,
+        context: Optional[Dict] = None
+    ) -> Optional[ChatCompletionModel]:
+        """
+        Transform Anthropic streaming event to ChatCompletionModel.
+
+        Args:
+            raw: Raw chunk string from Anthropic stream
+            context: Dict with 'idx' and 'usage' for stateful transformations
+
+        Returns:
+            ChatCompletionModel or None if chunk should be skipped
+        """
+        context = context or {}
+        model, _, _ = self.process_chunk(
+            raw,
+            context.get('idx'),
+            context.get('usage')
+        )
+        return model
+
     def process_chunk(self, chunk: str, idx, usage):
         model, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage)
         return model, idx, usage
@@ -342,65 +387,46 @@ class EngineAnthropic(BaseChat):
                     if tool_calls is None:
                         tool_calls = []
 
-                    tool_call = RespToolCall(
+                    tool_call = build_tool_call(
                         id=item['id'],
-                        type='function',
-                        function=RespFunctionCall(
-                            name=item['name'],
-                            arguments=json.dumps(item['input'])  # Convert dict to JSON string
-                        )
+                        name=item['name'],
+                        arguments=json.dumps(item['input'])  # Convert dict to JSON string
                     )
                     tool_calls.append(tool_call)
                 elif item['type'] == 'text':
                     # If there's text content, use it
                     content = item.get('text', '')
 
-        # Create the message
-        message = Message(
-            role=claude_response['role'],
-            content=content,
-            tool_calls=tool_calls,
-            refusal=None,
-            annotations=[]
+        # Map stop_reason to finish_reason using shared mapping
+        finish_reason = map_finish_reason(
+            claude_response.get('stop_reason'),
+            ANTHROPIC_FINISH_REASON_MAP,
+            default=claude_response.get('stop_reason')
         )
 
-        # Map stop_reason to finish_reason
-        finish_reason_map = {
-            'tool_use': 'tool_calls',
-            'stop_sequence': 'stop',
-            'max_tokens': 'length',
-            'end_turn': 'stop'
-        }
-        finish_reason = finish_reason_map.get(claude_response.get('stop_reason'), claude_response.get('stop_reason'))
-
-        # Create the choice
-        choice = Choice(
-            index=0,
-            message=message,
-            logprobs=None,
-            finish_reason=finish_reason
-        )
-
-        # Create usage model
+        # Create usage model (include cache tokens for accurate accounting)
+        usage_meta = claude_response['usage']
+        cache_read = usage_meta.get('cache_read_input_tokens', 0)
+        cache_creation = usage_meta.get('cache_creation_input_tokens', 0)
+        prompt_tokens = usage_meta['input_tokens'] + cache_read + cache_creation
         usage = UsageModel(
-            prompt_tokens=claude_response['usage']['input_tokens'],
-            completion_tokens=claude_response['usage']['output_tokens'],
-            total_tokens=claude_response['usage']['input_tokens'] + claude_response['usage']['output_tokens'],
+            prompt_tokens=prompt_tokens,
+            completion_tokens=usage_meta['output_tokens'],
+            total_tokens=prompt_tokens + usage_meta['output_tokens'],
+            prompt_tokens_details=PromptTokensDetailsModel(cached_tokens=cache_read),
         )
 
-        # Create the final response
-        response = ModelChatResponse(
+        # Build standardized response
+        return build_response(
             id=claude_response['id'],
-            object='chat.completion',  # Standard OpenAI format
-            created=int(time.time()),  # Claude doesn't provide this, so use current time
             model=claude_response['model'],
-            choices=[choice],
+            content=content,
+            role=claude_response['role'],
+            finish_reason=finish_reason,
+            tool_calls=tool_calls,
             usage=usage,
-            service_tier=claude_response['usage'].get('service_tier'),
-            system_fingerprint=None  # Claude doesn't provide this
+            service_tier=claude_response['usage'].get('service_tier')
         )
-
-        return response
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
@@ -409,7 +435,7 @@ class EngineAnthropic(BaseChat):
             response = await client.post_json(url=self.base_url,
                                               data=json_data,
                                               headers=headers,
-                                              timeout=kwargs.get('timeout'))
+                                              timeout=kwargs.get('timeout', 30))
 
             return self.process_generate(response)
 
@@ -419,7 +445,8 @@ class EngineAnthropic(BaseChat):
         with HttpClient() as client:
             response = client.post_json(url=self.base_url,
                                         data=json_data,
-                                        headers=headers)
+                                        headers=headers,
+                                        timeout=kwargs.get('timeout', 30))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_stream_generate
@@ -436,7 +463,7 @@ class EngineAnthropic(BaseChat):
                                                self.base_url,
                                                data=json_data,
                                                headers=headers,
-                                               timeout=kwargs.get('timeout')):
+                                               timeout=kwargs.get('timeout', 30)):
                 if chunk:
                     evt = chunk.split('data:')
                     if len(evt) != 2:
@@ -468,7 +495,8 @@ class EngineAnthropic(BaseChat):
             usage = None
             async for chunk in client.post_stream(self.base_url,
                                                   data=json_data,
-                                                  headers=headers):
+                                                  headers=headers,
+                                                  timeout=kwargs.get('timeout', 30)):
                 if chunk:
                     evt = chunk.decode().split('data:')
                     if len(evt) != 2:
