@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Type
+from typing import Optional, Dict, Type, List, TYPE_CHECKING
 
 from magic_llm.engine import (
     EngineOpenAI,
@@ -10,6 +10,10 @@ from magic_llm.engine import (
     EngineAzure,
 )
 from magic_llm.engine.base_chat import BaseChat
+
+if TYPE_CHECKING:
+    from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
+    from magic_llm.model.discovery import NormalizedDiscoveredModel
 
 
 class MagicLlmBase:
@@ -63,3 +67,40 @@ class MagicLlmBase:
             engine_params['aws_access_key_id'] = private_key
 
         self.llm: BaseChat = engine_class(**engine_params)
+
+    @classmethod
+    def _resolve_discovery_adapter(
+        cls,
+        engine: str,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        **kwargs,
+    ) -> "BaseDiscoveryAdapter":
+        """Resolve and instantiate a discovery adapter for an engine.
+
+        Single resolution point used by :meth:`BaseChat.list_models` and
+        :meth:`BaseChat.async_list_models`. Adapters own their default URLs —
+        passing ``base_url=None`` falls through to adapter default.
+
+        Args:
+            engine: Engine name (e.g. ``"openai"``, ``"deepinfra"``).
+            api_key: API key for the provider.
+            base_url: Override URL for the discovery endpoint. ``None`` uses
+                      the adapter's ``DEFAULT_BASE_URL``.
+            **kwargs: Additional arguments forwarded to the adapter constructor.
+
+        Returns:
+            An instantiated discovery adapter.
+
+        Raises:
+            NotImplementedError: No discovery adapter registered for *engine*.
+        """
+        from magic_llm.engine.discovery import get_adapter
+
+        adapter_cls = get_adapter(engine)
+        if adapter_cls is None:
+            raise NotImplementedError(
+                f"Engine '{engine}' has no discovery adapter registered. "
+                "Model listing is not supported for this engine."
+            )
+        return adapter_cls(api_key=api_key, base_url=base_url, **kwargs)

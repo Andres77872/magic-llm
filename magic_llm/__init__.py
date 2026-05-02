@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Union
 
 from magic_llm.base import MagicLlmBase
+from magic_llm.model.discovery import NormalizedDiscoveredModel
 
 if TYPE_CHECKING:
     from magic_llm.model.ModelChatResponse import ModelChatResponse
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
     from magic_llm.agent.bundle import SubagentBundle
     from magic_llm.agent.definitions import SubagentManifest
 
-__version__ = '0.1.28'  # Subagent architecture complete (definitions/loader/registry/binder/bundle/decorator/config)
+__version__ = '0.1.29'  # Subagent architecture complete (definitions/loader/registry/binder/bundle/decorator/config)
 
 logger = logging.getLogger(__name__)
 
@@ -250,10 +251,61 @@ class MagicLLM(MagicLlmBase):
         Currently not implemented.
 
         Raises:
-            NotImplementedError: This feature is not yet implemented
+            NotImplementedError: The tags dictionary download functionality is not yet implemented
         """
         logger.warning("The download_tags_dictionary method is not yet implemented")
         raise NotImplementedError("The tags dictionary download functionality is not yet implemented")
+
+    # ─── Model Discovery ──────────────────────────────────────────────────
+
+    def list_models(self) -> List[NormalizedDiscoveredModel]:
+        """Discover available models from the provider's listing API.
+
+        Delegates to the underlying chat engine's ``list_models()``, which
+        resolves the registered discovery adapter for this engine and calls
+        its ``discover()`` method.
+
+        Returns:
+            Normalized list of discovered models. Always returns a list —
+            never ``None``.
+
+        Raises:
+            NotImplementedError: The engine has no registered discovery
+                adapter.
+            DiscoveryError: Provider API unreachable or returned an error.
+            DiscoveryAuthError: Invalid credentials.
+            DiscoveryRateLimitError: Rate limited.
+
+        Example:
+            >>> client = MagicLLM(engine="openai", private_key="sk-...")
+            >>> models = client.list_models()
+            >>> for m in models:
+            ...     print(m.external_id, m.capabilities.chat)
+        """
+        return self.llm.list_models()
+
+    async def async_list_models(self) -> List[NormalizedDiscoveredModel]:
+        """Async variant of :meth:`list_models`.
+
+        Calls ``await self.llm.async_list_models()`` which delegates to
+        the registered discovery adapter's ``async_discover()``.
+
+        Returns:
+            Normalized list of discovered models.
+
+        Raises:
+            NotImplementedError: The engine has no registered discovery
+                adapter.
+            DiscoveryError: Provider API unreachable or returned an error.
+            DiscoveryAuthError: Invalid credentials.
+            DiscoveryRateLimitError: Rate limited.
+
+        Example:
+            >>> client = MagicLLM(engine="openai", private_key="sk-...")
+            >>> models = await client.async_list_models()
+            >>> print(f"Found {len(models)} models")
+        """
+        return await self.llm.async_list_models()
 
     # ─── Legacy agentic methods (deprecated) ────────────────────────────────
 

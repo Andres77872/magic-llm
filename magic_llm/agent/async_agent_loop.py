@@ -226,6 +226,7 @@ class AsyncAgentLoop:
                         getattr(self._hooks, "on_iteration_start", None),
                         self._state.step,
                         self.state,
+                        state=self.state,
                     )
 
                     # Step 2: LLM_CALL (async)
@@ -254,6 +255,7 @@ class AsyncAgentLoop:
                         getattr(self._hooks, "on_llm_response", None),
                         response,
                         self.state,
+                        state=self.state,
                     )
 
                     # Step 5: EXTRACT — use adapter to deserialize tool calls
@@ -292,22 +294,27 @@ class AsyncAgentLoop:
                     # Step 8: VALIDATE_INTEGRITY
                     self._adapter.validate_pair_integrity(chat)
 
+                    # Hook: on_tool_start — invoke BEFORE execution for EACH tool call
+                    for tc in tool_calls:
+                        _invoke_hook_safely(
+                            getattr(self._hooks, "on_tool_start", None),
+                            tc.name,
+                            tc.id,
+                            tc.arguments,  # actual arguments, not empty dict
+                            self.state,
+                            state=self.state,
+                        )
+
                     # Step 9: EXECUTE — run tools in parallel (async)
                     results = await self._executor.execute_parallel_async(tool_calls)
 
-                    # Invoke hooks for each tool result
+                    # Hook: on_tool_complete — invoke AFTER execution for each result
                     for result in results:
-                        _invoke_hook_safely(
-                            getattr(self._hooks, "on_tool_start", None),
-                            result.name,
-                            result.tool_call_id or "",
-                            {},
-                            self.state,
-                        )
                         _invoke_hook_safely(
                             getattr(self._hooks, "on_tool_complete", None),
                             result,
                             self.state,
+                            state=self.state,
                         )
 
                     # Step 10: INJECT
@@ -341,6 +348,7 @@ class AsyncAgentLoop:
                 getattr(self._hooks, "on_loop_complete", None),
                 response,
                 self.state,
+                state=self.state,
             )
 
         return response
@@ -415,6 +423,7 @@ class AsyncAgentLoop:
                         getattr(self._hooks, "on_iteration_start", None),
                         self._state.step,
                         self.state,
+                        state=self.state,
                     )
 
                     # Stream from LLM (async)
@@ -500,6 +509,7 @@ class AsyncAgentLoop:
                             getattr(self._hooks, "on_llm_response", None),
                             response,
                             self.state,
+                            state=self.state,
                         )
 
                         # Extract tool calls from accumulated data
@@ -548,22 +558,27 @@ class AsyncAgentLoop:
                         # Validate integrity
                         self._adapter.validate_pair_integrity(chat)
 
+                        # Hook: on_tool_start — invoke BEFORE execution for EACH tool call
+                        for tc in tool_calls:
+                            _invoke_hook_safely(
+                                getattr(self._hooks, "on_tool_start", None),
+                                tc.name,
+                                tc.id,
+                                tc.arguments,  # actual arguments, not empty dict
+                                self.state,
+                                state=self.state,
+                            )
+
                         # Execute tools (async)
                         results = await self._executor.execute_parallel_async(tool_calls)
 
-                        # Hooks
+                        # Hook: on_tool_complete — invoke AFTER execution for each result
                         for result in results:
-                            _invoke_hook_safely(
-                                getattr(self._hooks, "on_tool_start", None),
-                                result.name,
-                                result.tool_call_id or "",
-                                {},
-                                self.state,
-                            )
                             _invoke_hook_safely(
                                 getattr(self._hooks, "on_tool_complete", None),
                                 result,
                                 self.state,
+                                state=self.state,
                             )
 
                         # Inject results

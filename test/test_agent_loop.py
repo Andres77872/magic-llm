@@ -308,7 +308,7 @@ class TestFinalizeResponse:
 # ─── Slice 3: _invoke_hook_safely, _compute_fingerprint
 
 class TestInvokeHookSafely:
-    """_invoke_hook_safely calls hooks and propagates exceptions."""
+    """_invoke_hook_safely calls hooks and isolates exceptions (logs, does not propagate)."""
 
     def test_invoke_hook_safely_calls_method(self):
         calls = []
@@ -317,14 +317,33 @@ class TestInvokeHookSafely:
         _invoke_hook_safely(hook, 1, 2)
         assert calls == [(1, 2)]
 
-    def test_invoke_hook_safely_propagates_exception(self):
+    def test_invoke_hook_safely_isolates_exception(self):
+        """Hook exceptions are caught and logged, NOT propagated to caller."""
         def hook():
             raise ValueError("boom")
-        with pytest.raises(ValueError, match="boom"):
-            _invoke_hook_safely(hook)
+        # Exception should be logged but NOT raised
+        _invoke_hook_safely(hook)  # no crash
 
     def test_invoke_hook_safely_noop_when_hook_is_none(self):
         _invoke_hook_safely(None, 1, 2, 3)  # no crash
+
+    def test_invoke_hook_safely_logs_with_state_context(self):
+        """Hook failures are logged with state context when provided."""
+        from magic_llm.agent.types import AgentState
+        
+        def hook():
+            raise ValueError("boom")
+        
+        state = AgentState(
+            messages=[],
+            step=5,
+            start_time=0.0,
+            total_input_tokens=100,
+            total_output_tokens=50,
+        )
+        
+        # Exception should be logged with state context but NOT raised
+        _invoke_hook_safely(hook, state=state)  # no crash
 
 
 class TestComputeFingerprint:

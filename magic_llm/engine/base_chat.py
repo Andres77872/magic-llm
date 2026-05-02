@@ -6,11 +6,14 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any, Dict, Tuple
+from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any, Dict, Tuple, TYPE_CHECKING
 
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
+
+if TYPE_CHECKING:
+    from magic_llm.model.discovery import NormalizedDiscoveredModel
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChatMetaModel
 
 logger = logging.getLogger(__name__)
@@ -583,3 +586,60 @@ class BaseChat(abc.ABC):
     def sync_audio_transcriptions(self, speech_request: AudioTranscriptionsRequest, **kwargs) -> Any:
         """Generate audio transcriptions synchronously."""
         pass
+
+    # ═══════════════════════════════════════════════════════════════════
+    # DISCOVERY METHODS (Optional — per spec.md Section "Optional Discovery Interface")
+    # ═══════════════════════════════════════════════════════════════════
+
+    def list_models(self) -> List["NormalizedDiscoveredModel"]:
+        """Discover available models from the provider's listing API.
+        
+        Delegates to :meth:`MagicLlmBase._resolve_discovery_adapter` using
+        the chat instance's engine name and credentials. The chat ``base_url``
+        is deliberately NOT reused — each discovery adapter owns its own
+        endpoint URL.
+        
+        Returns:
+            List of NormalizedDiscoveredModel objects
+            
+        Raises:
+            NotImplementedError: Engine has no registered discovery adapter.
+            DiscoveryError: Provider API unreachable or returned an error.
+            DiscoveryAuthError: Invalid credentials.
+            DiscoveryRateLimitError: Rate limited.
+        """
+        from magic_llm.base import MagicLlmBase
+        from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
+        
+        creds = BaseDiscoveryAdapter.resolve_credentials(self)
+        adapter = MagicLlmBase._resolve_discovery_adapter(
+            engine=self.engine,
+            api_key=creds["api_key"],
+            base_url=None,  # adapter default — not chat base_url
+        )
+        return adapter.discover()
+    
+    async def async_list_models(self) -> List["NormalizedDiscoveredModel"]:
+        """Async variant of :meth:`list_models`.
+        
+        Delegates to the async discovery adapter path.
+        
+        Returns:
+            List of NormalizedDiscoveredModel objects
+            
+        Raises:
+            NotImplementedError: Engine has no registered discovery adapter.
+            DiscoveryError: Provider API unreachable or returned an error.
+            DiscoveryAuthError: Invalid credentials.
+            DiscoveryRateLimitError: Rate limited.
+        """
+        from magic_llm.base import MagicLlmBase
+        from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
+        
+        creds = BaseDiscoveryAdapter.resolve_credentials(self)
+        adapter = MagicLlmBase._resolve_discovery_adapter(
+            engine=self.engine,
+            api_key=creds["api_key"],
+            base_url=None,  # adapter default — not chat base_url
+        )
+        return await adapter.async_discover()

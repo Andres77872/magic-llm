@@ -9,7 +9,7 @@ Functions:
     _build_initial_chat: Creates a ModelChat from system/user/extra messages.
     _register_tools_with_executor: Registers tools from callables and dicts.
     _finalize_response: Concatenates collected content into the final response.
-    _invoke_hook_safely: Calls a hook method, propagating exceptions.
+    _invoke_hook_safely: Calls a hook method, isolating exceptions (logs, does not propagate).
     _compute_fingerprint: SHA-256 hash for tool deduplication.
 
 Global Depth Helpers:
@@ -32,7 +32,9 @@ import contextvars
 import copy
 import hashlib
 import json
+import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from magic_llm.model import ModelChat, ModelChatResponse
@@ -44,6 +46,9 @@ from magic_llm.agent.types import (
     TaskManifest,
 )
 from magic_llm.agent.tool_executor import ToolExecutor
+
+
+logger = logging.getLogger(__name__)
 
 
 # ─── Global Depth ContextVar ───────────────────────────────────────────────────
@@ -282,19 +287,54 @@ def _finalize_response(
 def _invoke_hook_safely(
     hook_method: Optional[Callable[..., Any]],
     *args: Any,
+    state: Optional[AgentState] = None,
 ) -> None:
-    """Invoke a hook method safely, propagating any exceptions.
+    """Invoke a hook method safely, isolating exceptions (logs, does not propagate).
 
-    "Safely" means: if the hook is None, skip. Otherwise call it and
-    let any exception propagate (hooks are observers, not interceptors).
+    Hook exceptions are caught and logged with full context, then execution
+    continues. This ensures hook failures do NOT terminate the agent loop.
 
     Args:
         hook_method: The hook method to call, or None to skip.
         *args: Arguments to pass to the hook method.
+        state: Optional AgentState for logging context (step, messages count, etc).
     """
     if hook_method is None:
         return
-    hook_method(*args)
+    
+    hook_name = getattr(hook_method, "__name__", "unknown_hook")
+    
+    try:
+        hook_method(*args)
+    except Exception as e:
+        # Log hook failure with full context
+        timestamp = datetime.now(timezone.utc).isoformat()
+        error_type = type(e).__name__
+        error_message = str(e)
+        
+        # Build state context for logging
+        state_context = {}
+        if state is not None:
+            state_context = {
+                "step": state.step,
+                "messages_count": len(state.messages) if state.messages else 0,
+                "total_input_tokens": state.total_input_tokens,
+                "total_output_tokens": state.total_output_tokens,
+            }
+        
+        logger.warning(
+            "Hook '%s' raised exception: %s: %s",
+            hook_name,
+            error_type,
+            error_message,
+            extra={
+                "timestamp": timestamp,
+                "hook_name": hook_name,
+                "error_type": error_type,
+                "error_message": error_message,
+                "state": state_context,
+            }
+        )
 
 
 def _compute_child_budget(

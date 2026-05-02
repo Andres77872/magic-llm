@@ -581,7 +581,56 @@ except ChatException as e:
 
 ---
 
-## 13) Parameter recap (most used)
+## 13) Model Discovery
+
+You can list models available from a provider without instantiating a chat:
+
+### Sync
+
+```python
+client = MagicLLM(engine="openai", private_key="sk-...")
+
+models = client.list_models()
+for m in models:
+    print(m.external_id, m.capabilities.chat, m.capabilities.vision)
+```
+
+Each element in the returned list is a `NormalizedDiscoveredModel` with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `external_id` | `str` | Provider's raw model ID |
+| `provider` | `str` | Engine identifier |
+| `display_name` | `Optional[str]` | Human-readable name |
+| `capabilities` | `ModelCapabilities` | Boolean flags (chat, vision, embedding, etc.) |
+| `context_window` | `Optional[int]` | Max context tokens |
+| `pricing` | `Optional[PricingInfo]` | Per-million-token pricing (OpenRouter only) |
+| `raw` | `Dict` | Original provider payload |
+
+### Async
+
+```python
+models = await client.async_list_models()
+print(f"Found {len(models)} models")
+```
+
+### Supported engines
+
+```python
+from magic_llm.engine.discovery import list_supported_engines
+
+print(list_supported_engines())
+# ['anthropic', 'azure', 'azure-foundry', 'cerebras', 'cohere',
+#  'deepinfra', 'deepseek', 'google', 'groq', 'hyperbolic',
+#  'mistral', 'nebius', 'novita', 'openai', 'openrouter',
+#  'parasail', 'perplexity', 'sambanova', 'together', 'xai']
+```
+
+> **Note**: Engines without a registered discovery adapter (`cloudflare`, `amazon`, `azure-speech`) raise `NotImplementedError` if you call `list_models()` on them.
+
+---
+
+## 14) Parameter recap (most used)
 
 - `MagicLLM(engine, model, private_key, callback=None, fallback=None, tools=None, tool_choice=None, ...)`
 - `llm.generate(chat, tools=None, tool_choice=None, ...)`
@@ -593,5 +642,7 @@ except ChatException as e:
 - `llm.audio_speech(AudioSpeechRequest, ...)` (provider-dependent sync support)
 - `await llm.async_audio_speech(AudioSpeechRequest, ...)`
 - Images via `ModelChat.add_user_message(content, image=..., media_type=...)`
+- `client.list_models()` — sync model discovery
+- `await client.async_list_models()` — async model discovery
 
 This completes the end‑to‑end usage of the MagicLLM client.
