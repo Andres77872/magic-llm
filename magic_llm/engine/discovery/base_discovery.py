@@ -255,12 +255,17 @@ class BaseDiscoveryAdapter(abc.ABC):
             return []
         return [self._normalize_single_model(m) for m in raw_models]
 
-    def _extract_raw_models(self, raw_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _extract_raw_models(self, raw_response: Dict[str, Any] | List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Extract the list of model records from the provider response shape.
 
         Default: ``raw_response.get("data", [])`` or ``raw_response.get("models", [])``.
         Override for providers with non-standard response shapes (e.g. Azure Foundry 'value').
+
+        Safety net: bare JSON arrays are returned as-is to avoid ``AttributeError``
+        when a misconfigured engine string causes the wrong adapter to be selected.
         """
+        if isinstance(raw_response, list):
+            return raw_response
         return raw_response.get("data", []) or raw_response.get("models", [])
 
     def _normalize_single_model(self, raw_model: Dict[str, Any]) -> NormalizedDiscoveredModel:

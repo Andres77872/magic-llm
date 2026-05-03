@@ -22,6 +22,9 @@ from magic_llm.engine.discovery.base_discovery import (
     DiscoveryAuthError,
     DiscoveryRateLimitError,
 )
+from magic_llm.engine.discovery.openai_discovery import (
+    OpenAIDiscoveryAdapter,
+)
 from magic_llm.util.http import HttpError
 
 
@@ -455,3 +458,43 @@ class TestResolveCredentials:
         assert len(result) == 2
         for m in result:
             assert m.provider == "openai"
+
+
+# ── Base adapter bare-array guard ──────────────────────────────────────────
+
+class TestBareArrayGuard:
+    """Regression: _extract_raw_models must not crash on bare JSON arrays.
+
+    Together, SambaNova, and Cohere return bare JSON arrays from their model endpoints.
+    If a misconfigured provider record points at a non-overriding adapter, these must not
+    raise ``AttributeError`` (the default ``.get("data", [])`` call fails on ``list``).
+
+    Uses ``OpenAIDiscoveryAdapter`` (concrete, inherits base ``_extract_raw_models``).
+    """
+
+    def test_bare_array_returns_list_as_is(self):
+        adapter = OpenAIDiscoveryAdapter(api_key="sk-test", base_url="https://api.openai.com/v1/models")
+        raw = [
+            {"id": "model-a", "object": "model"},
+            {"id": "model-b", "object": "model"},
+        ]
+        result = adapter._extract_raw_models(raw)
+        assert result == raw
+        assert len(result) == 2
+
+    def test_bare_empty_array_returns_empty_list(self):
+        adapter = OpenAIDiscoveryAdapter(api_key="sk-test", base_url="https://api.openai.com/v1/models")
+        result = adapter._extract_raw_models([])
+        assert result == []
+
+    def test_dict_data_still_works(self):
+        adapter = OpenAIDiscoveryAdapter(api_key="sk-test", base_url="https://api.openai.com/v1/models")
+        raw = {"data": [{"id": "model-a"}, {"id": "model-b"}]}
+        result = adapter._extract_raw_models(raw)
+        assert len(result) == 2
+
+    def test_dict_models_key_still_works(self):
+        adapter = OpenAIDiscoveryAdapter(api_key="sk-test", base_url="https://api.openai.com/v1/models")
+        raw = {"models": [{"id": "model-a"}]}
+        result = adapter._extract_raw_models(raw)
+        assert len(result) == 1
