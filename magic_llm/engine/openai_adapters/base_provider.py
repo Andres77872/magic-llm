@@ -190,7 +190,7 @@ class OpenAiBaseProvider(ABC):
                 raise Exception(f'no choices, {chunk}')
             chunk['usage'] = c if (c := chunk.get('usage', {})) else {}
             if len(chunk['choices']) == 0:
-                chunk['choices'] = [{}]
+                return None
             chunk = ChatCompletionModel(**chunk)
             return chunk
         else:

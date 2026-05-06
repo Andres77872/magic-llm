@@ -81,7 +81,8 @@ class NormalizedDiscoveredModel(BaseModel):
     )
     
     # Limits (optional)
-    context_window: Optional[int] = Field(default=None, description="Maximum context window tokens")
+    context_window: Optional[int] = Field(default=None, description="Maximum usable context/input budget for prompt planning. Provider's combined context window when available from API; falls back to input token limit when the provider guarantees equivalence (e.g., Anthropic, Google). May equal max_input_tokens when input budget = usable context.")
+    max_input_tokens: Optional[int] = Field(default=None, description="Maximum input/prompt tokens allowed")
     max_output_tokens: Optional[int] = Field(default=None, description="Maximum output/completion tokens")
     
     # Pricing (optional — only some providers expose)

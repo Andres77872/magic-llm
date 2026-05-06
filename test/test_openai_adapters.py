@@ -42,8 +42,8 @@ class TestGroqProcessChunk:
         assert result.usage.completion_tokens == 5
         assert result.usage.total_tokens == 15
 
-    def test_empty_choices_filled(self):
-        """Groq chunks with no choices get a placeholder."""
+    def test_empty_choices_skipped(self):
+        """Groq chunks with no choices are skipped (usage-only chunk)."""
         chunk = (
             'data: {"id":"chat-1","model":"llama","choices":[],'
             '"x_groq":{"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}}\n\n'
@@ -51,8 +51,7 @@ class TestGroqProcessChunk:
 
         result = self.provider.process_chunk(chunk)
 
-        assert isinstance(result, ChatCompletionModel)
-        assert len(result.choices) == 1
+        assert result is None
 
     def test_returns_none_for_done(self):
         result = self.provider.process_chunk("data: [DONE]\n\n")
@@ -119,7 +118,7 @@ class TestDeepseekProcessChunk:
         if result.usage.prompt_tokens_details:
             assert result.usage.prompt_tokens_details.cached_tokens is None
 
-    def test_empty_choices_filled(self):
+    def test_empty_choices_skipped(self):
         chunk = (
             'data: {"id":"chat-1","model":"deepseek","choices":[],'
             '"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}\n\n'
@@ -127,8 +126,7 @@ class TestDeepseekProcessChunk:
 
         result = self.provider.process_chunk(chunk)
 
-        assert isinstance(result, ChatCompletionModel)
-        assert len(result.choices) == 1
+        assert result is None
 
     def test_returns_none_for_done(self):
         result = self.provider.process_chunk("data: [DONE]\n\n")
@@ -193,6 +191,15 @@ class TestOpenAiBaseProcessChunk:
         assert result is not None
         assert result.choices[0].delta.content == "some random text"
         assert result.model == "dummy"
+
+    def test_empty_choices_skipped(self):
+        """Base provider skips usage-only chunks with empty choices."""
+        chunk = (
+            'data: {"id":"chat-1","model":"test","choices":[],'
+            '"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}\n\n'
+        )
+        result = self.provider.process_chunk(chunk)
+        assert result is None
 
     def test_empty_chunk_returns_none(self):
         result = self.provider.process_chunk("")

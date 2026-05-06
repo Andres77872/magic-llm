@@ -27,6 +27,6 @@ class ProviderDeepseek(OpenAiBaseProvider):
                                             prompt_tokens_details=PromptTokensDetailsModel(
                                                 cached_tokens=u.get('prompt_cache_hit_tokens')))
             if len(chunk['choices']) == 0:
-                chunk['choices'] = [{}]
+                return None
             chunk = ChatCompletionModel(**chunk)
             return chunk

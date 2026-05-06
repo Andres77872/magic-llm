@@ -79,7 +79,8 @@ class TestGoogleNormalization:
         assert pro.external_id == "gemini-1.5-pro"
         assert pro.display_name == "Gemini 1.5 Pro"
         assert pro.capabilities.chat is True
-        assert pro.context_window == 128000
+        assert pro.context_window == 128000  # inputTokenLimit = usable context per unified contract
+        assert pro.max_input_tokens == 128000
         assert pro.max_output_tokens == 8192
 
     def test_embedding_model(self):
@@ -88,6 +89,26 @@ class TestGoogleNormalization:
         embedding = result[2]
         assert embedding.capabilities.chat is False
         assert embedding.capabilities.embedding is True
+
+
+    def test_no_defaults_when_fields_absent(self):
+        """When inputTokenLimit and outputTokenLimit are absent, all three token fields stay None."""
+        adapter = GoogleDiscoveryAdapter(api_key="gk-test")
+        payload = {
+            "models": [
+                {
+                    "name": "models/some-unknown-model",
+                    "displayName": "Unknown Model",
+                    "supportedGenerationMethods": ["generateContent"],
+                },
+            ],
+        }
+        result = adapter._normalize_response(payload)
+        assert len(result) == 1
+        mdl = result[0]
+        assert mdl.context_window is None
+        assert mdl.max_input_tokens is None
+        assert mdl.max_output_tokens is None
 
 
 class TestGoogleDiscover:

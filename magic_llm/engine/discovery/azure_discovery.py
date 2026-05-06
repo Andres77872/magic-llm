@@ -124,9 +124,9 @@ class AzureOpenAIDiscoveryAdapter(BaseDiscoveryAdapter):
             reasoning=False,
         )
 
-    def _infer_context_window(self, raw_model: Dict[str, Any]) -> Optional[int]:
-        """Extract context window from Azure OpenAI response fields."""
-        return raw_model.get("context_window") or raw_model.get("max_context")
+    # _infer_context_window is inherited from BaseDiscoveryAdapter.
+    # Default alias chain (context_window → context_length → max_context → ...)
+    # handles Azure OpenAI's ``context_window`` and ``max_context`` fields.
 
 
 # =============================================================================
@@ -246,10 +246,9 @@ class AzureFoundryDiscoveryAdapter(BaseDiscoveryAdapter):
             reasoning=False,
         )
 
-    def _infer_context_window(self, raw_model: Dict[str, Any]) -> Optional[int]:
-        """Extract context window from Azure Foundry ``limits.context``."""
-        limits = raw_model.get("limits", {})
-        return limits.get("context")
+    # Azure Foundry nests context under ``limits.context``.  Custom prefix
+    # ensures the nested path is probed first, then falls back to defaults.
+    _context_window_aliases = ["limits.context", "context_window", "context_length", "max_context"]
 
     def _extract_pricing(self, raw_model: Dict[str, Any]) -> Optional[PricingInfo]:
         """Extract pricing from Azure Foundry management plane response.

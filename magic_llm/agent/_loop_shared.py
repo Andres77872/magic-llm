@@ -35,7 +35,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.agent.types import (
@@ -46,6 +46,9 @@ from magic_llm.agent.types import (
     TaskManifest,
 )
 from magic_llm.agent.tool_executor import ToolExecutor
+
+if TYPE_CHECKING:
+    from magic_llm.agent.hooks import AgentHooks
 
 
 logger = logging.getLogger(__name__)
@@ -73,6 +76,33 @@ PARENT_STATE: contextvars.ContextVar[Optional[AgentState]] = contextvars.Context
     'parent_state',
     default=None
 )
+
+PARENT_HOOKS: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
+    'parent_hooks',
+    default=None
+)
+"""ContextVar for parent AgentHooks (nested LLM node hook propagation).
+
+Set by AsyncAgentLoop.run()/stream() before child loop creation.
+Read by TaskExecutor._execute_nested_llm_node() to propagate hooks
+to child loops. Reset in try/finally blocks to prevent cross-run
+contamination.
+
+Follows the exact PARENT_BUDGET/PARENT_STATE pattern.
+"""
+
+DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar(
+    'depth',
+    default=0
+)
+"""ContextVar for auto-incrementing nesting depth.
+
+Incremented in TaskExecutor._execute_nested_llm_node() before
+child loop creation. Used by NestedHookRelay to tag child events
+with the current depth level.
+
+Root = 0, first child = 1, grandchild = 2, etc.
+"""
 
 
 # ─── Global Depth Helper Functions ──────────────────────────────────────────────

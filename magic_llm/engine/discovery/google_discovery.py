@@ -84,6 +84,14 @@ class GoogleDiscoveryAdapter(BaseDiscoveryAdapter):
             headers["x-goog-api-key"] = self.api_key
         return headers
 
+    # ── Token alias profiles ──────────────────────────────────────────────
+    # Google uses camelCase field names; custom alias prefixes ensure
+    # inputTokenLimit/outputTokenLimit win over the default chain.
+
+    _context_window_aliases = ["inputTokenLimit"]
+    _max_input_tokens_aliases = ["inputTokenLimit"]
+    _max_output_tokens_aliases = ["outputTokenLimit"]
+
     # ── Pipeline overrides ────────────────────────────────────────────────
 
     def _extract_raw_models(self, raw_response: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -102,14 +110,6 @@ class GoogleDiscoveryAdapter(BaseDiscoveryAdapter):
     def _extract_display_name(self, raw_model: Dict[str, Any]) -> Optional[str]:
         """Google uses camelCase ``displayName`` (not snake_case)."""
         return raw_model.get("displayName")
-
-    def _infer_context_window(self, raw_model: Dict[str, Any]) -> Optional[int]:
-        """Google provides ``inputTokenLimit`` directly in model data."""
-        return raw_model.get("inputTokenLimit")
-
-    def _infer_max_output_tokens(self, raw_model: Dict[str, Any]) -> Optional[int]:
-        """Google provides ``outputTokenLimit`` directly in model data."""
-        return raw_model.get("outputTokenLimit")
 
     def _infer_vision_capability(self, model_data: Dict[str, Any]) -> bool:
         """Infer vision capability from model name.

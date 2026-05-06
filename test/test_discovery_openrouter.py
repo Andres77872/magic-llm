@@ -29,6 +29,10 @@ OPENROUTER_PAYLOAD = {
                 "modality": {"input": ["text", "image"], "output": ["text"]},
                 "tokenizer": "GPT",
             },
+            "top_provider": {
+                "context_length": 128000,
+                "max_completion_tokens": 16384,
+            },
         },
         {
             "id": "anthropic/claude-3.5-sonnet",
@@ -73,7 +77,15 @@ class TestOpenRouterNormalization:
         assert gpt4o.pricing.input_per_million == 2.5
         assert gpt4o.pricing.output_per_million == 10.0
         assert gpt4o.context_window == 128000
+        assert gpt4o.max_input_tokens is None
+        assert gpt4o.max_output_tokens == 16384
         assert gpt4o.capabilities.vision is True
+
+        claude = result[1]
+        assert claude.external_id == "anthropic/claude-3.5-sonnet"
+        assert claude.context_window == 200000
+        assert claude.max_input_tokens is None
+        assert claude.max_output_tokens is None
 
     def test_no_auth_discover(self):
         adapter = OpenRouterDiscoveryAdapter(api_key=None)

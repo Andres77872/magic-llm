@@ -15,7 +15,10 @@ import json
 import time
 from typing import Any, AsyncIterator, Callable, Optional
 
-from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.model import ModelChat
+from magic_llm.model.ModelChatResponse import (
+    ModelChatResponse, Choice, Message,
+)
 from magic_llm.model.ModelChatStream import (
     ChatCompletionModel,
     ChoiceModel,
@@ -38,6 +41,7 @@ from magic_llm.agent._loop_shared import (
     _register_tools_with_executor,
     # Parent context ContextVars for nested LLM node execution
     PARENT_BUDGET,
+    PARENT_HOOKS,
     PARENT_STATE,
 )
 
@@ -203,11 +207,13 @@ class AsyncAgentLoop:
             start_time=time.monotonic(),
         )
 
-        # Set parent budget/state ContextVars for nested LLM node execution
-        # Child tasks can read these via PARENT_BUDGET.get() and PARENT_STATE.get()
+        # Set parent context ContextVars for nested LLM node execution
+        # Child tasks can read these via PARENT_BUDGET.get(), PARENT_STATE.get(),
+        # and PARENT_HOOKS.get()
         # Capture tokens for cleanup in finally block (prevent cross-run contamination)
         parent_budget_token = PARENT_BUDGET.set(self._budget)
         parent_state_token = PARENT_STATE.set(self._state)
+        parent_hooks_token = PARENT_HOOKS.set(self._hooks)
 
         collected_content: list[str] = []
         response: Optional[ModelChatResponse] = None
@@ -219,7 +225,17 @@ class AsyncAgentLoop:
             try:
                 while True:
                     # Step 3: CHECK_BUDGET (pre-call: iterations + wall-clock)
-                    _check_budget(self._state, self._budget, include_tokens=False)
+                    try:
+                        _check_budget(self._state, self._budget, include_tokens=False)
+                    except AgentBudgetExceeded as exc:
+                        # Fire on_budget_exceeded BEFORE exception propagates
+                        _invoke_hook_safely(
+                            getattr(self._hooks, "on_budget_exceeded", None),
+                            exc.budget_type,
+                            str(exc),
+                            state=self.state,
+                        )
+                        raise
 
                     # Hook: on_iteration_start
                     _invoke_hook_safely(
@@ -248,7 +264,17 @@ class AsyncAgentLoop:
                         ) or 0
 
                     # Step 3 (post-call): CHECK_BUDGET (tokens)
-                    _check_budget(self._state, self._budget, include_tokens=True)
+                    try:
+                        _check_budget(self._state, self._budget, include_tokens=True)
+                    except AgentBudgetExceeded as exc:
+                        # Fire on_budget_exceeded BEFORE exception propagates
+                        _invoke_hook_safely(
+                            getattr(self._hooks, "on_budget_exceeded", None),
+                            exc.budget_type,
+                            str(exc),
+                            state=self.state,
+                        )
+                        raise
 
                     # Step 4: HOOK — on_llm_response
                     _invoke_hook_safely(
@@ -331,10 +357,11 @@ class AsyncAgentLoop:
 
         finally:
             self._release_lock()
-            # Reset parent budget/state ContextVars (prevent cross-run contamination)
+            # Reset parent context ContextVars (prevent cross-run contamination)
             # Use tokens captured at set() to restore previous values
             PARENT_BUDGET.reset(parent_budget_token)
             PARENT_STATE.reset(parent_state_token)
+            PARENT_HOOKS.reset(parent_hooks_token)
 
         # Finalize response
         if response is not None:
@@ -403,20 +430,40 @@ class AsyncAgentLoop:
             start_time=time.monotonic(),
         )
 
-        # Set parent budget/state ContextVars for nested LLM node execution
-        # Child tasks can read these via PARENT_BUDGET.get() and PARENT_STATE.get()
+        # Accumulated content across all iterations (for on_loop_complete)
+        collected_content: list[str] = []
+        response: Optional[ModelChatResponse] = None
+
+        # Set parent context ContextVars for nested LLM node execution
+        # Child tasks can read these via PARENT_BUDGET.get(), PARENT_STATE.get(),
+        # and PARENT_HOOKS.get()
         # Capture tokens for cleanup in finally block (prevent cross-run contamination)
         parent_budget_token = PARENT_BUDGET.set(self._budget)
         parent_state_token = PARENT_STATE.set(self._state)
+        parent_hooks_token = PARENT_HOOKS.set(self._hooks)
 
         # Acquire concurrency guard
         self._acquire_lock()
         try:
             await self._lock.acquire()
+            # Track whether budget was exceeded — if so, skip on_loop_complete
+            # in the finally block (budget-exceeded uses on_budget_exceeded instead)
+            _budget_exceeded = False
             try:
                 while True:
-                    # Pre-call budget check
-                    _check_budget(self._state, self._budget, include_tokens=False)
+                    # Pre-call budget check (iterations + wall-clock)
+                    try:
+                        _check_budget(self._state, self._budget, include_tokens=False)
+                    except AgentBudgetExceeded as exc:
+                        _budget_exceeded = True
+                        # Fire on_budget_exceeded BEFORE exception propagates
+                        _invoke_hook_safely(
+                            getattr(self._hooks, "on_budget_exceeded", None),
+                            exc.budget_type,
+                            str(exc),
+                            state=self.state,
+                        )
+                        raise
 
                     # Hook: on_iteration_start
                     _invoke_hook_safely(
@@ -431,7 +478,6 @@ class AsyncAgentLoop:
                     accumulated_tool_calls: dict[int, dict[str, Any]] = {}
                     iteration_content: list[str] = []
                     last_chunk: Optional[ChatCompletionModel] = None
-                    response = None
 
                     async for chunk in self._client.llm.async_stream_generate(
                         chat,
@@ -466,10 +512,6 @@ class AsyncAgentLoop:
 
                     # Build synthetic response for adapter methods
                     if last_chunk is not None:
-                        from magic_llm.model.ModelChatResponse import (
-                            ModelChatResponse, Choice, Message,
-                        )
-
                         response = ModelChatResponse(
                             id=last_chunk.id or "stream-synthetic",
                             object="chat.completion",
@@ -501,8 +543,19 @@ class AsyncAgentLoop:
                                 last_chunk.usage, "completion_tokens", 0
                             ) or 0
 
-                        # Post-call budget check
-                        _check_budget(self._state, self._budget, include_tokens=True)
+                        # Post-call budget check (tokens)
+                        try:
+                            _check_budget(self._state, self._budget, include_tokens=True)
+                        except AgentBudgetExceeded as exc:
+                            _budget_exceeded = True
+                            # Fire on_budget_exceeded BEFORE exception propagates
+                            _invoke_hook_safely(
+                                getattr(self._hooks, "on_budget_exceeded", None),
+                                exc.budget_type,
+                                str(exc),
+                                state=self.state,
+                            )
+                            raise
 
                         # Hook: on_llm_response
                         _invoke_hook_safely(
@@ -535,7 +588,9 @@ class AsyncAgentLoop:
 
                         # Record content
                         if iteration_content:
-                            chat.add_assistant_message("".join(iteration_content))
+                            iter_content = "".join(iteration_content)
+                            chat.add_assistant_message(iter_content)
+                            collected_content.append(iter_content)
 
                         # Add tool_call message
                         if tool_calls:
@@ -602,11 +657,24 @@ class AsyncAgentLoop:
                     self._state.step += 1
 
             finally:
+                # Fire on_loop_complete with accumulated response
+                # Runs for normal exit, generator close(), and exceptions.
+                # Does NOT fire on budget-exceeded — that path uses on_budget_exceeded instead.
+                if response is not None:
+                    _finalize_response(response, collected_content, self._content_separator)
+                if not _budget_exceeded:
+                    _invoke_hook_safely(
+                        getattr(self._hooks, "on_loop_complete", None),
+                        response,
+                        self.state,
+                        state=self.state,
+                    )
                 self._lock.release()
 
         finally:
             self._release_lock()
-            # Reset parent budget/state ContextVars (prevent cross-run contamination)
+            # Reset parent context ContextVars (prevent cross-run contamination)
             # Use tokens captured at set() to restore previous values
             PARENT_BUDGET.reset(parent_budget_token)
             PARENT_STATE.reset(parent_state_token)
+            PARENT_HOOKS.reset(parent_hooks_token)

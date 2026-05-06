@@ -189,6 +189,10 @@ class TestOpenAIAsyncDiscover:
             assert s.external_id == r.external_id
             assert s.provider == r.provider
             assert s.capabilities == r.capabilities
+            assert s.context_window == r.context_window
+            assert s.max_input_tokens == r.max_input_tokens
+            assert s.max_output_tokens == r.max_output_tokens
+            assert s.pricing == r.pricing
 
 
 # ── Registry Access Test ──────────────────────────────────────────────────

@@ -1384,6 +1384,133 @@ class TestAgentLoopStream:
         assert len(separator_chunks) == 0
 
 
+# ─── Slice 9b: AgentLoop.stream() budget enforcement
+
+class TestAgentLoopStreamBudget:
+    """AgentLoop.stream() enforces budgets and fires on_budget_exceeded hook.
+
+    Regression: bare _check_budget() calls in stream() were missing
+    try/except AgentBudgetExceeded and the on_budget_exceeded hook,
+    causing on_loop_complete to fire incorrectly on budget-exceeded exit.
+    """
+
+    def test_stream_budget_exceeded_max_iterations(self):
+        """Budget exceeded in stream raises AgentBudgetExceeded with correct type."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        # Empty generator — never enters streaming body
+        client.llm.stream_generate.return_value = iter([])
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.agent_loop import AgentLoop
+        loop = AgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            budget=AgentBudget(max_iterations=0),
+        )
+
+        with pytest.raises(AgentBudgetExceeded) as exc_info:
+            list(loop.stream("hello"))
+        assert exc_info.value.budget_type == "max_iterations"
+        assert exc_info.value.current == 0
+
+    def test_stream_budget_exceeded_releases_lock(self):
+        """Lock is released after budget-exceeded raises."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.stream_generate.return_value = iter([])
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.agent_loop import AgentLoop
+        loop = AgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            budget=AgentBudget(max_iterations=0),
+        )
+
+        with pytest.raises(AgentBudgetExceeded):
+            list(loop.stream("hello"))
+        assert loop._running is False
+
+        # Subsequent run with valid budget should work
+        loop._budget = AgentBudget(max_iterations=10)
+        chunk = ChatCompletionModel(
+            id="chunk-1",
+            model="test-model",
+            choices=[
+                ChoiceModel(
+                    index=0,
+                    delta=DeltaModel(content="hi"),
+                    finish_reason="stop",
+                )
+            ],
+        )
+        client.llm.stream_generate.return_value = iter([chunk])
+        list(loop.stream("hello"))
+        assert loop._running is False
+
+    def test_stream_budget_exceeded_does_not_fire_on_loop_complete(self):
+        """on_loop_complete hook must NOT fire when budget is exceeded."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.stream_generate.return_value = iter([])
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.agent_loop import AgentLoop
+        from magic_llm.agent.hooks import AgentHooks
+
+        on_complete = MagicMock()
+        on_budget_exceeded = MagicMock()
+
+        # Create hooks with both methods tracked
+        hooks = MagicMock(spec=AgentHooks)
+        hooks.on_loop_complete = on_complete
+        hooks.on_budget_exceeded = on_budget_exceeded
+
+        loop = AgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            budget=AgentBudget(max_iterations=0),
+            hooks=hooks,
+        )
+
+        with pytest.raises(AgentBudgetExceeded):
+            list(loop.stream("hello"))
+
+        # on_budget_exceeded MUST have been called
+        on_budget_exceeded.assert_called_once()
+        # on_loop_complete MUST NOT have been called
+        on_complete.assert_not_called()
+
+    def test_stream_budget_exceeded_wall_clock(self):
+        """Wall-clock budget exceeded in stream raises AgentBudgetExceeded."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        # Simulate slow streaming that exceeds wall-clock
+        def slow_stream(*args, **kwargs):
+            time.sleep(0.2)
+            return iter([])
+
+        client.llm.stream_generate.side_effect = slow_stream
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.agent_loop import AgentLoop
+        loop = AgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            budget=AgentBudget(wall_clock_timeout=0.05),
+        )
+
+        with pytest.raises(AgentBudgetExceeded) as exc_info:
+            list(loop.stream("hello"))
+        assert exc_info.value.budget_type == "wall_clock_timeout"
+
+
 # ─── Slice 14: _loop_shared.py sync-only audit
 
 class TestLoopSharedSyncOnly:

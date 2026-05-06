@@ -28,7 +28,7 @@ class AgentHooks(Protocol):
         on_llm_response: Called after each LLM response, before tool extraction.
         on_tool_start: Called before each tool execution.
         on_tool_complete: Called after each tool execution (success or error).
-        on_loop_complete: Called after the loop exits (normal or budget-exceeded).
+        on_loop_complete: Called after the loop exits (NORMAL exit only — NOT budget-exceeded).
         on_budget_exceeded: Called when a budget constraint is violated.
     """
 
@@ -81,7 +81,11 @@ class AgentHooks(Protocol):
     def on_loop_complete(
         self, final_response: ModelChatResponse, state: AgentState
     ) -> None:
-        """Called after the loop exits (normal completion or budget-exceeded).
+        """Called after the loop exits (NORMAL exit only — NOT budget-exceeded).
+
+        For budget-exceeded exits, on_budget_exceeded fires instead.
+        The loop does NOT call both on_loop_complete AND on_budget_exceeded
+        for the same exit.
 
         Args:
             final_response: The final LLM response.

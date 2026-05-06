@@ -113,6 +113,7 @@ class TestAzureOpenAIDiscoveryAdapter:
         assert result[0].capabilities.chat is True
         assert result[0].capabilities.embedding is False
         assert result[0].context_window == 128000
+        assert result[0].max_input_tokens is None
         assert result[1].external_id == "text-embedding-3-small"
         assert result[1].capabilities.embedding is True
 
@@ -341,6 +342,7 @@ class TestAzureFoundryDiscoveryAdapter:
         assert result[0].capabilities.chat is True
         assert result[0].capabilities.embedding is False
         assert result[0].context_window == 128000
+        assert result[0].max_input_tokens is None
         assert result[1].external_id == "text-embedding-3-small"
         assert result[1].capabilities.chat is False
         assert result[1].capabilities.embedding is True

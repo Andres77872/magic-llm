@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Any, Generator, AsyncGenerator, Optional, Dict, Union, TypeVar, Generic
@@ -118,7 +119,8 @@ class AsyncHttpClient:
         """
         self._ensure_session()
 
-        timeout = aiohttp.ClientTimeout(total=kwargs.pop('timeout', 30))
+        read_timeout = kwargs.pop('timeout', 30)
+        timeout = aiohttp.ClientTimeout(total=None, sock_read=read_timeout)
         try:
             async with self.session.request(
                     method,
@@ -132,11 +134,18 @@ class AsyncHttpClient:
                     logger.error(f"Streaming request to {url} failed: {error_msg}")
                     raise HttpError(error_msg, response.status, content)
 
+                buffer = b''
                 async for chunk in response.content:
-                    yield chunk
-        except aiohttp.ClientError as e:
-            logger.error(f"Streaming request to {url} failed with aiohttp error: {str(e)}")
-            raise HttpError(f"aiohttp streaming error: {str(e)}")
+                    buffer += chunk
+                    while b'\n' in buffer:
+                        line, buffer = buffer.split(b'\n', 1)
+                        if line:
+                            yield line
+                if buffer.strip():
+                    yield buffer
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            logger.error(f"Streaming request to {url} failed with aiohttp error: {e!r}")
+            raise HttpError(f"aiohttp streaming error: {e!r}")
 
     async def post_stream(self, url: str, **kwargs) -> AsyncGenerator[bytes, None]:
         """

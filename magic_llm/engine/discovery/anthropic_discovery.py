@@ -90,12 +90,18 @@ class AnthropicDiscoveryAdapter(BaseDiscoveryAdapter):
 
     # ── Pipeline overrides ────────────────────────────────────────────────
 
-    def _infer_context_window(self, raw_model: Dict[str, Any]) -> Optional[int]:
-        """Infer context window from model name patterns.
+    # ── Claude-name heuristic hook ────────────────────────────────────────
+
+    @staticmethod
+    def _claude_name_heuristic(raw_model: Dict[str, Any]) -> Optional[int]:
+        """Fallback heuristic for Claude context window based on model name.
 
         Anthropic models have well-known context windows:
         - Claude 3.5 and Claude 3: 200K
         - Claude 2: 100K
+
+        For unknown model names (e.g., Claude 4.x, Claude Opus), returns
+        ``None`` — the alias chain will pick up ``max_input_tokens`` instead.
         """
         model_id = raw_model.get("id", "")
         if "claude-3-5" in model_id or "claude-3.5" in model_id:
@@ -106,11 +112,14 @@ class AnthropicDiscoveryAdapter(BaseDiscoveryAdapter):
             return 100000
         return None
 
+    _context_window_hook = _claude_name_heuristic
+
     # _normalize_response is inherited from BaseDiscoveryAdapter — it uses the
     # default ``data`` key for _extract_raw_models, default ``id`` for
     # _extract_model_id, default ``display_name→name→id`` for
-    # _extract_display_name, and default ``max_tokens`` fallback for
-    # _infer_max_output_tokens (Anthropic returns ``max_tokens``).
+    # _extract_display_name, base ``_infer_max_input_tokens`` for max_input_tokens,
+    # and default ``max_tokens`` fallback for _infer_max_output_tokens (Anthropic
+    # returns ``max_tokens``).
 
 
 # Register adapter

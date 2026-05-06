@@ -21,6 +21,9 @@ class DeltaModel(BaseModel):
     tool_calls: Optional[List[ToolCall]] = None
     refusal: Optional[str] = None
     annotations: Optional[List[Any]] = []
+    reasoning_content: Optional[str] = None
+    reasoning: Optional[str] = None
+    reasoning_details: Optional[Any] = None
 
 
 class ChoiceModel(BaseModel):

@@ -702,6 +702,7 @@ class MagicLLM(MagicLlmBase):
         system_prompt: Optional[str] = None,
         tools: Optional[List["ToolSpec"]] = None,
         tool_functions: Optional[Dict[str, Callable[..., Any]]] = None,
+        task_executor: Optional["TaskExecutor"] = None,
         budget: Optional["AgentBudget"] = None,
         hooks: Optional["AgentHooks"] = None,
         max_iterations: int = 10,
@@ -725,6 +726,8 @@ class MagicLLM(MagicLlmBase):
             system_prompt: Optional system prompt.
             tools: Tool definitions (callables, dict specs, or Pydantic models).
             tool_functions: Dict mapping custom names to callables.
+            task_executor: Optional TaskExecutor override. If None and tasks were
+                registered via register_task(), uses the internal TaskExecutor.
             budget: Execution bounds. Defaults to AgentBudget(max_iterations).
             hooks: Optional lifecycle callbacks.
             max_iterations: Hard cap on loop iterations (default: 10).
@@ -757,6 +760,9 @@ class MagicLLM(MagicLlmBase):
         if model is not None:
             loop_kwargs["model"] = model
 
+        # Use provided task_executor, or internal one if tasks were registered
+        executor = task_executor or self._task_executor
+
         loop = AsyncAgentLoop(
             client=self,
             tools=tools,
@@ -766,6 +772,7 @@ class MagicLLM(MagicLlmBase):
             content_separator=content_separator,
             tool_choice=tool_choice,
             deduplicate=deduplicate,
+            tool_executor=executor,
             **loop_kwargs,
         )
 

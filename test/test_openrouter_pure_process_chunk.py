@@ -46,6 +46,20 @@ class TestOpenRouterPureProcessChunk:
         result = provider.process_chunk("data: [DONE]\n\n")
         assert result is None
 
+    def test_empty_choices_skipped(self):
+        """OpenRouter chunks with empty choices are skipped (usage-only chunk)."""
+        provider = ProviderOpenRouter(api_key="test")
+        chunk_data = {
+            "id": "gen-123",
+            "object": "chat.completion.chunk",
+            "created": 1234567890,
+            "model": "openai/gpt-4",
+            "choices": [],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+        }
+        result = provider.process_chunk(f"data: {json.dumps(chunk_data)}")
+        assert result is None
+
     def test_no_urllib_import_in_module(self):
         """openai_openrouter module does not import urllib."""
         import magic_llm.engine.openai_adapters.openai_openrouter as mod

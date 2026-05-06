@@ -41,8 +41,10 @@ from magic_llm.agent.normalizer import ResultNormalizer
 
 # Global depth helpers and budget cascade helper
 from magic_llm.agent._loop_shared import (
+    DEPTH,
     GLOBAL_DEPTH,
     PARENT_BUDGET,
+    PARENT_HOOKS,
     PARENT_STATE,
     get_global_depth,
     increment_global_depth,
@@ -413,7 +415,8 @@ class TaskExecutor(ToolExecutor):
             - manifest.nested_tools (explicit, NOT inherited from parent)
             - Child budget computed via _compute_child_budget()
             - Same MagicLLM client with optional model override
-            - No hooks (child hooks default to none)
+            - Parent hooks propagated via PARENT_HOOKS ContextVar
+              (child events fire through parent's HookRelay)
 
         Buffered execution: child runs to completion, returns single result.
 
@@ -448,13 +451,16 @@ class TaskExecutor(ToolExecutor):
             tools=manifest.nested_tools,
         )
 
+        # Read parent hooks from ContextVar for propagation to child loop
+        parent_hooks = PARENT_HOOKS.get()
+
         # Build kwargs for child AsyncAgentLoop
         child_kwargs: dict[str, Any] = {
             "client": self._client,
             "tools": manifest.nested_tools,
             "budget": child_budget,
             "tool_executor": child_executor,
-            "hooks": None,  # Child hooks default to none
+            "hooks": parent_hooks,  # Propagated from parent context (was None)
         }
 
         # Add model override if specified
@@ -472,8 +478,15 @@ class TaskExecutor(ToolExecutor):
             f"(task_id={task_id}, budget={child_budget}, tools={len(manifest.nested_tools or [])})"
         )
 
-        # Run child loop to completion (buffered)
-        child_response = await child_loop.run(user_input=user_input)
+        # Increment DEPTH ContextVar for nested LLM hook correlation
+        # This ensures child events carry the correct nesting depth
+        depth_token = DEPTH.set(DEPTH.get() + 1)
+        try:
+            # Run child loop to completion (buffered)
+            child_response = await child_loop.run(user_input=user_input)
+        finally:
+            # Reset DEPTH ContextVar (prevent cross-nesting contamination)
+            DEPTH.reset(depth_token)
 
         # Extract content from response
         raw_output = child_response.content or ""

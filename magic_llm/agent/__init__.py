@@ -7,19 +7,8 @@
 # No eager imports of submodules — the package is loaded only when
 # explicitly imported by the consumer.
 #
-# Builtin tools (web_search, web_scrape) are available via:
-#   from magic_llm.agent.builtin import web_search, web_scrape, get_browsing_tools
-
-# Re-export builtin tools for convenience
-# Note: This does NOT eagerly import the builtin module — it only provides
-# the import path. Actual import happens when consumer uses these names.
-from magic_llm.agent.builtin import (
-    web_search,
-    web_scrape,
-    get_browsing_adapter,
-    get_browsing_tools,
-    get_browsing_tool_functions,
-)
+# Application-specific tools such as browsing are intentionally not exported
+# from magic-llm. Consumers compose those tools in their own app/package layer.
 
 # Task/Subagent Runtime Types (for MagicLLM.register_task API)
 from magic_llm.agent.types import (
@@ -40,6 +29,8 @@ from magic_llm.agent._loop_shared import (
     GLOBAL_DEPTH,
     PARENT_BUDGET,
     PARENT_STATE,
+    PARENT_HOOKS,
+    DEPTH,
     get_global_depth,
     increment_global_depth,
     decrement_global_depth,
@@ -48,6 +39,13 @@ from magic_llm.agent._loop_shared import (
 
 # Result Normalizer
 from magic_llm.agent.normalizer import ResultNormalizer
+
+# Library-owned generic AgentHooks persistence implementation. Service/API side
+# effects stay behind injected sinks; magic-llm does not import app modules.
+from magic_llm.agent.persistence_hooks import (
+    AgentPersistenceHooks,
+    AgentPersistenceSink,
+)
 
 # ─── Subagent Architecture (magic-llm owns ALL) ──────────────────────────────
 
@@ -108,12 +106,6 @@ from magic_llm.agent.errors import (
 )
 
 __all__ = [
-    # Builtin tools
-    "web_search",
-    "web_scrape",
-    "get_browsing_adapter",
-    "get_browsing_tools",
-    "get_browsing_tool_functions",
     # Task/Subagent Runtime Types
     "TaskManifest",
     "TaskResult",
@@ -125,11 +117,15 @@ __all__ = [
     # Task/Subagent Runtime Components
     "TaskExecutor",
     "ResultNormalizer",
+    "AgentPersistenceHooks",
+    "AgentPersistenceSink",
     "reset_depths",
     # Global Depth Helpers
     "GLOBAL_DEPTH",
     "PARENT_BUDGET",
     "PARENT_STATE",
+    "PARENT_HOOKS",
+    "DEPTH",
     "get_global_depth",
     "increment_global_depth",
     "decrement_global_depth",

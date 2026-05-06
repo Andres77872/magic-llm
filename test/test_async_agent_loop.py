@@ -926,6 +926,337 @@ class TestAsyncAgentLoopState:
         assert async_state.step != 100
 
 
+# ─── Slice 12b: AsyncAgentLoop.stream() budget enforcement
+
+class TestAsyncAgentLoopStreamBudget:
+    """AsyncAgentLoop.stream() enforces budgets and fires on_budget_exceeded hook.
+
+    Regression: the inner finally block in stream() unconditionally fired
+    on_loop_complete even when AgentBudgetExceeded propagated (the exception
+    was caught, on_budget_exceeded was fired, but the re-raise hit the finally
+    which also fired on_loop_complete — violating the contract).
+    """
+
+    def test_async_stream_budget_exceeded_max_iterations(self):
+        """Budget exceeded in async stream raises AgentBudgetExceeded with correct type."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        # Empty async generator — never enters streaming body,
+        # pre-call budget check fires immediately
+        async def empty_stream(*args, **kwargs):
+            return  # no yield = empty async generator
+            yield  # pragma: no cover
+
+        client.llm.async_stream_generate = empty_stream
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            budget=AgentBudget(max_iterations=0),
+        )
+
+        async def run_and_check():
+            with pytest.raises(AgentBudgetExceeded) as exc_info:
+                async for _ in loop.stream("hello"):
+                    pass
+            assert exc_info.value.budget_type == "max_iterations"
+            assert exc_info.value.current == 0
+
+        asyncio.run(run_and_check())
+
+    def test_async_stream_budget_exceeded_releases_lock(self):
+        """Lock is released after budget-exceeded raises in async stream."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        client.llm.async_stream_generate = empty_stream
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            budget=AgentBudget(max_iterations=0),
+        )
+
+        async def run_and_check():
+            with pytest.raises(AgentBudgetExceeded):
+                async for _ in loop.stream("hello"):
+                    pass
+            assert loop._running is False
+
+            # Subsequent run with valid budget should work
+            loop._budget = AgentBudget(max_iterations=10)
+            chunk = ChatCompletionModel(
+                id="chunk-1",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content="hi"),
+                        finish_reason="stop",
+                    )
+                ],
+            )
+
+            async def single_chunk_stream(*args, **kwargs):
+                yield chunk
+
+            client.llm.async_stream_generate = single_chunk_stream
+            async for _ in loop.stream("hello"):
+                pass
+            assert loop._running is False
+
+        asyncio.run(run_and_check())
+
+    def test_async_stream_budget_exceeded_does_not_fire_on_loop_complete(self):
+        """on_loop_complete hook must NOT fire when budget is exceeded in async stream."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        async def empty_stream(*args, **kwargs):
+            return
+            yield  # pragma: no cover
+
+        client.llm.async_stream_generate = empty_stream
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        from magic_llm.agent.hooks import AgentHooks
+
+        on_complete = MagicMock()
+        on_budget_exceeded = MagicMock()
+
+        hooks = MagicMock(spec=AgentHooks)
+        hooks.on_loop_complete = on_complete
+        hooks.on_budget_exceeded = on_budget_exceeded
+
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            budget=AgentBudget(max_iterations=0),
+            hooks=hooks,
+        )
+
+        async def run_and_check():
+            with pytest.raises(AgentBudgetExceeded):
+                async for _ in loop.stream("hello"):
+                    pass
+
+            # on_budget_exceeded MUST have been called
+            on_budget_exceeded.assert_called_once()
+            # on_loop_complete MUST NOT have been called
+            on_complete.assert_not_called()
+
+        asyncio.run(run_and_check())
+
+    def test_async_stream_budget_exceeded_wall_clock(self):
+        """Wall-clock budget exceeded in async stream raises AgentBudgetExceeded."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        async def slow_stream(*args, **kwargs):
+            await asyncio.sleep(0.2)
+            return
+            yield  # pragma: no cover
+
+        client.llm.async_stream_generate = slow_stream
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            budget=AgentBudget(wall_clock_timeout=0.05),
+        )
+
+        async def run_and_check():
+            with pytest.raises(AgentBudgetExceeded) as exc_info:
+                async for _ in loop.stream("hello"):
+                    pass
+            assert exc_info.value.budget_type == "wall_clock_timeout"
+
+        asyncio.run(run_and_check())
+
+
+# ─── Budget Hook Recording Helper ────────────────────────────────────────────
+
+
+class _RecordingBudgetHooks:
+    """Simple hook recorder for budget hook tests."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+
+    def on_budget_exceeded(self, budget_type: str, details: str) -> None:
+        self.calls.append(("on_budget_exceeded", budget_type, details))
+
+
+# ─── Phase 5: Budget Hook Activation Tests ──────────────────────────────────
+
+
+class TestAsyncAgentLoopBudgetHook:
+    """on_budget_exceeded fires before AgentBudgetExceeded propagates."""
+
+    def test_budget_hook_fires_on_max_iterations(self):
+        """Max iterations exceeded → hook fires → exception re-raised."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        tc = _make_tool_call()
+        client.llm.async_generate = AsyncMock(
+            return_value=_make_response(
+                content=None, tool_calls=[tc], finish_reason="tool_calls"
+            )
+        )
+
+        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.return_value = tool_calls
+        adapter.is_finished.return_value = False
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        hooks = _RecordingBudgetHooks()
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[lambda: None],
+            adapter=adapter,
+            budget=AgentBudget(max_iterations=1),
+            hooks=hooks,
+        )
+
+        async def run_and_check():
+            with pytest.raises(AgentBudgetExceeded) as exc_info:
+                await loop.run("hello")
+            assert exc_info.value.budget_type == "max_iterations"
+            # Hook must have fired before exception propagated
+            assert len(hooks.calls) == 1
+            assert hooks.calls[0][0] == "on_budget_exceeded"
+            assert hooks.calls[0][1] == "max_iterations"
+            assert "limit=1" in hooks.calls[0][2]
+            assert "current=1" in hooks.calls[0][2]
+
+        asyncio.run(run_and_check())
+
+    def test_budget_hook_fires_on_token_exceeded(self):
+        """Token budget exceeded → hook fires → exception re-raised."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        # Response with completion_tokens=5, but max_output_tokens=1
+        client.llm.async_generate = AsyncMock(
+            return_value=_make_response(
+                content="done", finish_reason="stop",
+                completion_tokens=5,
+            )
+        )
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+
+        hooks = _RecordingBudgetHooks()
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            budget=AgentBudget(max_output_tokens=1),
+            hooks=hooks,
+        )
+
+        async def run_and_check():
+            with pytest.raises(AgentBudgetExceeded) as exc_info:
+                await loop.run("hello")
+            assert exc_info.value.budget_type == "max_output_tokens"
+            assert len(hooks.calls) == 1
+            assert hooks.calls[0][0] == "on_budget_exceeded"
+            assert hooks.calls[0][1] == "max_output_tokens"
+            assert "current=5" in hooks.calls[0][2]
+
+        asyncio.run(run_and_check())
+
+    def test_budget_hook_not_called_on_normal_exit(self):
+        """Normal exit within budget → hook NOT called."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.async_generate = AsyncMock(
+            return_value=_make_response(content="hello world", finish_reason="stop")
+        )
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+
+        hooks = _RecordingBudgetHooks()
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            hooks=hooks,
+        )
+
+        async def run_and_check():
+            response = await loop.run("hello")
+            assert response.content == "hello world"
+            assert len(hooks.calls) == 0
+
+        asyncio.run(run_and_check())
+
+    def test_budget_hook_receives_budget_type_and_details(self):
+        """on_budget_exceeded gets correct budget_type and details."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        tc = _make_tool_call()
+        client.llm.async_generate = AsyncMock(
+            return_value=_make_response(
+                content=None, tool_calls=[tc], finish_reason="tool_calls"
+            )
+        )
+
+        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.return_value = tool_calls
+        adapter.is_finished.return_value = False
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        hooks = _RecordingBudgetHooks()
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[lambda: None],
+            adapter=adapter,
+            budget=AgentBudget(max_iterations=1),
+            hooks=hooks,
+        )
+
+        async def run_and_check():
+            with pytest.raises(AgentBudgetExceeded):
+                await loop.run("hello")
+            # Verify the hook call details
+            assert len(hooks.calls) == 1
+            call = hooks.calls[0]
+            assert call[0] == "on_budget_exceeded"
+            assert call[1] == "max_iterations"
+            assert isinstance(call[2], str)
+            assert len(call[2]) > 0
+
+        asyncio.run(run_and_check())
+
+
 class TestBuildInitialChatInitialChat:
     def test_build_initial_chat_clones_initial_chat(self):
         initial_chat = ModelChat(system="sys")

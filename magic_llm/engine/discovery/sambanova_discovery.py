@@ -66,6 +66,25 @@ class SambaNovaDiscoveryAdapter(BaseDiscoveryAdapter):
 
     # ── Pipeline overrides ────────────────────────────────────────────────
 
+    # ── Llama-name heuristic hook ─────────────────────────────────────────
+
+    @staticmethod
+    def _llama_name_heuristic(raw_model: Dict[str, Any]) -> Optional[int]:
+        """Fallback heuristic for context window based on Llama model name.
+
+        SambaNova's Llama models have well-known context windows:
+        - Llama 3 with 70B/405B: 128K
+        - Other Llama 3 models: 8K
+        """
+        model_id = raw_model.get("id", "")
+        if "llama-3" in model_id.lower() or "llama3" in model_id.lower():
+            if "70b" in model_id.lower() or "405b" in model_id.lower():
+                return 128000
+            return 8192
+        return None
+
+    _context_window_hook = _llama_name_heuristic
+
     def _extract_raw_models(self, raw_response: Dict[str, Any]) -> List[Dict[str, Any]]:
         """SambaNova response may be a list, ``data`` key, or ``models`` key."""
         if isinstance(raw_response, list):
@@ -78,15 +97,6 @@ class SambaNovaDiscoveryAdapter(BaseDiscoveryAdapter):
     def _extract_model_id(self, raw_model: Dict[str, Any]) -> str:
         """SambaNova may return ``id``, ``model``, or ``name`` as identifier."""
         return raw_model.get("id") or raw_model.get("model") or raw_model.get("name", "")
-
-    def _infer_context_window(self, raw_model: Dict[str, Any]) -> Optional[int]:
-        """Infer context window from model name."""
-        model_id = raw_model.get("id", "")
-        if "llama-3" in model_id.lower() or "llama3" in model_id.lower():
-            if "70b" in model_id.lower() or "405b" in model_id.lower():
-                return 128000
-            return 8192
-        return None
 
     # _normalize_response is inherited from BaseDiscoveryAdapter.
 

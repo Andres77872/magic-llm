@@ -21,8 +21,9 @@ import abc
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import Any, Callable, Dict, List, Optional
 
+from magic_llm.engine.discovery.alias_resolver import TokenAliasResolver
 from magic_llm.model.discovery import NormalizedDiscoveredModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient, HttpError
 
@@ -172,6 +173,19 @@ class BaseDiscoveryAdapter(abc.ABC):
     # Error handling policy — default is Error Policy B
     _discovery_policy: DiscoveryPolicy = DiscoveryPolicy()
 
+    # ── Token alias profiles (override per adapter) ───────────────────────
+    # Custom alias prefixes for each field.  None = use default chain.
+    _context_window_aliases: Optional[List[str]] = None
+    _max_input_tokens_aliases: Optional[List[str]] = None
+    _max_output_tokens_aliases: Optional[List[str]] = None
+
+    # ── Heuristic hooks (override per adapter) ────────────────────────────
+    # Callable[[Dict[str, Any]], Optional[int]] — invoked after alias chain
+    # returns None.  None = no heuristic fallback.
+    _context_window_hook: Optional[Callable[[Dict[str, Any]], Optional[int]]] = None
+    _max_input_tokens_hook: Optional[Callable[[Dict[str, Any]], Optional[int]]] = None
+    _max_output_tokens_hook: Optional[Callable[[Dict[str, Any]], Optional[int]]] = None
+
     def __init__(
         self,
         provider: str,
@@ -278,6 +292,7 @@ class BaseDiscoveryAdapter(abc.ABC):
             description=self._extract_description(raw_model),
             capabilities=self._infer_capabilities(raw_model),
             context_window=self._infer_context_window(raw_model),
+            max_input_tokens=self._infer_max_input_tokens(raw_model),
             max_output_tokens=self._infer_max_output_tokens(raw_model),
             pricing=self._extract_pricing(raw_model),
             raw=raw_model,
@@ -308,12 +323,42 @@ class BaseDiscoveryAdapter(abc.ABC):
         return strategy.infer(self.provider, model_id, raw_model)
 
     def _infer_context_window(self, raw_model: Dict[str, Any]) -> Optional[int]:
-        """Infer maximum context window."""
-        return raw_model.get("context_window") or raw_model.get("context_length")
+        """Resolve context_window via alias chain, fall back to heuristic hook.
+
+        Alias chain is configured via ``_context_window_aliases`` (or default).
+        If the chain returns ``None`` and a ``_context_window_hook`` is set,
+        the hook is invoked as a final fallback.
+        """
+        val = TokenAliasResolver.resolve(
+            raw_model, "context_window", self._context_window_aliases,
+        )
+        if val is not None:
+            return val
+        if self._context_window_hook:
+            return self._context_window_hook(raw_model)
+        return None
+
+    def _infer_max_input_tokens(self, raw_model: Dict[str, Any]) -> Optional[int]:
+        """Resolve max_input_tokens via alias chain, fall back to heuristic hook."""
+        val = TokenAliasResolver.resolve(
+            raw_model, "max_input_tokens", self._max_input_tokens_aliases,
+        )
+        if val is not None:
+            return val
+        if self._max_input_tokens_hook:
+            return self._max_input_tokens_hook(raw_model)
+        return None
 
     def _infer_max_output_tokens(self, raw_model: Dict[str, Any]) -> Optional[int]:
-        """Infer maximum output tokens."""
-        return raw_model.get("max_output_tokens") or raw_model.get("max_tokens")
+        """Resolve max_output_tokens via alias chain, fall back to heuristic hook."""
+        val = TokenAliasResolver.resolve(
+            raw_model, "max_output_tokens", self._max_output_tokens_aliases,
+        )
+        if val is not None:
+            return val
+        if self._max_output_tokens_hook:
+            return self._max_output_tokens_hook(raw_model)
+        return None
 
     def _extract_pricing(self, raw_model: Dict[str, Any]) -> Optional[Any]:
         """Extract pricing info.  Only OpenRouter and Azure Foundry override this."""

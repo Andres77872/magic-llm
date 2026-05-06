@@ -23,6 +23,8 @@ class ProviderOpenRouter(OpenAiBaseProvider):
         """
         if chunk.startswith('data: ') and '[DONE]' not in chunk:
             chunk = json.loads(chunk[5:])
+            if len(chunk.get('choices', [])) == 0:
+                return None
             return ChatCompletionModel(**chunk)
         elif (c := chunk.strip()) and c == 'data: [DONE]':
             # Signal completion — usage polling is done by the engine

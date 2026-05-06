@@ -87,6 +87,13 @@ class OpenRouterDiscoveryAdapter(BaseDiscoveryAdapter):
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
+    # ── Token alias profiles ──────────────────────────────────────────────
+    # OpenRouter uses ``context_length`` as the authoritative context field
+    # (not ``context_window``). The custom prefix reverses the default order
+    # so that ``context_length`` is probed first.
+
+    _context_window_aliases = ["context_length", "context_window"]
+
     # ── Pipeline overrides ────────────────────────────────────────────────
 
     def _extract_pricing(self, model_data: Dict[str, Any]) -> Optional[PricingInfo]:
@@ -134,10 +141,6 @@ class OpenRouterDiscoveryAdapter(BaseDiscoveryAdapter):
             input_per_million=input_per_million,
             output_per_million=output_per_million,
         )
-
-    def _infer_context_window(self, raw_model: Dict[str, Any]) -> Optional[int]:
-        """OpenRouter provides ``context_length`` directly in model data."""
-        return raw_model.get("context_length")
 
     # _normalize_response is inherited from BaseDiscoveryAdapter — default
     # ``data`` key for _extract_raw_models, default ``id`` for

@@ -22,6 +22,6 @@ class ProviderGroq(OpenAiBaseProvider):
             chunk = json.loads(chunk[5:])
             chunk['usage'] = chunk.get('x_groq', {}).get('usage', {})
             if len(chunk['choices']) == 0:
-                chunk['choices'] = [{}]
+                return None
             chunk = ChatCompletionModel(**chunk)
             return chunk

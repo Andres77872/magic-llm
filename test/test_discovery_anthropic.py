@@ -19,6 +19,7 @@ ANTHROPIC_PAYLOAD = {
         {
             "id": "claude-3-5-sonnet-20241022",
             "display_name": "Claude 3.5 Sonnet",
+            "max_input_tokens": 200000,
             "max_tokens": 8192,
             "capabilities": {
                 "image_input": {"supported": True},
@@ -28,6 +29,7 @@ ANTHROPIC_PAYLOAD = {
         {
             "id": "claude-3-haiku-20240307",
             "display_name": "Claude 3 Haiku",
+            "max_input_tokens": 200000,
             "max_tokens": 4096,
             "capabilities": {
                 "image_input": {"supported": True},
@@ -68,7 +70,65 @@ class TestAnthropicNormalization:
         assert sonnet.capabilities.vision is True  # image_input.supported
         assert sonnet.capabilities.reasoning is False  # thinking.supported
         assert sonnet.capabilities.chat is True
+        assert sonnet.context_window == 200000  # Claude-name heuristic wins
+        assert sonnet.max_input_tokens == 200000
         assert sonnet.max_output_tokens == 8192
+
+
+    def test_unified_fallback_for_unknown_claude(self):
+        """Non-Claude-3/2 model with max_input_tokens → context_window from fallback.
+
+        Models like claude-opus-4-* or claude-sonnet-4-* don't match any heuristic,
+        so context_window falls back to max_input_tokens per the unified contract.
+        """
+        adapter = AnthropicDiscoveryAdapter(api_key="ak-test")
+        payload = {
+            "data": [
+                {
+                    "id": "claude-opus-4-20250514",
+                    "display_name": "Claude Opus 4",
+                    "max_input_tokens": 1000000,
+                    "max_tokens": 8192,
+                    "capabilities": {"image_input": {"supported": True}},
+                },
+                {
+                    "id": "claude-sonnet-4-20250514",
+                    "display_name": "Claude Sonnet 4",
+                    "max_input_tokens": 1000000,
+                    "max_tokens": 16384,
+                    "capabilities": {"image_input": {"supported": True}},
+                },
+            ],
+        }
+        result = adapter._normalize_response(payload)
+        assert len(result) == 2
+        opus = result[0]
+        sonnet4 = result[1]
+        # No heuristic match for claude-opus-4 or claude-sonnet-4 → fallback to max_input_tokens
+        assert opus.context_window == 1000000
+        assert opus.max_input_tokens == 1000000
+        assert opus.max_output_tokens == 8192
+        assert sonnet4.context_window == 1000000
+        assert sonnet4.max_input_tokens == 1000000
+        assert sonnet4.max_output_tokens == 16384
+
+    def test_no_defaults_when_fields_absent(self):
+        """When max_input_tokens and max_tokens are absent, all three fields stay None."""
+        adapter = AnthropicDiscoveryAdapter(api_key="ak-test")
+        payload = {
+            "data": [
+                {
+                    "id": "some-unknown-model",
+                    "display_name": "Unknown Model",
+                },
+            ],
+        }
+        result = adapter._normalize_response(payload)
+        assert len(result) == 1
+        mdl = result[0]
+        assert mdl.context_window is None
+        assert mdl.max_input_tokens is None
+        assert mdl.max_output_tokens is None
 
 
 class TestAnthropicDiscover:

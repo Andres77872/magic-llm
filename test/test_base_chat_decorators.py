@@ -354,8 +354,8 @@ class TestSyncStreamGenerateSuccess:
         instance = _ConcreteChat()
         results = list(wrapped(instance, _make_chat()))
 
-        # Original 3 + final item re-yielded with metrics = 4
-        assert len(results) == 4
+        # Exactly 3 items — no double-yield, metrics updated in-place on last item
+        assert len(results) == 3
         assert results[0].choices[0].delta.content == "a"
         assert results[1].choices[0].delta.content == "b"
 
@@ -365,7 +365,7 @@ class TestSyncStreamGenerateSuccess:
         instance = _ConcreteChat()
         results = list(wrapped(instance, _make_chat()))
 
-        # The last item is re-yielded with updated metrics
+        # The last item has metrics updated in-place (no re-yield)
         final = results[-1]
         assert final.usage.ttft > 0
 
@@ -399,7 +399,7 @@ class TestAsyncStreamGenerateSuccess:
         instance = _ConcreteChat()
         results = [ch async for ch in wrapped(instance, _make_chat())]
 
-        assert len(results) == 4  # 3 original + 1 re-yielded with metrics
+        assert len(results) == 3  # 3 original — no re-yield
         assert results[0].choices[0].delta.content == "a"
 
     @pytest.mark.asyncio

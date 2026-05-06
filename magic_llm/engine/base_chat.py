@@ -207,7 +207,6 @@ class BaseChat(abc.ABC):
 
                     if first_token_received and current_item:
                         self._update_metrics(current_item, metrics, usage)
-                        yield current_item
 
                         meta = self._create_chat_meta_model(
                             metrics.ttfb,
@@ -218,8 +217,8 @@ class BaseChat(abc.ABC):
                     break
 
                 except Exception as e:
-                    er = f"Stream generation attempt {attempt + 1} failed: {e}"
-                    logger.error(er)
+                    er = f"Stream generation attempt {attempt + 1} failed: {e!r}"
+                    logger.exception("Stream generation attempt %d failed: %r", attempt + 1, e)
                     await self._execute_callback(chat,
                                                  response_content,
                                                  usage,
@@ -293,7 +292,6 @@ class BaseChat(abc.ABC):
 
                     if first_token_received and current_item:
                         self._update_metrics(current_item, metrics, usage)
-                        yield current_item
 
                         meta = self._create_chat_meta_model(
                             metrics.ttfb,
@@ -304,8 +302,8 @@ class BaseChat(abc.ABC):
                     break
 
                 except Exception as e:
-                    er = f"Sync stream generation attempt {attempt + 1} failed: {e}"
-                    logger.error(er)
+                    er = f"Sync stream generation attempt {attempt + 1} failed: {e!r}"
+                    logger.exception("Sync stream generation attempt %d failed: %r", attempt + 1, e)
                     self._execute_callback_sync(chat,
                                                        response_content,
                                                        usage,
@@ -352,8 +350,8 @@ class BaseChat(abc.ABC):
                     return response
 
                 except Exception as e:
-                    er = f"Async generation attempt {attempt + 1} failed: {e}"
-                    logger.error(er)
+                    er = f"Async generation attempt {attempt + 1} failed: {e!r}"
+                    logger.exception("Async generation attempt %d failed: %r", attempt + 1, e)
                     await self._execute_callback(chat,
                                                  None,
                                                  usage,
@@ -401,8 +399,8 @@ class BaseChat(abc.ABC):
                     return response
 
                 except Exception as e:
-                    er = f"Sync generation attempt {attempt + 1} failed: {e}"
-                    logger.error(er)
+                    er = f"Sync generation attempt {attempt + 1} failed: {e!r}"
+                    logger.exception("Sync generation attempt %d failed: %r", attempt + 1, e)
                     self._execute_callback_sync(chat,
                                                        None,
                                                        usage,

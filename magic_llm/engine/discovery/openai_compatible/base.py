@@ -91,14 +91,22 @@ class OpenAICompatibleAdapter(BaseDiscoveryAdapter):
 
     # ── Pipeline overrides ────────────────────────────────────────────────
 
-    def _infer_context_window(self, raw_model: Dict[str, Any]) -> Optional[int]:
-        """Infer context window from model name via CONTEXT_WINDOW_MAP."""
+    # ── Heuristic: CONTEXT_WINDOW_MAP regex fallback ──────────────────────
+
+    @staticmethod
+    def _context_window_map_fallback(raw_model: Dict[str, Any]) -> Optional[int]:
+        """Fallback: match model ID against CONTEXT_WINDOW_MAP regex patterns.
+
+        Invoked after the alias chain returns ``None`` for context_window.
+        """
         model_id = raw_model.get("id", "")
         from magic_llm.engine.discovery.capabilities.models import CONTEXT_WINDOW_MAP
         for pattern, window in CONTEXT_WINDOW_MAP.items():
             if re.search(pattern, model_id, re.IGNORECASE):
                 return window
         return None
+
+    _context_window_hook = _context_window_map_fallback
 
     # _normalize_response is inherited from BaseDiscoveryAdapter — it iterates
     # ``_extract_raw_models()`` (default: ``data`` key) and calls
