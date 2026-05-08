@@ -28,15 +28,27 @@ class ToolExecutor:
     Args:
         per_tool_timeout: Default timeout in seconds for each tool execution (default: 30.0).
         enable_dedup: Enable fingerprint-based deduplication (default: False).
+        max_content_size: Global max content size in characters (default: 50000).
+            Content exceeding this limit is truncated with a [TRUNCATED] suffix.
+        max_content_sizes: Per-tool-name max content size overrides.
+            Key is tool name, value is max chars. Takes precedence over global.
+        tool_timeouts: Per-tool-name timeout overrides in seconds.
+            Key is tool name, value is timeout. Takes precedence over per_tool_timeout.
     """
 
     def __init__(
         self,
         per_tool_timeout: float = 30.0,
         enable_dedup: bool = False,
+        max_content_size: int = 50000,
+        max_content_sizes: dict[str, int] | None = None,
+        tool_timeouts: dict[str, float] | None = None,
     ) -> None:
         self._per_tool_timeout = per_tool_timeout
         self._enable_dedup = enable_dedup
+        self._max_content_size = max_content_size
+        self._max_content_sizes = max_content_sizes or {}
+        self._tool_timeouts = tool_timeouts or {}
         self._registry: dict[str, Callable[..., Any]] = {}
         self._dedup_cache: dict[str, ToolResult] = {}
 
@@ -109,9 +121,12 @@ class ToolExecutor:
             )
             return result
 
-        # Execute with timeout
+        # Execute with timeout (per-tool override supported)
+        effective_timeout = self._resolve_timeout(tool_call.name)
         try:
-            output = self._execute_with_timeout(fn, tool_call.arguments)
+            output = self._execute_with_timeout(
+                fn, tool_call.arguments, timeout=effective_timeout
+            )
         except FuturesTimeoutError:
             duration_ms = (time.monotonic() - start) * 1000
             result = ToolResult(
@@ -119,7 +134,7 @@ class ToolExecutor:
                 name=tool_call.name,
                 content="",
                 is_error=True,
-                error=f"Tool '{tool_call.name}' timed out after {self._per_tool_timeout}s",
+                error=f"Tool '{tool_call.name}' timed out after {effective_timeout}s",
                 error_type="TimeoutError",
                 duration_ms=duration_ms,
             )
@@ -141,14 +156,15 @@ class ToolExecutor:
 
         duration_ms = (time.monotonic() - start) * 1000
 
-        # Serialize output
-        content = self._serialize_output(output)
+        # Serialize output (with per-tool max_content_size enforcement)
+        content = self._serialize_output(output, tool_name=tool_call.name)
+        truncated = content.endswith("[TRUNCATED]")
 
         result = ToolResult(
             tool_call_id=tool_call.id,
             name=tool_call.name,
             content=content,
-            is_error=False,
+            is_error=truncated,
             duration_ms=duration_ms,
         )
 
@@ -217,16 +233,17 @@ class ToolExecutor:
             )
             return result
 
+        effective_timeout = self._resolve_timeout(tool_call.name)
         try:
             if is_async_callable(fn):
                 output = await asyncio.wait_for(
-                    fn(**tool_call.arguments), timeout=self._per_tool_timeout
+                    fn(**tool_call.arguments), timeout=effective_timeout
                 )
             else:
                 loop = asyncio.get_running_loop()
                 output = await asyncio.wait_for(
                     loop.run_in_executor(None, lambda: fn(**tool_call.arguments)),
-                    timeout=self._per_tool_timeout,
+                    timeout=effective_timeout,
                 )
         except asyncio.TimeoutError:
             duration_ms = (time.monotonic() - start) * 1000
@@ -235,7 +252,7 @@ class ToolExecutor:
                 name=tool_call.name,
                 content="",
                 is_error=True,
-                error=f"Tool '{tool_call.name}' timed out after {self._per_tool_timeout}s",
+                error=f"Tool '{tool_call.name}' timed out after {effective_timeout}s",
                 error_type="TimeoutError",
                 duration_ms=duration_ms,
             )
@@ -256,13 +273,14 @@ class ToolExecutor:
             return result
 
         duration_ms = (time.monotonic() - start) * 1000
-        content = self._serialize_output(output)
+        content = self._serialize_output(output, tool_name=tool_call.name)
+        truncated = content.endswith("[TRUNCATED]")
 
         result = ToolResult(
             tool_call_id=tool_call.id,
             name=tool_call.name,
             content=content,
-            is_error=False,
+            is_error=truncated,
             duration_ms=duration_ms,
         )
 
@@ -290,14 +308,29 @@ class ToolExecutor:
 
     # ─── Internal helpers ───────────────────────────────────────────────
 
+    def _resolve_timeout(self, tool_name: str) -> float:
+        """Resolve the effective timeout for a tool name.
+
+        Per-tool override takes precedence over the global per_tool_timeout.
+
+        Args:
+            tool_name: The name of the tool.
+
+        Returns:
+            The effective timeout in seconds.
+        """
+        return self._tool_timeouts.get(tool_name, self._per_tool_timeout)
+
     def _execute_with_timeout(
-        self, fn: Callable[..., Any], arguments: dict[str, Any]
+        self, fn: Callable[..., Any], arguments: dict[str, Any],
+        timeout: float | None = None,
     ) -> Any:
         """Execute a callable with timeout enforcement via ThreadPoolExecutor.
 
         Args:
             fn: The callable to execute.
             arguments: The arguments to pass to the callable.
+            timeout: Optional explicit timeout. Falls back to per_tool_timeout if None.
 
         Returns:
             The return value of the callable.
@@ -305,31 +338,56 @@ class ToolExecutor:
         Raises:
             FuturesTimeoutError: If execution exceeds the timeout.
         """
+        effective_timeout = timeout if timeout is not None else self._per_tool_timeout
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             future = executor.submit(fn, **arguments)
-            return future.result(timeout=self._per_tool_timeout)
+            return future.result(timeout=effective_timeout)
         finally:
             # shutdown(wait=False) to avoid blocking on a timed-out thread
             executor.shutdown(wait=False)
 
-    @staticmethod
-    def _serialize_output(output: Any) -> str:
-        """Serialize tool output to a string.
+    def _resolve_max_content_size(self, tool_name: str) -> int:
+        """Resolve the effective max content size for a tool name.
+
+        Per-tool override takes precedence over the global max_content_size.
+
+        Args:
+            tool_name: The name of the tool.
+
+        Returns:
+            The effective max content size in characters.
+        """
+        return self._max_content_sizes.get(tool_name, self._max_content_size)
+
+    def _serialize_output(self, output: Any, tool_name: str | None = None) -> str:
+        """Serialize tool output to a string with size enforcement.
 
         Attempts JSON serialization first; falls back to str() for
-        non-JSON-serializable objects.
+        non-JSON-serializable objects. If the resulting string exceeds
+        the max content size for the tool, it is truncated with a
+        [TRUNCATED] suffix.
+
+        NOTE: This does NOT set is_error. Callers should check the return
+        value for [TRUNCATED] suffix and set is_error=True if present.
 
         Args:
             output: The tool's return value.
+            tool_name: Optional tool name for per-tool size override lookup.
 
         Returns:
-            A string representation of the output.
+            A string representation of the output, possibly truncated.
         """
         try:
-            return json.dumps(output)
+            result = json.dumps(output)
         except (TypeError, ValueError):
-            return str(output)
+            result = str(output)
+
+        max_size = self._resolve_max_content_size(tool_name or "")
+        if len(result) > max_size:
+            result = result[:max_size] + "[TRUNCATED]"
+
+        return result
 
     @staticmethod
     def _compute_fingerprint(name: str, arguments: dict[str, Any]) -> str:

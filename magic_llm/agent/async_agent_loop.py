@@ -64,6 +64,9 @@ class AsyncAgentLoop:
         deduplicate: Enable tool deduplication (default: False, opt-in).
         content_separator: String to join content between iterations (default: "\\n\\n").
         tool_choice: Tool choice parameter for the LLM (default: "auto").
+        heartbeat_cb: Optional async callback invoked periodically (~8s) during
+            tool execution to yield SSE keepalive events. Only active when set.
+            Defaults to None (no heartbeat).
         **kwargs: Extra kwargs stored for passthrough to LLM calls.
             Note: 'engine_type' is explicitly ignored.
     """
@@ -80,6 +83,7 @@ class AsyncAgentLoop:
         deduplicate: bool = False,
         content_separator: str = "\n\n",
         tool_choice: str | dict[str, Any] | None = "auto",
+        heartbeat_cb: Optional[Callable[[], Any]] = None,
         **kwargs: Any,
     ) -> None:
         self._client = client
@@ -98,15 +102,19 @@ class AsyncAgentLoop:
         else:
             self._adapter = ToolAdapterFactory.create_for_client(client)
 
-        # Tool executor: explicit override or create internally
+        # Tool executor: explicit override or create internally with defaults
         if tool_executor is not None:
             self._executor = tool_executor
         else:
-            self._executor = ToolExecutor(enable_dedup=deduplicate)
+            self._executor = ToolExecutor(
+                per_tool_timeout=30.0,
+                enable_dedup=deduplicate,
+            )
 
         self._deduplicate = deduplicate
         self._content_separator = content_separator
         self._tool_choice = tool_choice
+        self._heartbeat_cb = heartbeat_cb
 
         # Store kwargs for passthrough, but explicitly drop engine_type
         kwargs.pop("engine_type", None)
@@ -624,8 +632,24 @@ class AsyncAgentLoop:
                                 state=self.state,
                             )
 
-                        # Execute tools (async)
-                        results = await self._executor.execute_parallel_async(tool_calls)
+                        # Execute tools (async) with heartbeat support
+                        heartbeat_task: Optional[asyncio.Task[None]] = None
+                        try:
+                            if self._heartbeat_cb is not None:
+                                async def _heartbeat_loop() -> None:
+                                    while True:
+                                        await asyncio.sleep(8)
+                                        await self._heartbeat_cb()  # type: ignore[misc]
+                                heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
+                            results = await self._executor.execute_parallel_async(tool_calls)
+                        finally:
+                            if heartbeat_task is not None:
+                                heartbeat_task.cancel()
+                                try:
+                                    await heartbeat_task
+                                except asyncio.CancelledError:
+                                    pass
 
                         # Hook: on_tool_complete — invoke AFTER execution for each result
                         for result in results:
