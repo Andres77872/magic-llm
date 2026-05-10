@@ -209,9 +209,18 @@ class EngineAnthropic(BaseChat):
         anthropic_chat: list[dict] = []
 
         for msg in messages:
+            raw_content = msg["content"]
+
+            # ----- content is None (tool-call-only assistant message) ----- #
+            if raw_content is None:
+                # Assistant messages with only tool_calls have content=None.
+                # Anthropic requires a non-null content array; use an empty
+                # text part to satisfy the API contract.
+                parts = [{"type": "text", "text": ""}]
+
             # ----- simple string → single text part ----------------------- #
-            if isinstance(msg["content"], str):
-                parts = [{"type": "text", "text": msg["content"]}]
+            elif isinstance(raw_content, str):
+                parts = [{"type": "text", "text": raw_content}]
 
             # ----- list of parts ----------------------------------------- #
             else:

@@ -258,18 +258,20 @@ class AgentLoop:
                     self._adapter.deserialize_tool_calls(response)
                 )
 
-                # Step 6: CHECK_DONE — no tool calls OR is_finished
+                # Step 6: RECORD content BEFORE checking done/break
+                content = response.content
+                if content and not tool_calls:
+                    collected_content.append(content)
+                    chat.add_assistant_message(content)
+
+                # Step 7: CHECK_DONE — no tool calls OR is_finished
+                # INVARIANT: Content recording runs BEFORE break so the final
+                # content-only assistant message is in state when the loop exits.
                 if not tool_calls or self._adapter.is_finished(response):
                     # Exit loop
                     break
 
-                # Step 7: RECORD_CONTENT — append text and add assistant message
-                content = response.content
-                if content:
-                    collected_content.append(content)
-                    chat.add_assistant_message(content)
-
-                # Also add tool_call message when tool_calls exist
+                # Step 7b: ADD_TOOL_CALL — tool-call message (no speculative content)
                 if tool_calls:
                     # Convert CanonicalToolCall to dict format for chat
                     tool_call_dicts = [
@@ -285,7 +287,7 @@ class AgentLoop:
                     ]
                     chat.add_tool_call_message(
                         tool_calls=tool_call_dicts,
-                        content=content,
+                        content=None,  # INVARIANT: no speculative content in LLM context
                     )
 
                 # Step 8: VALIDATE_INTEGRITY
@@ -541,17 +543,22 @@ class AgentLoop:
                             )
                         )
 
-                    # Check done
-                    if not tool_calls or self._adapter.is_finished(response):
-                        break
-
-                    # Record content
-                    if iteration_content:
+                    # Record content — runs for EVERY iteration (including final no-tool answer)
+                    # INVARIANT: When tool_calls are present, pre-tool content is
+                    # speculative and MUST be suppressed — condition `not tool_calls`
+                    # ensures only content-only iterations are recorded.
+                    if iteration_content and not tool_calls:
                         iter_content = "".join(iteration_content)
                         chat.add_assistant_message(iter_content)
                         collected_content.append(iter_content)
+                        self._state.messages = chat.messages
 
-                    # Add tool_call message
+                    # Check done — AFTER content recording so final content-only
+                    # assistant message is synced to state before the break.
+                    if not tool_calls or self._adapter.is_finished(response):
+                        break
+
+                    # Add tool_call message (no speculative content)
                     if tool_calls:
                         tool_call_dicts = [
                             {
@@ -566,7 +573,7 @@ class AgentLoop:
                         ]
                         chat.add_tool_call_message(
                             tool_calls=tool_call_dicts,
-                            content="".join(iteration_content) if iteration_content else None,
+                            content=None,  # INVARIANT: no speculative content in LLM context
                         )
 
                     # Validate integrity

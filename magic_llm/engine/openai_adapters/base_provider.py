@@ -88,6 +88,15 @@ class OpenAiBaseProvider(ABC):
         """
         messages = chat.get_messages()
         
+        # Strip non-standard is_error field from tool messages.
+        # is_error is stored in ModelChat for internal debugging/tracing but is NOT
+        # part of the OpenAI-compatible spec — strict providers may reject it.
+        messages = [
+            {k: v for k, v in msg.items() if k != 'is_error'}
+            if msg.get('role') == 'tool' else msg
+            for msg in messages
+        ]
+
         if _has_image_content(messages) and not self.supports_vision:
             raise ChatException(
                 message=f"Provider '{self.__class__.__name__}' does not support image/vision inputs. "

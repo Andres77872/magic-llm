@@ -708,8 +708,11 @@ class TestAgentLoopRun:
         )
         assert has_tool_call_msg
 
-    def test_run_adds_both_messages_when_content_and_tool_calls(self):
-        """When response has both content AND tool_calls, both messages are added."""
+    def test_run_content_suppressed_when_tool_calls_present(self):
+        """INVARIANT: When response has both content AND tool_calls, content is
+        suppressed — no add_assistant_message for that iteration, only
+        add_tool_call_message(content=None). The content-invariant spec enforces
+        that pre-tool speculative text is never persisted."""
         client = MagicMock()
         client.llm = MagicMock()
         tc = _make_tool_call()
@@ -734,14 +737,104 @@ class TestAgentLoopRun:
         from magic_llm.agent.agent_loop import AgentLoop
         loop = AgentLoop(client, tools=[get_weather], adapter=adapter)
 
-        loop.run("weather?")
+        response = loop.run("weather?")
 
         # Count assistant messages
         assistant_msgs = [
             m for m in loop.state.messages if m.get("role") == "assistant"
         ]
-        # Should have at least: assistant(content) + assistant(tool_calls)
-        assert len(assistant_msgs) >= 2
+        # Phase 7: 2 assistant messages in chat for this turn:
+        #  - [0]: tool-call message from iter-1 (content="thinking..." suppressed,
+        #         tool_calls preserved)
+        #  - [1]: final answer from iter-2 (content="final", no tool_calls)
+        # Before Phase 7, the second message was never added because break
+        # fired before content recording. Now content is recorded BEFORE break.
+        assert len(assistant_msgs) == 2
+        # The first assistant message is the tool-call message — content is None
+        # (suppressed per invariant), tool_calls are preserved
+        tool_call_msg = assistant_msgs[0]
+        assert tool_call_msg["role"] == "assistant"
+        assert "tool_calls" in tool_call_msg
+        assert tool_call_msg.get("content") is None
+        # The second assistant message is the final answer — content preserved,
+        # no tool_calls
+        final_msg = assistant_msgs[1]
+        assert final_msg["role"] == "assistant"
+        assert "tool_calls" not in final_msg
+        assert final_msg.get("content") == "final"
+        # The final output is also on the returned response
+        assert response.content == "final"
+
+    def test_sync_run_content_preserved_no_tool_calls(self):
+        """Normal behavior: run() preserves content when no tool_calls
+        present — content flows through the response AND is recorded
+        in state via add_assistant_message before break (Phase 7 fix)."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.generate.return_value = _make_response(
+            content="hello world", finish_reason="stop"
+        )
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.agent_loop import AgentLoop
+        loop = AgentLoop(client, tools=[], adapter=adapter)
+
+        response = loop.run("hello")
+
+        # Normal behavior: content is preserved in the response
+        assert response.content == "hello world"
+        # Phase 7: content is recorded in state BEFORE break, so
+        # state has 1 assistant message with the content
+        assistant_msgs = [
+            m for m in loop.state.messages if m.get("role") == "assistant"
+        ]
+        assert len(assistant_msgs) == 1
+        assert assistant_msgs[0].get("content") == "hello world"
+
+    def test_sync_run_content_with_tool_calls_no_content_suppressed(self):
+        """When tool_calls are present BUT content is None/empty,
+        no content to suppress — add_tool_call_message is called
+        normally."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        tc = _make_tool_call()
+        client.llm.generate.side_effect = [
+            _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls"),
+            _make_response(content="done", finish_reason="stop"),
+        ]
+
+        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={"city": "London"})]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
+        adapter.is_finished.side_effect = [False, True]
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        def get_weather(city):
+            return {"temp": 18}
+
+        from magic_llm.agent.agent_loop import AgentLoop
+        loop = AgentLoop(client, tools=[get_weather], adapter=adapter)
+
+        response = loop.run("weather?")
+
+        # Phase 7: 2 assistant messages — tool-call iter-1 + final answer iter-2
+        assistant_msgs = [
+            m for m in loop.state.messages if m.get("role") == "assistant"
+        ]
+        assert len(assistant_msgs) == 2
+        tool_call_msg = assistant_msgs[0]
+        assert tool_call_msg["role"] == "assistant"
+        assert "tool_calls" in tool_call_msg
+        # content was None originally, no suppression needed
+        assert tool_call_msg.get("content") is None
+        # Second assistant message is the final answer recorded before break
+        final_msg = assistant_msgs[1]
+        assert final_msg["role"] == "assistant"
+        assert "tool_calls" not in final_msg
+        assert final_msg.get("content") == "done"
+        assert response.content == "done"
 
     def test_run_is_finished_takes_precedence_over_tool_calls(self):
         """is_finished=True exits regardless of tool_calls presence."""
@@ -1380,6 +1473,144 @@ class TestAgentLoopStream:
 
         assert len(result) == 5
         # No separator should be yielded (no tool calls)
+        separator_chunks = [c for c in result if "separator" in c.id]
+        assert len(separator_chunks) == 0
+
+
+# ─── Slice 9c: AgentLoop.stream() content invariant
+
+class TestAgentLoopStreamInvariant:
+    """AgentLoop.stream() enforces the content-invariant:
+    content produced alongside tool_calls MUST be suppressed — never
+    persisted to chat, never accumulated for final output, never passed
+    as LLM context."""
+
+    def test_sync_stream_content_suppressed_when_tool_calls(self):
+        """INVARIANT: stream() suppresses content when tool_calls are
+        present in the same iteration — no add_assistant_message, no
+        collected_content.append, add_tool_call_message(content=None)."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        from magic_llm.model.ModelChatStream import (
+            ToolCall as StreamToolCall,
+            FunctionCall as StreamFunctionCall,
+        )
+
+        # First iteration: content + tool_calls → content suppressed
+        chunks_iter0 = [
+            ChatCompletionModel(
+                id="chunk-0",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content="thinking..."),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            )
+        ]
+        chunks_iter0[0].choices[0].delta.tool_calls = [
+            StreamToolCall(
+                index=0, id="call_1",
+                function=StreamFunctionCall(name="get_weather", arguments="{}"),
+            )
+        ]
+
+        # Second iteration: done (no tool_calls)
+        chunks_iter1 = [
+            ChatCompletionModel(
+                id="chunk-1",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content="done"),
+                        finish_reason="stop",
+                    )
+                ],
+            )
+        ]
+
+        client.llm.stream_generate.side_effect = [
+            iter(chunks_iter0), iter(chunks_iter1),
+        ]
+
+        tool_calls = [CanonicalToolCall(
+            id="call_1", name="get_weather", arguments={},
+        )]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
+        adapter.is_finished.side_effect = [False, True]
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        from magic_llm.agent.agent_loop import AgentLoop
+        loop = AgentLoop(client, tools=[lambda: None], adapter=adapter)
+
+        result = list(loop.stream("hello"))
+
+        # INVARIANT: The pre-tool content "thinking..." is NOT leaked into any
+        # assistant message. The tool-call assistant gets content=None.
+        # Phase 7: the final content-only iteration ("done") IS recorded as a
+        # second assistant message BEFORE the break exits the loop.
+        assistant_msgs = [
+            m for m in loop.state.messages if m.get("role") == "assistant"
+        ]
+        assert len(assistant_msgs) == 2, (
+            f"Expected 2 assistant msgs (tool-call + final answer), got {len(assistant_msgs)}"
+        )
+        # First assistant: tool-call message — content suppressed
+        tool_call_msg = assistant_msgs[0]
+        assert tool_call_msg["role"] == "assistant"
+        assert "tool_calls" in tool_call_msg
+        assert tool_call_msg.get("content") is None
+        # Second assistant: final answer — content recorded before break
+        final_msg = assistant_msgs[1]
+        assert final_msg["role"] == "assistant"
+        assert "tool_calls" not in final_msg
+        assert final_msg.get("content") == "done"
+        # Verify "thinking..." is NOT leaked into any message content
+        all_contents = [
+            m.get("content", "") for m in loop.state.messages
+            if m.get("content")
+        ]
+        assert all("thinking..." not in str(c) for c in all_contents)
+
+    def test_sync_stream_content_preserved_no_tool_calls(self):
+        """Normal behavior: stream() preserves content when no tool_calls
+        present — content streams through chunks as expected."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        chunks = [
+            ChatCompletionModel(
+                id="chunk-0",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content="hello world"),
+                        finish_reason="stop",
+                    )
+                ],
+            )
+        ]
+        client.llm.stream_generate.return_value = iter(chunks)
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.agent_loop import AgentLoop
+        loop = AgentLoop(client, tools=[], adapter=adapter)
+
+        result = list(loop.stream("hello"))
+
+        # Content streams through chunks correctly
+        assert len(result) == 1
+        assert result[0].choices[0].delta.content == "hello world"
+        # No separator (no tool calls between iterations)
         separator_chunks = [c for c in result if "separator" in c.id]
         assert len(separator_chunks) == 0
 

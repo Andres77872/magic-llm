@@ -23,6 +23,16 @@ class ProviderDeepInfra(OpenAiBaseProvider):
                      **kwargs) -> tuple[bytes, dict[str, str]]:
         # Construct the header and data to be sent in the request.
         messages = chat.get_messages()
+
+        # Strip non-standard is_error field from tool messages.
+        # is_error is stored in ModelChat for internal debugging/tracing but is NOT
+        # part of the OpenAI-compatible spec — strict providers may reject it.
+        messages = [
+            {k: v for k, v in msg.items() if k != 'is_error'}
+            if msg.get('role') == 'tool' else msg
+            for msg in messages
+        ]
+
         for message in messages:
             if message['role'] == 'user' and isinstance(message['content'], list):
                 for item in message['content']:

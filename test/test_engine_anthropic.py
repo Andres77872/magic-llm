@@ -1,10 +1,57 @@
+import json
+
 import pytest
 
+from magic_llm.model import ModelChat
 from magic_llm.engine.engine_anthropic import EngineAnthropic
 
 
 def _make_engine():
     return EngineAnthropic(api_key="test-key", model="claude-3-haiku-20240307")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# V1: prepare_data — content=None handling
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestPrepareData:
+    """prepare_data() — content=None handling (V1 verification)."""
+
+    def test_content_none_tool_call_message(self):
+        """Tool-call assistant msg with content=None → empty text part, no crash."""
+        engine = _make_engine()
+        chat = ModelChat()
+        chat.add_user_message("Hello")
+        chat.add_tool_call_message(
+            tool_calls=[{"id": "call_1", "function": {"name": "test", "arguments": "{}"}}],
+            content=None,
+        )
+
+        data, headers = engine.prepare_data(chat)
+        payload = json.loads(data)
+        msgs = payload["messages"]
+
+        # Last message should be the tool-call assistant message
+        last = msgs[-1]
+        assert last["role"] == "assistant"
+        assert last["content"] == [{"type": "text", "text": ""}]
+        assert "tool_calls" not in last  # Anthropic uses content blocks, not top-level tool_calls
+
+    def test_content_normal_string(self):
+        """Normal text assistant msg → text part preserved."""
+        engine = _make_engine()
+        chat = ModelChat()
+        chat.add_user_message("Hello")
+        chat.add_assistant_message("Normal response")
+
+        data, headers = engine.prepare_data(chat)
+        payload = json.loads(data)
+        msgs = payload["messages"]
+
+        last = msgs[-1]
+        assert last["role"] == "assistant"
+        assert last["content"] == [{"type": "text", "text": "Normal response"}]
 
 
 class TestProcessGenerate:

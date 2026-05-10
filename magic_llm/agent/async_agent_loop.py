@@ -297,17 +297,18 @@ class AsyncAgentLoop:
                         self._adapter.deserialize_tool_calls(response)
                     )
 
-                    # Step 6: CHECK_DONE — no tool calls OR is_finished
-                    if not tool_calls or self._adapter.is_finished(response):
-                        break
-
-                    # Step 7: RECORD_CONTENT
+                    # Step 6: RECORD_CONTENT — INVARIANT: suppress when tool_calls present
                     content = response.content
-                    if content:
+                    if content and not tool_calls:
                         collected_content.append(content)
                         chat.add_assistant_message(content)
 
-                    # Also add tool_call message when tool_calls exist
+                    # Step 7: CHECK_DONE — AFTER content recording (Phase 7)
+                    # INVARIANT: Final content-only iteration must persist to state BEFORE break
+                    if not tool_calls or self._adapter.is_finished(response):
+                        break
+
+                    # Step 8: ADD_TOOL_CALL — tool-call message (no speculative content)
                     if tool_calls:
                         tool_call_dicts = [
                             {
@@ -322,7 +323,7 @@ class AsyncAgentLoop:
                         ]
                         chat.add_tool_call_message(
                             tool_calls=tool_call_dicts,
-                            content=content,
+                            content=None,  # INVARIANT: no speculative content in LLM context
                         )
 
                     # Step 8: VALIDATE_INTEGRITY
@@ -590,17 +591,18 @@ class AsyncAgentLoop:
                                 )
                             )
 
-                        # Check done
-                        if not tool_calls or self._adapter.is_finished(response):
-                            break
-
-                        # Record content
-                        if iteration_content:
+                        # Record content — runs for EVERY iteration (including final no-tool answer)
+                        if iteration_content and not tool_calls:
                             iter_content = "".join(iteration_content)
                             chat.add_assistant_message(iter_content)
                             collected_content.append(iter_content)
+                            self._state.messages = chat.messages  # State sync BEFORE break
 
-                        # Add tool_call message
+                        # Check done — AFTER content recording
+                        if not tool_calls or self._adapter.is_finished(response):
+                            break
+
+                        # Add tool_call message (no speculative content)
                         if tool_calls:
                             tool_call_dicts = [
                                 {
@@ -615,7 +617,7 @@ class AsyncAgentLoop:
                             ]
                             chat.add_tool_call_message(
                                 tool_calls=tool_call_dicts,
-                                content="".join(iteration_content) if iteration_content else None,
+                                content=None,  # INVARIANT: no speculative content in LLM context
                             )
 
                         # Validate integrity
@@ -643,6 +645,10 @@ class AsyncAgentLoop:
                                 heartbeat_task = asyncio.create_task(_heartbeat_loop())
 
                             results = await self._executor.execute_parallel_async(tool_calls)
+
+                            # INVARIANT: inject results immediately — even partial results are valid
+                            self._adapter.serialize_tool_results(results, chat)
+                            self._state.messages = chat.messages
                         finally:
                             if heartbeat_task is not None:
                                 heartbeat_task.cancel()
@@ -659,10 +665,6 @@ class AsyncAgentLoop:
                                 self.state,
                                 state=self.state,
                             )
-
-                        # Inject results
-                        self._adapter.serialize_tool_results(results, chat)
-                        self._state.messages = chat.messages
 
                         # Yield separator between iterations
                         if iteration_content and self._content_separator and last_chunk:

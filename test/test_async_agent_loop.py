@@ -372,6 +372,97 @@ class TestAsyncAgentLoopRun:
 
         asyncio.run(run_and_check())
 
+    # ─── Content Suppression Invariant Tests ────────────────────────────
+
+    def test_async_run_content_suppressed_when_tool_calls(self):
+        """INVARIANT + Phase 7: When run() response has both content AND tool_calls,
+        content is suppressed for the tool-call iteration — no add_assistant_message
+        for THAT iteration. After Phase 7 fix, the final content-only iteration
+        correctly records content to state BEFORE break, resulting in 2 assistant
+        messages: [tool-call, final-answer]."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        tc = _make_tool_call()
+
+        client.llm.async_generate = AsyncMock(
+            side_effect=[
+                _make_response(content="thinking...", tool_calls=[tc], finish_reason="tool_calls"),
+                _make_response(content="final", finish_reason="stop"),
+            ]
+        )
+
+        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={"city": "London"})]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
+        adapter.is_finished.side_effect = [False, True]
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        def get_weather(city):
+            return {"temp": 18}
+
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(client, tools=[get_weather], adapter=adapter)
+
+        async def run_and_check():
+            response = await loop.run("weather?")
+
+            # Count assistant messages in chat history
+            assistant_msgs = [
+                m for m in loop.state.messages if m.get("role") == "assistant"
+            ]
+            # Phase 7: Final content-only iteration records content BEFORE break,
+            # so we now have 2 assistant messages: [tool-call, final-answer].
+            assert len(assistant_msgs) == 2
+
+            # Msg 1: The tool-call message with content=None (pre-tool suppressed)
+            tool_call_msg = assistant_msgs[0]
+            assert tool_call_msg["role"] == "assistant"
+            assert "tool_calls" in tool_call_msg
+            assert tool_call_msg.get("content") is None  # pre-tool content suppressed
+
+            # Msg 2: The final answer (no tool_calls, content preserved)
+            final_msg = assistant_msgs[1]
+            assert final_msg["role"] == "assistant"
+            assert "tool_calls" not in final_msg or not final_msg.get("tool_calls")
+            assert final_msg.get("content") == "final"
+
+            # The final output is on the returned response
+            assert response.content == "final"
+
+        asyncio.run(run_and_check())
+
+    def test_async_run_content_preserved_no_tool_calls(self):
+        """INVARIANT: When run() has no tool_calls, content IS preserved
+        as normal — normal behavior unaffected."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.async_generate = AsyncMock(
+            return_value=_make_response(content="hello world", finish_reason="stop")
+        )
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+
+        async def run_and_check():
+            response = await loop.run("hello")
+
+            # Content IS preserved on the returned response
+            assert response.content == "hello world"
+
+            # No tool-call messages in chat (no tool_calls existed)
+            assert not any(
+                "tool_calls" in m for m in loop.state.messages
+            )
+
+            # LLM was called exactly once (single iteration, tool-less)
+            client.llm.async_generate.assert_called_once()
+
+        asyncio.run(run_and_check())
+
 
 # ─── Slice 11b: AsyncAgentLoop.run() with tool_functions
 
@@ -877,6 +968,333 @@ class TestAsyncAgentLoopStream:
         loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
 
         assert not hasattr(loop, "stream_sync")
+
+    # ─── Content Suppression Invariant Tests ────────────────────────────
+
+    def test_async_stream_content_suppressed_when_tool_calls(self):
+        """INVARIANT: When stream() iteration has content AND tool_calls,
+        content is suppressed — no assistant message added, only
+        add_tool_call_message(content=None). Pre-tool speculative text
+        is never persisted to chat history."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        from magic_llm.model.ModelChatStream import (
+            ToolCall as StreamToolCall,
+            FunctionCall as StreamFunctionCall,
+        )
+        # First iteration: content + tool_calls
+        chunks_iter0 = [
+            ChatCompletionModel(
+                id="chunk-0",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content="thinking"),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            )
+        ]
+        chunks_iter0[0].choices[0].delta.tool_calls = [
+            StreamToolCall(index=0, id="call_1",
+                           function=StreamFunctionCall(name="get_weather", arguments="{}"))
+        ]
+
+        # Second iteration: content only, no tool_calls
+        chunks_iter1 = [
+            ChatCompletionModel(
+                id="chunk-1",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content="done"),
+                        finish_reason="stop",
+                    )
+                ],
+            )
+        ]
+
+        iter_count = [0]
+
+        async def async_gen(*args, **kwargs):
+            iter_count[0] += 1
+            if iter_count[0] == 1:
+                for chunk in chunks_iter0:
+                    yield chunk
+            else:
+                for chunk in chunks_iter1:
+                    yield chunk
+
+        client.llm.async_stream_generate = async_gen
+
+        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
+        adapter.is_finished.side_effect = [False, True]
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(client, tools=[lambda: None], adapter=adapter)
+
+        async def collect_and_check():
+            result = []
+            async for chunk in loop.stream("hello"):
+                result.append(chunk)
+
+            # Check separator is present (normal stream behavior)
+            separator_chunks = [c for c in result if "separator" in c.id]
+            assert len(separator_chunks) >= 1
+
+            # INVARIANT: Inspect chat messages after stream completes
+            assistant_msgs = [
+                m for m in loop.state.messages if m.get("role") == "assistant"
+            ]
+            # Phase 7 fix: 2 assistant messages — tool-call (iter-1 content suppressed)
+            # + final content-only (iter-2 "done" recorded BEFORE break).
+            assert len(assistant_msgs) == 2
+
+            tool_call_msg = assistant_msgs[0]
+            assert tool_call_msg["role"] == "assistant"
+            assert "tool_calls" in tool_call_msg
+            assert tool_call_msg.get("content") is None  # iter-1 content suppressed
+
+            # Phase 7: iter-2's content-only "done" IS recorded before break
+            final_msg = assistant_msgs[1]
+            assert final_msg["role"] == "assistant"
+            assert "tool_calls" not in final_msg  # no tool_calls in final answer
+            assert final_msg.get("content") == "done"  # final content preserved
+
+        asyncio.run(collect_and_check())
+
+    def test_async_stream_content_preserved_no_tool_calls(self):
+        """INVARIANT: When stream() has no tool_calls, content IS preserved
+        as normal — all chunks yielded, no content suppression."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        chunks = [
+            ChatCompletionModel(
+                id=f"chunk-{i}",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content=f"c{i}"),
+                        finish_reason="stop" if i == 4 else None,
+                    )
+                ],
+            )
+            for i in range(5)
+        ]
+
+        async def async_gen(*args, **kwargs):
+            for chunk in chunks:
+                yield chunk
+
+        client.llm.async_stream_generate = async_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+
+        async def collect_and_check():
+            result = []
+            async for chunk in loop.stream("hello"):
+                result.append(chunk)
+
+            # All chunks yielded — content preserved normally
+            assert len(result) == 5
+            for i, chunk in enumerate(result):
+                assert chunk.id == f"chunk-{i}"
+
+            # No separator chunks (no tool calls)
+            separator_chunks = [c for c in result if "separator" in c.id]
+            assert len(separator_chunks) == 0
+
+            # No tool-call messages in chat
+            assert not any(
+                "tool_calls" in m for m in loop.state.messages
+            )
+
+        asyncio.run(collect_and_check())
+
+    # ─── Phase 7: Tool Result Injection Test ────────────────────────────
+
+    def test_tool_result_present_in_next_llm_call(self):
+        """Prove that after tool execution, the NEXT LLM call receives
+        role=tool messages with tool_call_id and URL/result content.
+
+        This tests the full injection chain:
+          execute_parallel_async -> serialize_tool_results ->
+          chat.messages -> next async_stream_generate(chat)
+
+        Also asserts final assistant message is present in state after
+        final content-only response (Phase 7 invariant).
+
+        Rationale: If tool results are NOT injected into chat, the LLM
+        never sees tool outputs (URLs, search results, etc.) and the
+        next iteration operates blind. This test proves injection is intact.
+        """
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        from magic_llm.model.ModelChatStream import (
+            ToolCall as StreamToolCall,
+            FunctionCall as StreamFunctionCall,
+        )
+
+        # Iter-1: tool_call, no content
+        chunks_iter0 = [
+            ChatCompletionModel(
+                id="chunk-0",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content=""),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            )
+        ]
+        chunks_iter0[0].choices[0].delta.tool_calls = [
+            StreamToolCall(
+                index=0,
+                id="call_1",
+                function=StreamFunctionCall(name="get_weather", arguments="{}"),
+            )
+        ]
+
+        # Iter-2: content-only final answer
+        chunks_iter1 = [
+            ChatCompletionModel(
+                id="chunk-1",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content="The weather is sunny"),
+                        finish_reason="stop",
+                    )
+                ],
+            )
+        ]
+
+        # Capture the chat object passed to iter-2's LLM call
+        captured_chat_messages: list[list[dict]] = []
+
+        iter_count = [0]
+
+        async def async_gen(*args, **kwargs):
+            iter_count[0] += 1
+            if iter_count[0] == 1:
+                for chunk in chunks_iter0:
+                    yield chunk
+            else:
+                # Capture a COPY of chat.messages from the second LLM call
+                chat_arg = args[0]
+                captured_chat_messages.append(list(chat_arg.messages))
+                for chunk in chunks_iter1:
+                    yield chunk
+
+        client.llm.async_stream_generate = async_gen
+
+        # Real tool that returns URL-like data
+        def get_weather() -> dict:
+            return {"url": "https://api.weather.com/result/sunny"}
+
+        tool_calls = [
+            CanonicalToolCall(id="call_1", name="get_weather", arguments={})
+        ]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
+        adapter.is_finished.side_effect = [False, True]
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+
+        # serialize_tool_results MUST actually add role=tool messages to chat
+        # to simulate the real injection chain
+        def _mock_serialize_tool_results(
+            results: list, chat: object
+        ) -> None:
+            for result in results:
+                chat.add_tool_result(
+                    tool_call_id=result.tool_call_id or "",
+                    content=result.content,
+                    is_error=result.is_error,
+                )
+
+        adapter.serialize_tool_results.side_effect = _mock_serialize_tool_results
+
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(client, tools=[get_weather], adapter=adapter)
+
+        async def collect_and_check():
+            result = []
+            async for chunk in loop.stream("What's the weather?"):
+                result.append(chunk)
+
+            # ── Assertion 1: Tool result injected into next LLM call ──
+            assert len(captured_chat_messages) == 1, (
+                "Should have captured chat from iter-2 LLM call"
+            )
+            iter2_messages = captured_chat_messages[0]
+
+            # Find role=tool messages in iter-2's chat
+            tool_msgs = [
+                m for m in iter2_messages if m.get("role") == "tool"
+            ]
+            assert len(tool_msgs) >= 1, (
+                "Next LLM call MUST have role=tool messages "
+                "from tool results"
+            )
+
+            # Verify tool message has tool_call_id and content (URL/result)
+            tool_msg = tool_msgs[0]
+            assert tool_msg.get("tool_call_id") == "call_1", (
+                f"Expected tool_call_id='call_1', "
+                f"got {tool_msg.get('tool_call_id')}"
+            )
+            assert tool_msg.get("content") is not None, (
+                "Tool result content MUST NOT be None"
+            )
+            # The content should contain the URL from the tool result
+            # (json.dumps of the dict return value)
+            assert "sunny" in tool_msg.get("content", ""), (
+                f"Tool result content should contain the URL/result, "
+                f"got: {tool_msg.get('content')}"
+            )
+
+            # ── Assertion 2: Final assistant message in state ──
+            assistant_msgs = [
+                m for m in loop.state.messages if m.get("role") == "assistant"
+            ]
+            assert len(assistant_msgs) >= 2, (
+                "Should have tool-call assistant + final answer assistant "
+                f"in state, got {len(assistant_msgs)}"
+            )
+
+            final_msg = assistant_msgs[-1]
+            assert final_msg["role"] == "assistant", (
+                f"Last assistant should be final answer, "
+                f"got role={final_msg.get('role')}"
+            )
+            assert "tool_calls" not in final_msg or not final_msg.get("tool_calls"), (
+                "Final assistant message MUST NOT have tool_calls"
+            )
+            assert final_msg.get("content") == "The weather is sunny", (
+                f"Final content should be preserved, "
+                f"got: {final_msg.get('content')}"
+            )
+
+        asyncio.run(collect_and_check())
 
 
 # ─── Slice 13: AsyncAgentLoop.state read-only copy

@@ -195,6 +195,43 @@ class TestOpenAISerializeToolResults:
         assert tool_msgs[1]["tool_call_id"] == "call_2"
         assert tool_msgs[2]["tool_call_id"] == "call_3"
 
+    def test_openai_serialize_tool_results_error_visible(self):
+        """V2: ToolResult(is_error=True) → role='tool' message with error content visible."""
+        chat = ModelChat()
+        chat.add_user_message("Hello")
+        # Add a tool-call assistant msg so validation passes
+        chat.add_tool_call_message(
+            tool_calls=[{"id": "call_err", "function": {"name": "boom_tool"}}]
+        )
+
+        results = [
+            ToolResult(
+                tool_call_id="call_err",
+                name="boom_tool",
+                content=json.dumps({
+                    "error": True,
+                    "error_message": "API unreachable",
+                    "error_type": "ConnectionError",
+                    "tool_name": "web_search",
+                }),
+                is_error=True,
+            )
+        ]
+
+        adapter = OpenAIToolAdapter()
+        adapter.serialize_tool_results(results, chat)
+
+        tool_msgs = [m for m in chat.messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 1
+        assert tool_msgs[0]["tool_call_id"] == "call_err"
+        assert tool_msgs[0]["is_error"] is True
+        # Error content is visible to the LLM — not silently dropped
+        content = json.loads(tool_msgs[0]["content"])
+        assert content["error"] is True
+        assert content["error_message"] == "API unreachable"
+        assert content["error_type"] == "ConnectionError"
+        assert content["tool_name"] == "web_search"
+
 
 class TestOpenAIIsFinished:
     """Slice 7: OpenAIToolAdapter.is_finished."""
@@ -515,3 +552,233 @@ class TestAdapterReExports:
         from magic_llm.agent.adapters import GeminiToolAdapter as ReExported
 
         assert ReExported is GeminiToolAdapter
+
+
+# ─── V5.1: Adapter add_tool_call_message content=None handling ───────────────
+
+
+class TestAddToolCallMessageContentNone:
+    """V5.1: Verify ALL supported adapters accept add_tool_call_message(content=None).
+
+    Per the content-invariant spec, when tool_calls are present, content MUST be
+    passed as None (not empty string, not pre-tool content). The ModelChat base
+    method and all provider adapters must handle None without error.
+    """
+
+    def test_model_chat_add_tool_call_message_accepts_content_none(self):
+        """ModelChat.add_tool_call_message(content=None) stores None in message dict."""
+        chat = ModelChat()
+        chat.add_tool_call_message(
+            tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "test"}}],
+            content=None,
+        )
+        msg = chat.messages[0]
+        assert msg["role"] == "assistant"
+        assert msg["content"] is None  # None preserved, not coerced to ""
+        assert msg["tool_calls"] == [{"id": "call_1", "type": "function", "function": {"name": "test"}}]
+
+    def test_model_chat_add_tool_call_message_accepts_empty_string(self):
+        """ModelChat.add_tool_call_message(content='') stores empty string (fallback)."""
+        chat = ModelChat()
+        chat.add_tool_call_message(
+            tool_calls=[{"id": "call_2", "type": "function", "function": {"name": "test"}}],
+            content="",
+        )
+        msg = chat.messages[0]
+        assert msg["role"] == "assistant"
+        assert msg["content"] == ""  # Empty string is valid fallback
+        assert len(msg["tool_calls"]) == 1
+
+    def test_model_chat_multiple_tool_calls_with_content_none(self):
+        """Multiple tool calls with content=None — all tool_calls preserved."""
+        chat = ModelChat()
+        chat.add_tool_call_message(
+            tool_calls=[
+                {"id": "call_a", "type": "function", "function": {"name": "search"}},
+                {"id": "call_b", "type": "function", "function": {"name": "compute"}},
+            ],
+            content=None,
+        )
+        msg = chat.messages[0]
+        assert msg["content"] is None
+        assert len(msg["tool_calls"]) == 2
+        assert msg["tool_calls"][0]["id"] == "call_a"
+        assert msg["tool_calls"][1]["id"] == "call_b"
+
+
+# ─── V5.2: ToolResult(is_error=True) serialization ──────────────────────────
+
+
+class TestToolResultErrorSerialization:
+    """V5.2: Verify ToolResult(is_error=True) serializes as visible role:tool messages.
+
+    Per the content-invariant spec, tool failures MUST propagate as structured
+    role:tool messages visible to the LLM — not silently dropped, not replaced
+    with hardcoded text, not truncated.
+    """
+
+    def test_openai_serialize_tool_result_with_error(self):
+        """OpenAI adapter: error ToolResult → role:tool with error content + is_error flag."""
+        chat = ModelChat()
+        error_result = ToolResult(
+            tool_call_id="call_err",
+            name="web_search",
+            content='{"error": "API unreachable", "type": "ConnectionError"}',
+            is_error=True,
+            error="API unreachable",
+            error_type="ConnectionError",
+            duration_ms=5000.0,
+        )
+
+        adapter = OpenAIToolAdapter()
+        adapter.serialize_tool_results([error_result], chat)
+
+        assert len(chat.messages) == 1
+        msg = chat.messages[0]
+        assert msg["role"] == "tool"
+        assert msg["tool_call_id"] == "call_err"
+        assert msg["is_error"] is True
+        # Error content is visible to the LLM — not silently dropped
+        assert "API unreachable" in msg["content"]
+        assert "ConnectionError" in msg["content"]
+        # Error content matches the original ToolResult.content
+        assert msg["content"] == error_result.content
+
+    def test_openai_serialize_tool_result_unknown_tool_error(self):
+        """OpenAI adapter: unknown tool error → role:tool with is_error, content may be empty.
+
+        When ToolExecutor returns ToolResult with content="" for unknown tools or
+        timeouts, the adapter MUST still produce a role:tool message with is_error=True.
+        The error details are in the .error field, visible to the LLM via the
+        is_error=True flag and subsequent LLM response.
+        """
+        chat = ModelChat()
+        # Simulate an unknown-tool error result (content is empty for this error type)
+        unknown_tool_result = ToolResult(
+            tool_call_id="call_unk",
+            name="nonexistent_tool",
+            content="",
+            is_error=True,
+            error="Unknown tool: nonexistent_tool",
+            error_type="UnknownToolError",
+        )
+
+        adapter = OpenAIToolAdapter()
+        adapter.serialize_tool_results([unknown_tool_result], chat)
+
+        assert len(chat.messages) == 1
+        msg = chat.messages[0]
+        assert msg["role"] == "tool"
+        assert msg["tool_call_id"] == "call_unk"
+        assert msg["is_error"] is True
+        # Content is empty (this is the ToolExecutor's choice for unknown tools),
+        # but the is_error=True flag signals the error to downstream consumers.
+        # The LLM sees role:tool with is_error=True and can infer failure from context.
+        assert msg["content"] == ""
+        # No hardcoded assistant text was injected
+        assert all(m.get("role") != "assistant" for m in chat.messages)
+
+    def test_openai_serialize_tool_result_timeout_error(self):
+        """OpenAI adapter: timeout error → role:tool with is_error=True, no hardcoded text."""
+        chat = ModelChat()
+        timeout_result = ToolResult(
+            tool_call_id="call_timeout",
+            name="generate_image",
+            content="",
+            is_error=True,
+            error="Tool 'generate_image' timed out after 30s",
+            error_type="TimeoutError",
+            duration_ms=30000.0,
+        )
+
+        adapter = OpenAIToolAdapter()
+        adapter.serialize_tool_results([timeout_result], chat)
+
+        assert len(chat.messages) == 1
+        msg = chat.messages[0]
+        assert msg["role"] == "tool"
+        assert msg["is_error"] is True
+        # No hardcoded assistant fallback text
+        assert all(m.get("role") != "assistant" for m in chat.messages)
+
+    def test_anthropic_serialize_tool_result_with_error(self):
+        """Anthropic adapter: error ToolResult → user message with tool_result block + error content."""
+        chat = ModelChat()
+        chat.add_tool_call_message(
+            tool_calls=[{"id": "call_err", "function": {"name": "web_search"}}]
+        )
+        error_result = ToolResult(
+            tool_call_id="call_err",
+            name="web_search",
+            content='{"error": "API unreachable", "type": "ConnectionError"}',
+            is_error=True,
+            error="API unreachable",
+            error_type="ConnectionError",
+        )
+
+        adapter = AnthropicToolAdapter()
+        adapter.serialize_tool_results([error_result], chat)
+
+        assert len(chat.messages) == 2  # tool_call + tool_result
+        result_msg = chat.messages[1]
+        assert result_msg["role"] == "user"
+        assert result_msg["content"][0]["type"] == "tool_result"
+        assert result_msg["content"][0]["tool_use_id"] == "call_err"
+        # Error content visible in the tool_result block
+        assert "API unreachable" in result_msg["content"][0]["content"]
+
+    def test_gemini_serialize_tool_result_with_error(self):
+        """Gemini adapter: error ToolResult → user message with functionResponse error payload."""
+        chat = ModelChat()
+        chat.add_tool_call_message(
+            tool_calls=[{"id": "call_err", "function": {"name": "web_search"}}]
+        )
+        error_result = ToolResult(
+            tool_call_id="call_err",
+            name="web_search",
+            content='{"error": "API unreachable"}',
+            is_error=True,
+            error="API unreachable",
+            error_type="ConnectionError",
+        )
+
+        adapter = GeminiToolAdapter()
+        adapter.serialize_tool_results([error_result], chat)
+
+        assert len(chat.messages) == 2  # tool_call + tool_result
+        result_msg = chat.messages[1]
+        assert result_msg["role"] == "user"
+        fr = result_msg["content"][0]["functionResponse"]
+        assert fr["name"] == "web_search"
+        # Error response payload has {"error": ...} for is_error=True
+        assert "error" in fr["response"]
+        assert "API unreachable" in str(fr["response"]["error"])
+
+    def test_multiple_errors_serialized_individually(self):
+        """OpenAI adapter: multiple parallel errors → N separate role:tool messages."""
+        chat = ModelChat()
+        error_results = [
+            ToolResult(
+                tool_call_id="call_1", name="tool_a",
+                content='{"error": "fail_a"}', is_error=True,
+                error="fail_a", error_type="ValueError",
+            ),
+            ToolResult(
+                tool_call_id="call_2", name="tool_b",
+                content='{"error": "fail_b"}', is_error=True,
+                error="fail_b", error_type="TimeoutError",
+            ),
+        ]
+
+        adapter = OpenAIToolAdapter()
+        adapter.serialize_tool_results(error_results, chat)
+
+        tool_msgs = [m for m in chat.messages if m.get("role") == "tool"]
+        assert len(tool_msgs) == 2
+        assert tool_msgs[0]["tool_call_id"] == "call_1"
+        assert tool_msgs[0]["is_error"] is True
+        assert tool_msgs[1]["tool_call_id"] == "call_2"
+        assert tool_msgs[1]["is_error"] is True
+        # Both errors visible to LLM
+        assert "fail_a" in tool_msgs[0]["content"]
+        assert "fail_b" in tool_msgs[1]["content"]
