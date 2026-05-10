@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from magic_llm.agent.bundle import SubagentBundle
     from magic_llm.agent.definitions import SubagentManifest
 
-__version__ = '0.1.32'  # Subagent architecture complete (definitions/loader/registry/binder/bundle/decorator/config)
+__version__ = '0.1.33'  # Subagent architecture complete (definitions/loader/registry/binder/bundle/decorator/config)
 
 logger = logging.getLogger(__name__)
 
@@ -436,7 +436,7 @@ class MagicLLM(MagicLlmBase):
         tool_functions: Optional[Dict[str, Callable[..., Any]]] = None,
         budget: Optional["AgentBudget"] = None,
         hooks: Optional["AgentHooks"] = None,
-        max_iterations: int = 10,
+        max_iterations: int = 150,
         model: Optional[str] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
         extra_messages: Optional[List[Dict[str, Any]]] = None,
@@ -464,7 +464,7 @@ class MagicLLM(MagicLlmBase):
             budget: Execution bounds (max_iterations, token limits, timeouts).
                 If not provided, a default budget is created from max_iterations.
             hooks: Optional lifecycle callbacks (AgentHooks protocol).
-            max_iterations: Hard cap on loop iterations (default: 10).
+            max_iterations: Hard cap on loop iterations (default: 150).
                 Only used when budget is not provided.
             model: Optional model override, passed through to the engine.
             tool_choice: Tool choice directive (default: "auto").
@@ -527,7 +527,7 @@ class MagicLLM(MagicLlmBase):
         tool_functions: Optional[Dict[str, Callable[..., Any]]] = None,
         budget: Optional["AgentBudget"] = None,
         hooks: Optional["AgentHooks"] = None,
-        max_iterations: int = 10,
+        max_iterations: int = 150,
         model: Optional[str] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
         extra_messages: Optional[List[Dict[str, Any]]] = None,
@@ -550,7 +550,7 @@ class MagicLLM(MagicLlmBase):
             tool_functions: Dict mapping custom names to callables.
             budget: Execution bounds. Defaults to AgentBudget(max_iterations).
             hooks: Optional lifecycle callbacks.
-            max_iterations: Hard cap on loop iterations (default: 10).
+            max_iterations: Hard cap on loop iterations (default: 150).
             model: Optional model override.
             tool_choice: Tool choice directive (default: "auto").
             extra_messages: Optional pre-existing messages.
@@ -606,7 +606,7 @@ class MagicLLM(MagicLlmBase):
         tool_functions: Optional[Dict[str, Callable[..., Any]]] = None,
         budget: Optional["AgentBudget"] = None,
         hooks: Optional["AgentHooks"] = None,
-        max_iterations: int = 10,
+        max_iterations: int = 150,
         model: Optional[str] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
         extra_messages: Optional[List[Dict[str, Any]]] = None,
@@ -636,7 +636,7 @@ class MagicLLM(MagicLlmBase):
             tool_functions: Dict mapping custom names to callables.
             budget: Execution bounds. Defaults to AgentBudget(max_iterations).
             hooks: Optional lifecycle callbacks.
-            max_iterations: Hard cap on loop iterations (default: 10).
+            max_iterations: Hard cap on loop iterations (default: 150).
             model: Optional model override.
             tool_choice: Tool choice directive (default: "auto").
             extra_messages: Optional pre-existing messages.
@@ -705,7 +705,7 @@ class MagicLLM(MagicLlmBase):
         task_executor: Optional["TaskExecutor"] = None,
         budget: Optional["AgentBudget"] = None,
         hooks: Optional["AgentHooks"] = None,
-        max_iterations: int = 10,
+        max_iterations: int = 150,
         model: Optional[str] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
         extra_messages: Optional[List[Dict[str, Any]]] = None,
@@ -730,7 +730,7 @@ class MagicLLM(MagicLlmBase):
                 registered via register_task(), uses the internal TaskExecutor.
             budget: Execution bounds. Defaults to AgentBudget(max_iterations).
             hooks: Optional lifecycle callbacks.
-            max_iterations: Hard cap on loop iterations (default: 10).
+            max_iterations: Hard cap on loop iterations (default: 150).
             model: Optional model override.
             tool_choice: Tool choice directive (default: "auto").
             extra_messages: Optional pre-existing messages.

@@ -64,7 +64,7 @@ class TestComputeChildBudget:
         result = _compute_child_budget(manifest, parent_budget, parent_state)
         
         # Child uses default budget
-        assert result.max_iterations == 10  # AgentBudget default
+        assert result.max_iterations == 150  # AgentBudget default
 
     def test_cascade_enabled_nested_budget_parent_remaining_sufficient(self):
         """cascade enabled + nested_budget + parent remaining sufficient → returns intersection min()."""
@@ -118,7 +118,7 @@ class TestComputeChildBudget:
         result = _compute_child_budget(manifest, None, None)
         
         # Standalone execution uses default budget
-        assert result.max_iterations == 10  # AgentBudget default
+        assert result.max_iterations == 150  # AgentBudget default
 
     def test_no_parent_with_nested_budget(self):
         """no parent + nested_budget provided → returns nested_budget."""

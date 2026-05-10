@@ -384,7 +384,7 @@ class TestAgentLoopConstructor:
             from magic_llm.agent.agent_loop import AgentLoop
             loop = AgentLoop(client, tools=[lambda: None])
         assert loop._adapter is adapter  # auto-detected
-        assert loop._budget.max_iterations == 10
+        assert loop._budget.max_iterations == 150
         assert loop._deduplicate is False
 
     def test_agent_loop_constructor_with_explicit_adapter(self):

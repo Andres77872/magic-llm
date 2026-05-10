@@ -100,13 +100,13 @@ class AgentBudget:
     """Execution bounds for the agent loop.
 
     Attributes:
-        max_iterations: Hard cap on loop iterations (default: 10).
+        max_iterations: Hard cap on loop iterations (default: 150).
         max_input_tokens: Max cumulative input tokens across the loop (None = no limit).
         max_output_tokens: Max cumulative output tokens across the loop (None = no limit).
         wall_clock_timeout: Max wall-clock seconds for the entire loop (None = no limit).
     """
 
-    max_iterations: int = 10
+    max_iterations: int = 150
     max_input_tokens: Optional[int] = None
     max_output_tokens: Optional[int] = None
     wall_clock_timeout: Optional[float] = None

@@ -101,6 +101,14 @@ class TestAsyncAgentLoopConstructor:
         assert loop._deduplicate is True
         assert loop._adapter is adapter
 
+    def test_async_loop_constructor_with_defaults(self):
+        client = MagicMock()
+        client.llm = MagicMock()
+        adapter = _make_mock_adapter()
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        assert loop._budget.max_iterations == 150
+
     def test_async_loop_run_is_coroutine(self):
         client = MagicMock()
         client.llm = MagicMock()
