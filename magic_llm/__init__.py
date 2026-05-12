@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from magic_llm.agent.bundle import SubagentBundle
     from magic_llm.agent.definitions import SubagentManifest
 
-__version__ = '0.1.33'  # Subagent architecture complete (definitions/loader/registry/binder/bundle/decorator/config)
+__version__ = '0.1.34'  # Subagent architecture complete (definitions/loader/registry/binder/bundle/decorator/config)
 
 logger = logging.getLogger(__name__)
 
