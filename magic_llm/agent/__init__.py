@@ -40,13 +40,6 @@ from magic_llm.agent._loop_shared import (
 # Result Normalizer
 from magic_llm.agent.normalizer import ResultNormalizer
 
-# Library-owned generic AgentHooks persistence implementation. Service/API side
-# effects stay behind injected sinks; magic-llm does not import app modules.
-from magic_llm.agent.persistence_hooks import (
-    AgentPersistenceHooks,
-    AgentPersistenceSink,
-)
-
 # ─── Subagent Architecture (magic-llm owns ALL) ──────────────────────────────
 
 # Definitions (YAML manifest model)
@@ -117,8 +110,6 @@ __all__ = [
     # Task/Subagent Runtime Components
     "TaskExecutor",
     "ResultNormalizer",
-    "AgentPersistenceHooks",
-    "AgentPersistenceSink",
     "reset_depths",
     # Global Depth Helpers
     "GLOBAL_DEPTH",
