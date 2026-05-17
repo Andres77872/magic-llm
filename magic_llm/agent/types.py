@@ -31,9 +31,12 @@ are defined there, ensuring consumers of types.py observe the same state as Task
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, Optional
+from typing import Any, Callable, ClassVar, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
+
+
+ToolSpec = Union[Callable[..., Any], Dict[str, Any], Any]
 
 
 class ToolResult(BaseModel):

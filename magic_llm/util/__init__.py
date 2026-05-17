@@ -19,6 +19,3 @@ def is_async_callable(fn: Callable[..., Any]) -> bool:
         return True
     call_method = getattr(fn, "__call__", None)
     return call_method is not None and asyncio.iscoroutinefunction(call_method)
-
-
-from magic_llm.util.agentic import run_agentic, run_agentic_async, run_agentic_stream, run_agentic_stream_async

@@ -240,9 +240,11 @@ print(res)
 
 ---
 
-## 6) Agentic tool workflow (multi-turn tool loops)
+## 6) Agent tool workflow (multi-turn tool loops)
 
-Prefer `MagicLLM.run_agent()` for new code. The legacy `magic_llm.util.agentic.run_agentic()` helper still exists for backward compatibility, but it should be treated as a migration path rather than the default API.
+Use the canonical client methods for automatic tool execution loops: `MagicLLM.run_agent()`, `MagicLLM.run_agent_stream()`, `MagicLLM.run_agent_async()`, and `MagicLLM.run_agent_stream_async()`. For lower-level control, construct `AgentLoop` or `AsyncAgentLoop` directly.
+
+Python functions can be passed directly in `tools=[fn]`: the function name becomes the tool name, the docstring becomes the tool description/prompt, and type hints produce the argument schema. No decorator is required.
 
 ```python
 from typing import Any, List
@@ -251,9 +253,11 @@ from magic_llm import MagicLLM
 client = MagicLLM(engine="openai", model="gpt-4o", private_key="sk-...")
 
 def add(a: int, b: int) -> int:
+    """Add two integers."""
     return a + b
 
 def top_k(items: List[Any], k: int = 3) -> List[Any]:
+    """Return the first k items from a list."""
     return list(items)[:k]
 
 resp = client.run_agent(
@@ -263,6 +267,29 @@ resp = client.run_agent(
     tool_choice="auto",
     max_iterations=4,
 )
+print(resp.content)
+```
+
+Streaming uses the same canonical loop:
+
+```python
+for chunk in client.run_agent_stream(
+    user_input="Compute 7 + 35 and explain the result.",
+    tools=[add],
+    tool_choice="auto",
+    max_iterations=4,
+):
+    delta = chunk.choices[0].delta
+    print(delta.content or "", end="")
+```
+
+Direct loop construction:
+
+```python
+from magic_llm.agent.agent_loop import AgentLoop
+
+loop = AgentLoop(client=client, tools=[add], tool_choice="auto")
+resp = loop.run(user_input="Use the add tool to add 7 and 35.")
 print(resp.content)
 ```
 
@@ -292,8 +319,6 @@ resp = client.run_agent(
 )
 print(resp.content)
 ```
-
-Legacy note: `magic_llm.util.agentic.run_agentic()` and `run_agentic_stream()` remain available while older integrations migrate, and their implementation still lives in `magic_llm/util/agentic.py`.
 
 ---
 

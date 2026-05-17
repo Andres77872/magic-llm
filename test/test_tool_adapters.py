@@ -195,6 +195,27 @@ class TestOpenAISerializeToolResults:
         assert tool_msgs[1]["tool_call_id"] == "call_2"
         assert tool_msgs[2]["tool_call_id"] == "call_3"
 
+    def test_openai_serialize_tool_results_uses_structured_role_tool_not_legacy_text(self):
+        chat = ModelChat()
+        chat.add_user_message("Use a tool")
+        result = ToolResult(
+            tool_call_id="call_weather",
+            name="get_weather",
+            content='{"city": "Montevideo", "temperature_c": 21}',
+        )
+
+        OpenAIToolAdapter().serialize_tool_results([result], chat)
+
+        msg = chat.messages[-1]
+        assert msg["role"] == "tool"
+        assert msg["tool_call_id"] == "call_weather"
+        assert msg["content"] == result.content
+        assert msg["is_error"] is False
+        assert not any(
+            m.get("role") == "user" and "Observation" in str(m.get("content"))
+            for m in chat.messages
+        )
+
     def test_openai_serialize_tool_results_error_visible(self):
         """V2: ToolResult(is_error=True) → role='tool' message with error content visible."""
         chat = ModelChat()
@@ -377,6 +398,30 @@ class TestAnthropicSerializeToolResults:
         assert last_msg["content"][0]["type"] == "tool_result"
         assert last_msg["content"][0]["tool_use_id"] == "toolu_1"
         assert last_msg["content"][1]["tool_use_id"] == "toolu_2"
+
+    def test_anthropic_serialize_tool_results_uses_tool_result_blocks_not_legacy_text(self):
+        chat = ModelChat()
+        chat.add_tool_call_message(
+            tool_calls=[{"id": "toolu_weather", "function": {"name": "get_weather"}}]
+        )
+        result = ToolResult(
+            tool_call_id="toolu_weather",
+            name="get_weather",
+            content='{"city": "Montevideo"}',
+        )
+
+        AnthropicToolAdapter().serialize_tool_results([result], chat)
+
+        msg = chat.messages[-1]
+        assert msg["role"] == "user"
+        assert msg["content"] == [
+            {
+                "type": "tool_result",
+                "tool_use_id": "toolu_weather",
+                "content": result.content,
+            }
+        ]
+        assert "Observation" not in str(msg["content"])
 
     def test_anthropic_serialize_tool_results_raises_on_incomplete(self):
         """Assistant has 2 tool_use blocks but only 1 ToolResult provided, assert ValueError with 'missing'."""
@@ -753,6 +798,27 @@ class TestToolResultErrorSerialization:
         # Error response payload has {"error": ...} for is_error=True
         assert "error" in fr["response"]
         assert "API unreachable" in str(fr["response"]["error"])
+
+    def test_gemini_serialize_tool_results_uses_function_response_parts(self):
+        chat = ModelChat()
+        chat.add_tool_call_message(
+            tool_calls=[{"id": "call_weather", "function": {"name": "get_weather"}}]
+        )
+        result = ToolResult(
+            tool_call_id="call_weather",
+            name="get_weather",
+            content='{"city": "Montevideo", "temperature_c": 21}',
+        )
+
+        GeminiToolAdapter().serialize_tool_results([result], chat)
+
+        msg = chat.messages[-1]
+        assert msg["role"] == "user"
+        fr = msg["content"][0]["functionResponse"]
+        assert fr["id"] == "call_weather"
+        assert fr["name"] == "get_weather"
+        assert fr["response"] == {"output": result.content}
+        assert "Observation" not in str(msg["content"])
 
     def test_multiple_errors_serialized_individually(self):
         """OpenAI adapter: multiple parallel errors → N separate role:tool messages."""

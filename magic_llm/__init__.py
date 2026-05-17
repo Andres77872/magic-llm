@@ -1,5 +1,4 @@
 import logging
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Iterator, List, Optional, Union
 
@@ -9,8 +8,7 @@ from magic_llm.model.discovery import NormalizedDiscoveredModel
 if TYPE_CHECKING:
     from magic_llm.model.ModelChatResponse import ModelChatResponse
     from magic_llm.model.ModelChatStream import ChatCompletionModel
-    from magic_llm.util.agentic import ToolSpec
-    from magic_llm.agent.types import AgentBudget, TaskManifest
+    from magic_llm.agent.types import AgentBudget, TaskManifest, ToolSpec
     from magic_llm.agent.hooks import AgentHooks
     from magic_llm.agent.task_executor import TaskExecutor
     from magic_llm.agent.registry import SubagentRegistry
@@ -307,125 +305,6 @@ class MagicLLM(MagicLlmBase):
         """
         return await self.llm.async_list_models()
 
-    # ─── Legacy agentic methods (deprecated) ────────────────────────────────
-
-    async def agentic(
-        self,
-        user_input: str,
-        system_prompt: Optional[str] = None,
-        tools: Optional[List["ToolSpec"]] = None,
-        tool_functions: Optional[Dict[str, Callable[..., Any]]] = None,
-        max_iterations: int = 8,
-        model: Optional[str] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
-        extra_messages: Optional[List[Dict[str, Any]]] = None,
-        content_separator: str = "\n\n",
-        **kwargs: Any,
-    ) -> "ModelChatResponse":
-        """Run the async agentic loop with this client.
-
-        .. deprecated::
-            Use :meth:`run_agent_async` instead. This legacy method delegates to
-            the procedural ``run_agentic_async()`` and will be removed in a future
-            version. The newer ``AsyncAgentLoop`` provides budget enforcement,
-            lifecycle hooks, parallel tool execution, and structured state.
-
-        Args:
-            user_input: User's initial prompt
-            system_prompt: Optional system message
-            tools: Tools to advertise to the model
-            tool_functions: Mapping of tool name -> callable
-            max_iterations: Safety cap for tool loops
-            model: Optional model override
-            tool_choice: Tool choice directive
-            extra_messages: Optional pre-existing messages
-            content_separator: Separator for joining content segments
-            **kwargs: Extra args passed to async_generate
-
-        Returns:
-            Final ModelChatResponse with concatenated content.
-        """
-        warnings.warn(
-            "MagicLLM.agentic() is deprecated. Use MagicLLM.run_agent_async() instead. "
-            "See docs for migration guide.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        from magic_llm.util.agentic import run_agentic_async
-
-        return await run_agentic_async(
-            self,
-            user_input=user_input,
-            system_prompt=system_prompt,
-            tools=tools,
-            tool_functions=tool_functions,
-            max_iterations=max_iterations,
-            model=model,
-            tool_choice=tool_choice,
-            extra_messages=extra_messages,
-            content_separator=content_separator,
-            **kwargs,
-        )
-
-    async def agentic_stream(
-        self,
-        user_input: str,
-        system_prompt: Optional[str] = None,
-        tools: Optional[List["ToolSpec"]] = None,
-        tool_functions: Optional[Dict[str, Callable[..., Any]]] = None,
-        max_iterations: int = 8,
-        model: Optional[str] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = "auto",
-        extra_messages: Optional[List[Dict[str, Any]]] = None,
-        content_separator: str = "\n\n",
-        **kwargs: Any,
-    ) -> AsyncIterator["ChatCompletionModel"]:
-        """Run the async streaming agentic loop with this client.
-
-        .. deprecated::
-            Use :meth:`run_agent_stream_async` instead. This legacy method delegates
-            to the procedural ``run_agentic_stream_async()`` and will be removed in a
-            future version. The newer ``AsyncAgentLoop`` provides budget enforcement,
-            lifecycle hooks, parallel tool execution, and structured state.
-
-        Args:
-            user_input: User's initial prompt
-            system_prompt: Optional system message
-            tools: Tools to advertise to the model
-            tool_functions: Mapping of tool name -> callable
-            max_iterations: Safety cap for tool loops
-            model: Optional model override
-            tool_choice: Tool choice directive
-            extra_messages: Optional pre-existing messages
-            content_separator: Separator for joining content segments
-            **kwargs: Extra args passed to async_stream_generate
-
-        Yields:
-            ChatCompletionModel chunks from the streaming response.
-        """
-        warnings.warn(
-            "MagicLLM.agentic_stream() is deprecated. Use MagicLLM.run_agent_stream_async() instead. "
-            "See docs for migration guide.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        from magic_llm.util.agentic import run_agentic_stream_async
-
-        async for chunk in run_agentic_stream_async(
-            self,
-            user_input=user_input,
-            system_prompt=system_prompt,
-            tools=tools,
-            tool_functions=tool_functions,
-            max_iterations=max_iterations,
-            model=model,
-            tool_choice=tool_choice,
-            extra_messages=extra_messages,
-            content_separator=content_separator,
-            **kwargs,
-        ):
-            yield chunk
-
     # ─── Canonical agent methods (AgentLoop / AsyncAgentLoop) ──────────────
 
     def run_agent(
@@ -442,6 +321,7 @@ class MagicLLM(MagicLlmBase):
         extra_messages: Optional[List[Dict[str, Any]]] = None,
         content_separator: str = "\n\n",
         deduplicate: bool = False,
+        prompt_fragment: str | Callable[..., str] | None = None,
         **kwargs: Any,
     ) -> "ModelChatResponse":
         """Execute a ReAct-style agent loop synchronously using AgentLoop.
@@ -510,6 +390,7 @@ class MagicLLM(MagicLlmBase):
             content_separator=content_separator,
             tool_choice=tool_choice,
             deduplicate=deduplicate,
+            prompt_fragment=prompt_fragment,
             **loop_kwargs,
         )
 
@@ -533,6 +414,7 @@ class MagicLLM(MagicLlmBase):
         extra_messages: Optional[List[Dict[str, Any]]] = None,
         content_separator: str = "\n\n",
         deduplicate: bool = False,
+        prompt_fragment: str | Callable[..., str] | None = None,
         **kwargs: Any,
     ) -> Iterator["ChatCompletionModel"]:
         """Stream chunks from a ReAct-style agent loop synchronously.
@@ -589,6 +471,7 @@ class MagicLLM(MagicLlmBase):
             content_separator=content_separator,
             tool_choice=tool_choice,
             deduplicate=deduplicate,
+            prompt_fragment=prompt_fragment,
             **loop_kwargs,
         )
 
@@ -613,6 +496,7 @@ class MagicLLM(MagicLlmBase):
         content_separator: str = "\n\n",
         deduplicate: bool = False,
         task_executor: Optional["TaskExecutor"] = None,
+        prompt_fragment: str | Callable[..., str] | None = None,
         **kwargs: Any,
     ) -> "ModelChatResponse":
         """Execute a ReAct-style agent loop asynchronously using AsyncAgentLoop.
@@ -687,6 +571,7 @@ class MagicLLM(MagicLlmBase):
             tool_choice=tool_choice,
             deduplicate=deduplicate,
             tool_executor=executor,
+            prompt_fragment=prompt_fragment,
             **loop_kwargs,
         )
 
@@ -711,6 +596,7 @@ class MagicLLM(MagicLlmBase):
         extra_messages: Optional[List[Dict[str, Any]]] = None,
         content_separator: str = "\n\n",
         deduplicate: bool = False,
+        prompt_fragment: str | Callable[..., str] | None = None,
         **kwargs: Any,
     ) -> AsyncIterator["ChatCompletionModel"]:
         """Stream chunks from a ReAct-style agent loop asynchronously.
@@ -773,6 +659,7 @@ class MagicLLM(MagicLlmBase):
             tool_choice=tool_choice,
             deduplicate=deduplicate,
             tool_executor=executor,
+            prompt_fragment=prompt_fragment,
             **loop_kwargs,
         )
 

@@ -238,11 +238,14 @@ print(resp)  # List[float]
 
 ---
 
-## Agentic Tool Workflow (Function Calling)
+## Agent Tool Workflow (Function Calling)
 
-Prefer the canonical `MagicLLM.run_agent()` API for new code. The legacy `run_agentic*` helpers remain available for backward compatibility, but they are not the primary path anymore.
+Use the canonical `MagicLLM.run_agent()` / `MagicLLM.run_agent_stream()` APIs, or construct `AgentLoop` / `AsyncAgentLoop` directly when you need loop-level control.
 
 - **Callables**: simplest; the function's `__name__` is the tool name.
+- **Docstrings**: become the tool description/prompt shown to the model.
+- **Type hints**: are converted into the tool argument schema.
+- **No decorator required**: pass Python functions directly with `tools=[fn]`.
 - **JSON tool specs**: provide OpenAI-style schemas and map names to callables via `tool_functions`.
 
 ### Minimal example (callables)
@@ -256,10 +259,12 @@ client = MagicLLM(engine='openai', model='gpt-4o-mini', private_key='sk-...')
 
 
 def add(a: int, b: int) -> int:
+    """Add two integers."""
     return a + b
 
 
 def top_k(items: List[Any], k: int = 3) -> List[Any]:
+    """Return the first k items from a list."""
     return list(items)[:k]
 
 
@@ -271,6 +276,26 @@ resp = client.run_agent(
     max_iterations=4,
 )
 
+print(resp.content)
+```
+
+### Direct loop usage
+
+```python
+from magic_llm import MagicLLM
+from magic_llm.agent.agent_loop import AgentLoop
+
+
+client = MagicLLM(engine='openai', model='gpt-4o-mini', private_key='sk-...')
+
+
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"Weather in {city}: sunny"
+
+
+loop = AgentLoop(client=client, tools=[get_weather], tool_choice="auto")
+resp = loop.run(user_input="What's the weather in Montevideo?")
 print(resp.content)
 ```
 
@@ -315,11 +340,7 @@ resp = client.run_agent(
 print(resp.content)
 ```
 
-### Legacy compatibility helpers
-
-`magic_llm.util.run_agentic()` and related helpers still exist for older integrations and still delegate to the legacy procedural loop in `magic_llm/util/agentic.py`. Keep using them only when you need backward-compatible behavior during migration.
-
-For a complete end-to-end research + rerank demo using multiple tools (query rewriting, arXiv search, Jina reranker, and a follow-up vision analysis), see `test/test_agentic_tools_workflow.py`. The agent loop implementation lives in `magic_llm/util/agentic.py`.
+The agent loop implementation lives in `magic_llm/agent/`.
 
 ---
 

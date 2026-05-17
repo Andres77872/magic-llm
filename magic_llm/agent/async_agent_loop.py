@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from typing import Any, AsyncIterator, Callable, Optional
 
@@ -44,6 +45,8 @@ from magic_llm.agent._loop_shared import (
     PARENT_HOOKS,
     PARENT_STATE,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AsyncAgentLoop:
@@ -84,9 +87,11 @@ class AsyncAgentLoop:
         content_separator: str = "\n\n",
         tool_choice: str | dict[str, Any] | None = "auto",
         heartbeat_cb: Optional[Callable[[], Any]] = None,
+        prompt_fragment: str | Callable[..., str] | None = None,
         **kwargs: Any,
     ) -> None:
         self._client = client
+        self._prompt_fragment = prompt_fragment
 
         # Store tools for registration at run time
         self._tools = tools or []
@@ -117,7 +122,12 @@ class AsyncAgentLoop:
         self._heartbeat_cb = heartbeat_cb
 
         # Store kwargs for passthrough, but explicitly drop engine_type
-        kwargs.pop("engine_type", None)
+        engine_type = kwargs.pop("engine_type", None)
+        if engine_type is not None:
+            logger.warning(
+                "engine_type=%r is ignored; provider adapter is selected from client.llm",
+                engine_type,
+            )
         self._generate_kwargs = kwargs
 
         # Concurrency guard (asyncio.Lock, NOT threading.Lock)
@@ -141,6 +151,22 @@ class AsyncAgentLoop:
             executed_fingerprints=set(self._state.executed_fingerprints),
             start_time=self._state.start_time,
         )
+
+    def _resolve_prompt_fragment(self, **kwargs: Any) -> str:
+        """Resolve the prompt_fragment at generation time.
+
+        C4: If prompt_fragment is None, return empty string.
+            If callable, invoke with forwarded kwargs and return result.
+            Otherwise return as static string.
+
+        Returns:
+            The resolved prompt_fragment string, or "" if None.
+        """
+        if self._prompt_fragment is None:
+            return ""
+        if callable(self._prompt_fragment):
+            return self._prompt_fragment(**kwargs)
+        return self._prompt_fragment
 
     def _acquire_lock(self) -> None:
         """Check the _running flag. Raises RuntimeError if already running.
@@ -189,7 +215,16 @@ class AsyncAgentLoop:
             RuntimeError: If called while the loop is already running.
             AgentBudgetExceeded: If any budget constraint is violated.
         """
-        # INIT: Build initial chat
+        # INIT: Resolve prompt_fragment and prepend to system prompt (C3)
+        pf = self._resolve_prompt_fragment(**self._generate_kwargs)
+        if pf:
+            system_prompt = (
+                f"{pf}\n\n{system_prompt}".strip()
+                if system_prompt
+                else pf
+            )
+
+        # Build initial chat
         chat = _build_initial_chat(
             user_input=user_input,
             system_prompt=system_prompt,
@@ -413,7 +448,16 @@ class AsyncAgentLoop:
             RuntimeError: If called while the loop is already running.
             TypeError: If used with sync iteration (for in ...).
         """
-        # INIT: Build initial chat
+        # INIT: Resolve prompt_fragment and prepend to system prompt (C3)
+        pf = self._resolve_prompt_fragment(**self._generate_kwargs)
+        if pf:
+            system_prompt = (
+                f"{pf}\n\n{system_prompt}".strip()
+                if system_prompt
+                else pf
+            )
+
+        # Build initial chat
         chat = _build_initial_chat(
             user_input=user_input,
             system_prompt=system_prompt,

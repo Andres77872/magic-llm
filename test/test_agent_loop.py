@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from magic_llm import MagicLLM
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Choice, Message, UsageModel
 from magic_llm.model.ModelChatStream import ChatCompletionModel, ChoiceModel, DeltaModel
@@ -201,6 +202,56 @@ class TestBuildInitialChat:
         chat = _build_initial_chat(user_input="hello", system_prompt=None)
         assert len(chat.messages) == 1
         assert chat.messages[0]["role"] == "user"
+
+    def test_build_initial_chat_with_initial_chat_and_system_prompt(self):
+        """system_prompt is merged into initial_chat when both provided."""
+        initial_chat = ModelChat(system="existing system")
+        initial_chat.add_user_message("hello")
+        chat = _build_initial_chat(
+            initial_chat=initial_chat,
+            system_prompt="additional guidance",
+        )
+        # Should have 2 messages (system + user)
+        assert len(chat.messages) == 2
+        assert chat.messages[0]["role"] == "system"
+        # System prompt should be prepended to existing system content
+        assert "additional guidance" in chat.messages[0]["content"]
+        assert "existing system" in chat.messages[0]["content"]
+        assert chat.messages[0]["content"].startswith("additional guidance")
+
+    def test_build_initial_chat_with_initial_chat_and_no_system_prompt(self):
+        """When no system_prompt, initial_chat is returned as-is (cloned)."""
+        initial_chat = ModelChat(system="existing system")
+        initial_chat.add_user_message("hello")
+        chat = _build_initial_chat(
+            initial_chat=initial_chat,
+            system_prompt=None,
+        )
+        assert len(chat.messages) == 2
+        assert chat.messages[0]["content"] == "existing system"
+
+    def test_build_initial_chat_with_initial_chat_no_existing_system(self):
+        """system_prompt is inserted at position 0 when initial_chat has no system message."""
+        initial_chat = ModelChat()  # no system
+        initial_chat.add_user_message("hello")
+        chat = _build_initial_chat(
+            initial_chat=initial_chat,
+            system_prompt="new system prompt",
+        )
+        assert len(chat.messages) == 2
+        assert chat.messages[0]["role"] == "system"
+        assert chat.messages[0]["content"] == "new system prompt"
+        assert chat.messages[1]["role"] == "user"
+
+    def test_build_initial_chat_does_not_mutate_original(self):
+        """Caller's initial_chat is not mutated."""
+        initial_chat = ModelChat(system="original")
+        original_messages = [dict(m) for m in initial_chat.messages]
+        _build_initial_chat(
+            initial_chat=initial_chat,
+            system_prompt="new prompt",
+        )
+        assert initial_chat.messages == original_messages
 
 
 class TestRegisterToolsWithExecutor:
@@ -863,6 +914,62 @@ class TestAgentLoopRun:
         assert client.llm.generate.call_count == 1
         assert loop.state.step == 0
 
+    def test_magic_llm_run_agent_executes_python_callable_tool_canonically(self):
+        """MagicLLM.run_agent() preserves callable auto-registration without legacy agentic."""
+
+        class FakeOpenAILLM:
+            engine = "openai"
+
+            def __init__(self):
+                self.calls = []
+
+            def generate(self, chat, **kwargs):
+                self.calls.append((list(chat.messages), kwargs))
+                if len(self.calls) == 1:
+                    return _make_response(
+                        content=None,
+                        tool_calls=[
+                            _make_tool_call(
+                                id="call_weather",
+                                name="get_weather",
+                                arguments='{"city":"Montevideo"}',
+                            )
+                        ],
+                        finish_reason="tool_calls",
+                    )
+                return _make_response(content="It is 21C in Montevideo.", finish_reason="stop")
+
+        def get_weather(city: str) -> dict:
+            """Get the current weather for a city."""
+            return {"city": city, "temperature_c": 21}
+
+        client = MagicLLM.__new__(MagicLLM)
+        client.llm = FakeOpenAILLM()
+
+        response = client.run_agent(
+            user_input="What's the weather in Montevideo?",
+            tools=[get_weather],
+            max_iterations=3,
+        )
+
+        assert response.content == "It is 21C in Montevideo."
+        assert len(client.llm.calls) == 2
+
+        first_kwargs = client.llm.calls[0][1]
+        tool_def = first_kwargs["tools"][0]
+        assert tool_def["function"]["name"] == "get_weather"
+        assert tool_def["function"]["description"] == "Get the current weather for a city."
+        properties = tool_def["function"]["parameters"]["properties"]
+        assert properties["city"]["type"] == "string"
+
+        second_messages = client.llm.calls[1][0]
+        tool_messages = [m for m in second_messages if m.get("role") == "tool"]
+        assert len(tool_messages) == 1
+        assert tool_messages[0]["tool_call_id"] == "call_weather"
+        assert "Montevideo" in tool_messages[0]["content"]
+        assert not hasattr(MagicLLM, "agentic")
+        assert not hasattr(MagicLLM, "agentic_stream")
+
 
 # ─── Slice 7: AgentLoop.run() budget enforcement, error paths
 
@@ -1476,6 +1583,81 @@ class TestAgentLoopStream:
         separator_chunks = [c for c in result if "separator" in c.id]
         assert len(separator_chunks) == 0
 
+    def test_magic_llm_run_agent_stream_continues_after_tool_call_with_canonical_adapter(self):
+        """MagicLLM.run_agent_stream() injects canonical tool results before continuing."""
+        from magic_llm.model.ModelChatStream import (
+            ToolCall as StreamToolCall,
+            FunctionCall as StreamFunctionCall,
+        )
+
+        class FakeOpenAILLM:
+            engine = "openai"
+
+            def __init__(self):
+                self.calls = []
+
+            def stream_generate(self, chat, **kwargs):
+                self.calls.append((list(chat.messages), kwargs))
+                if len(self.calls) == 1:
+                    chunk = ChatCompletionModel(
+                        id="chunk-tool",
+                        model="test-model",
+                        choices=[
+                            ChoiceModel(
+                                index=0,
+                                delta=DeltaModel(content=""),
+                                finish_reason="tool_calls",
+                            )
+                        ],
+                    )
+                    chunk.choices[0].delta.tool_calls = [
+                        StreamToolCall(
+                            index=0,
+                            id="call_weather",
+                            function=StreamFunctionCall(
+                                name="get_weather",
+                                arguments='{"city":"Montevideo"}',
+                            ),
+                        )
+                    ]
+                    return iter([chunk])
+
+                return iter([
+                    ChatCompletionModel(
+                        id="chunk-final",
+                        model="test-model",
+                        choices=[
+                            ChoiceModel(
+                                index=0,
+                                delta=DeltaModel(content="Weather result used."),
+                                finish_reason="stop",
+                            )
+                        ],
+                    )
+                ])
+
+        def get_weather(city: str) -> dict:
+            """Get weather for a city."""
+            return {"city": city, "temperature_c": 21}
+
+        client = MagicLLM.__new__(MagicLLM)
+        client.llm = FakeOpenAILLM()
+
+        chunks = list(client.run_agent_stream(
+            user_input="Stream the weather.",
+            tools=[get_weather],
+            max_iterations=3,
+        ))
+
+        assert [chunk.id for chunk in chunks] == ["chunk-tool", "chunk-final"]
+        assert chunks[-1].choices[0].delta.content == "Weather result used."
+        assert len(client.llm.calls) == 2
+        second_messages = client.llm.calls[1][0]
+        tool_messages = [m for m in second_messages if m.get("role") == "tool"]
+        assert len(tool_messages) == 1
+        assert tool_messages[0]["tool_call_id"] == "call_weather"
+        assert "Montevideo" in tool_messages[0]["content"]
+
 
 # ─── Slice 9c: AgentLoop.stream() content invariant
 
@@ -1748,8 +1930,8 @@ class TestLoopSharedSyncOnly:
     """_loop_shared.py must NOT contain any async code."""
 
     def test_loop_shared_has_no_async_functions(self):
-        import inspect
         import magic_llm.agent._loop_shared as mod
+        import inspect
 
         for name, obj in inspect.getmembers(mod, inspect.isfunction):
             assert not inspect.iscoroutinefunction(obj), (
@@ -1758,14 +1940,15 @@ class TestLoopSharedSyncOnly:
 
     def test_loop_shared_has_no_asyncio_import(self):
         import magic_llm.agent._loop_shared as mod
+        import inspect
         source = inspect.getsource(mod)
         assert "import asyncio" not in source
         assert "from asyncio" not in source
 
     def test_loop_shared_has_no_await_keywords(self):
         import magic_llm.agent._loop_shared as mod
+        import inspect
         source = inspect.getsource(mod)
-        # Check for 'await ' as a keyword (not in comments/strings)
         for line in source.split("\n"):
             stripped = line.strip()
             if stripped.startswith("#"):
@@ -1775,4 +1958,57 @@ class TestLoopSharedSyncOnly:
             )
 
 
-import inspect
+# ─── Phase 1A: engine_type Warning Test ────────────────────────────────────
+
+
+class TestAgentLoopEngineTypeWarning:
+    """C5: engine_type warning tests for sync AgentLoop."""
+
+    def test_engine_type_passed_logs_warning(self):
+        """engine_type='anthropic' → logger.warning is called."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        adapter = _make_mock_adapter()
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        with patch("magic_llm.agent.agent_loop.logger.warning") as mock_warning:
+            AgentLoop(
+                client,
+                tools=[],
+                adapter=adapter,
+                engine_type="anthropic",
+            )
+            mock_warning.assert_called_once()
+            args, _ = mock_warning.call_args
+            warning_fmt = args[0] if args else ""
+            # logger.warning receives format string + args separately
+            assert "ignored" in warning_fmt
+            assert "adapter" in warning_fmt or "client.llm" in warning_fmt
+            # Check the engine_type value is passed as a formatting arg
+            assert len(args) > 1 and args[1] == "anthropic"
+
+    def test_engine_type_not_passed_no_warning(self):
+        """No engine_type → no logger.warning."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        adapter = _make_mock_adapter()
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        with patch("magic_llm.agent.agent_loop.logger.warning") as mock_warning:
+            AgentLoop(client, tools=[], adapter=adapter)
+            mock_warning.assert_not_called()
+
+    def test_engine_type_not_in_generate_kwargs(self):
+        """engine_type is popped and NOT stored in _generate_kwargs."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        adapter = _make_mock_adapter()
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        loop = AgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            engine_type="anthropic",
+        )
+        assert "engine_type" not in loop._generate_kwargs

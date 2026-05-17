@@ -2,6 +2,8 @@ import json
 import pytest
 
 from magic_llm.util.tools_mapping import (
+    _extract_param_docs_from_docstring,
+    _schema_from_callable,
     normalize_openai_tools,
     normalize_openai_tool_choice,
     map_to_openai,
@@ -293,3 +295,291 @@ def test_map_to_openai_preserves_strict_flag():
     assert isinstance(tools, list)
     f = tools[0]["function"]
     assert f.get("strict") is True
+
+
+# =============================================================================
+# Phase 3A: _extract_param_docs_from_docstring() tests
+# =============================================================================
+
+
+class TestExtractParamDocsFromDocstring:
+    """Direct unit tests for _extract_param_docs_from_docstring()."""
+
+    def test_rest_params(self):
+        """reST/Sphinx :param style with multiple params."""
+        doc = ":param location: The city name.\n:param unit: Celsius or Fahrenheit."
+        result = _extract_param_docs_from_docstring(doc)
+        assert result == {
+            "location": "The city name.",
+            "unit": "Celsius or Fahrenheit.",
+        }
+
+    def test_google_style(self):
+        """Google-style Args section with types."""
+        doc = (
+            "Args:\n"
+            "    location (str): The city name.\n"
+            "    unit (str): Celsius or Fahrenheit."
+        )
+        result = _extract_param_docs_from_docstring(doc)
+        assert result == {
+            "location": "The city name.",
+            "unit": "Celsius or Fahrenheit.",
+        }
+
+    def test_multiline_reST(self):
+        """reST continuation lines join into single description."""
+        doc = (
+            ":param name: A long description that\n"
+            "    continues on the next line."
+        )
+        result = _extract_param_docs_from_docstring(doc)
+        assert result == {"name": "A long description that continues on the next line."}
+
+    def test_multiline_google(self):
+        """Google-style continuation lines join into single description."""
+        doc = (
+            "Args:\n"
+            "    name (str): A long description\n"
+            "        that continues on the next\n"
+            "        line."
+        )
+        result = _extract_param_docs_from_docstring(doc)
+        assert result == {"name": "A long description that continues on the next line."}
+
+    def test_empty(self):
+        """Empty docstring returns empty dict."""
+        assert _extract_param_docs_from_docstring("") == {}
+
+    def test_no_params(self):
+        """Docstring with no parameter section returns empty dict."""
+        assert _extract_param_docs_from_docstring("Just a description.") == {}
+
+    def test_mixed_formats(self):
+        """Both reST and Google-style: reST pass (pass1) takes priority."""
+        doc = (
+            ":param location: The city name.\n"
+            ":param unit: Celsius or Fahrenheit.\n"
+            "\n"
+            "Args:\n"
+            "    location (str): OVERRIDE.\n"
+            "    unit (str): OVERRIDE."
+        )
+        result = _extract_param_docs_from_docstring(doc)
+        # reST values take priority; Google entries for already-known names are skipped
+        assert result == {
+            "location": "The city name.",
+            "unit": "Celsius or Fahrenheit.",
+        }
+
+    def test_unicode(self):
+        """Unicode characters in param names and descriptions."""
+        doc = (
+            ":param città: Nome della città.\n"
+            ":param température: Gradi Celsius."
+        )
+        result = _extract_param_docs_from_docstring(doc)
+        assert result == {
+            "città": "Nome della città.",
+            "température": "Gradi Celsius.",
+        }
+
+    def test_google_no_type(self):
+        """Google-style without type annotation: 'name: desc' works."""
+        doc = (
+            "Args:\n"
+            "    location: The city name.\n"
+            "    unit: Celsius or Fahrenheit."
+        )
+        result = _extract_param_docs_from_docstring(doc)
+        assert result == {
+            "location": "The city name.",
+            "unit": "Celsius or Fahrenheit.",
+        }
+
+
+# =============================================================================
+# Phase 3A: _schema_from_callable() tests
+# =============================================================================
+
+
+class TestSchemaFromCallable:
+    """Direct unit tests for _schema_from_callable()."""
+
+    def test_with_docstring(self):
+        """Function with docstring: description extracted correctly."""
+        def get_weather(location: str, unit: str = "C"):
+            """Get current temperature for a given location."""
+            pass
+
+        name, desc, params = _schema_from_callable(get_weather)
+        assert name == "get_weather"
+        assert desc == "Get current temperature for a given location."
+        assert "location" in params["properties"]
+        assert "unit" in params["properties"]
+        assert params["type"] == "object"
+
+    def test_no_docstring(self):
+        """Function with no docstring yields empty description."""
+        def get_weather(location: str):
+            pass
+
+        name, desc, _ = _schema_from_callable(get_weather)
+        assert desc == ""
+
+    def test_no_type_hints(self):
+        """Function without annotations: params still extracted, default to string type."""
+        def get_weather(location, unit="C"):
+            """Get the weather."""
+            pass
+
+        name, desc, params = _schema_from_callable(get_weather)
+        assert desc == "Get the weather."
+        assert "location" in params["properties"]
+        assert "unit" in params["properties"]
+        # No annotation → _json_schema_for_annotation returns {} → fallback to {"type": "string"}
+        assert params["properties"]["location"].get("type") == "string"
+
+    def test_optional_type(self):
+        """Optional[str] yields string type and not required."""
+        from typing import Optional
+
+        def get_weather(location: Optional[str] = None):
+            """Get weather."""
+            pass
+
+        _, _, params = _schema_from_callable(get_weather)
+        # Optional[str] → Union[str, None] → non-None inner type → string
+        assert params["properties"]["location"]["type"] == "string"
+        assert "location" not in params["required"]
+
+    def test_union_multiple_types(self):
+        """Union[str, int] with multiple non-None types falls back to default."""
+        from typing import Union
+
+        def get_weather(location: Union[str, int]):
+            """Get weather."""
+            pass
+
+        _, _, params = _schema_from_callable(get_weather)
+        # Union[str, int] → multi non-None → _json_schema_for_annotation returns {} → {"type": "string"}
+        assert "location" in params["properties"]
+
+    def test_list_type(self):
+        """List[int] yields array schema with integer items."""
+        from typing import List
+
+        def get_weather(cities: List[int]):
+            """Get weather."""
+            pass
+
+        _, _, params = _schema_from_callable(get_weather)
+        assert params["properties"]["cities"]["type"] == "array"
+        assert params["properties"]["cities"]["items"]["type"] == "integer"
+
+    def test_dict_type(self):
+        """Dict[str, Any] yields object type."""
+        from typing import Dict, Any
+
+        def get_weather(data: Dict[str, Any]):
+            """Get weather."""
+            pass
+
+        _, _, params = _schema_from_callable(get_weather)
+        assert params["properties"]["data"]["type"] == "object"
+
+    def test_literal_type(self):
+        """Literal["a", "b"] yields enum."""
+        from typing import Literal
+
+        def get_weather(unit: Literal["C", "F"] = "C"):
+            """Get weather."""
+            pass
+
+        _, _, params = _schema_from_callable(get_weather)
+        assert params["properties"]["unit"]["enum"] == ["C", "F"]
+
+    def test_kwargs_and_args(self):
+        """*args and **kwargs appear as regular properties."""
+        def get_weather(location: str, *args: str, **kwargs: int):
+            """Get weather."""
+            pass
+
+        _, _, params = _schema_from_callable(get_weather)
+        assert "location" in params["properties"]
+        assert "args" in params["properties"]
+        assert "kwargs" in params["properties"]
+        assert params["properties"]["args"]["type"] == "string"
+        assert params["properties"]["kwargs"]["type"] == "integer"
+
+    def test_self_filtered(self):
+        """self parameter excluded from schema properties."""
+        class WeatherService:
+            def get_weather(self, location: str):
+                """Get weather."""
+                pass
+
+        _, _, params = _schema_from_callable(WeatherService.get_weather)
+        assert "self" not in params["properties"]
+        assert "location" in params["properties"]
+
+    def test_cls_filtered(self):
+        """cls parameter excluded from schema properties."""
+        class WeatherService:
+            @classmethod
+            def get_weather(cls, location: str):
+                """Get weather."""
+                pass
+
+        _, _, params = _schema_from_callable(WeatherService.get_weather)
+        assert "cls" not in params["properties"]
+        assert "location" in params["properties"]
+
+    def test_async_function(self):
+        """Async function handled correctly."""
+        async def get_weather(location: str):
+            """Get weather for a location."""
+            pass
+
+        name, desc, params = _schema_from_callable(get_weather)
+        assert name == "get_weather"
+        assert desc == "Get weather for a location."
+        assert "location" in params["properties"]
+
+    def test_param_description_from_docstring(self):
+        """Parameter descriptions from docstring attached to properties."""
+        def get_weather(location: str, unit: str = "C"):
+            """Get current temperature.
+
+            Args:
+                location: The city name.
+                unit: Celsius or Fahrenheit.
+            """
+            pass
+
+        _, _, params = _schema_from_callable(get_weather)
+        assert params["properties"]["location"].get("description") == "The city name."
+        assert params["properties"]["unit"].get("description") == "Celsius or Fahrenheit."
+
+
+# =============================================================================
+# Phase 3A: Anthropic format description assertions
+# =============================================================================
+
+
+def test_map_to_anthropic_tools_description_field():
+    """Anthropic format includes correct description for dict-based tools."""
+    tools, choice = map_to_anthropic([FUNCTION_DEF_LEGACY], {"name": "get_weather"})
+    assert "description" in tools[0], "Anthropic format MUST include 'description' field"
+    assert tools[0]["description"] == "Get current temperature for a given location."
+
+
+def test_map_to_anthropic_from_callable_description():
+    """Callable docstring propagates to Anthropic description field."""
+    def get_weather(location: str):
+        """Get current temperature for a given location."""
+        return ""
+
+    tools, choice = map_to_anthropic([get_weather], {"name": "get_weather"})
+    assert "description" in tools[0], "Anthropic format MUST include 'description' field"
+    assert tools[0]["description"] == "Get current temperature for a given location."

@@ -222,18 +222,48 @@ def _build_initial_chat(
 ) -> ModelChat:
     """Build the initial ModelChat with system, extra, and user messages.
 
+    When both ``system_prompt`` and ``initial_chat`` are provided, the
+    ``system_prompt`` is prepended to the first existing system message
+    in the cloned chat (or inserted at position 0 if none exists). This
+    ensures that prompt_fragment (resolved and merged into system_prompt
+    by the caller) is not lost when a prebuilt chat is used.
+
+    There is NO deduplication: if ``system_prompt`` content already appears
+    in ``initial_chat``, it will appear twice. Callers are responsible for
+    ensuring they do not pass duplicate content.
+
     Args:
         user_input: The primary user message to start the conversation.
         system_prompt: Optional system prompt (added as first message).
         extra_messages: Optional list of message dicts to insert before user_input.
         initial_chat: Optional prebuilt chat history. When provided, it is
-            cloned and returned as-is.
+            cloned and returned with system_prompt merged in.
 
     Returns:
         A ModelChat instance with the initial conversation history.
     """
     if initial_chat is not None:
-        return _clone_chat(initial_chat)
+        cloned = _clone_chat(initial_chat)
+        if system_prompt:
+            # Find first existing system message to merge into
+            sys_idx = None
+            for i, msg in enumerate(cloned.messages):
+                if msg.get("role") == "system":
+                    sys_idx = i
+                    break
+            if sys_idx is not None:
+                # Prepend system_prompt (containing resolved prompt_fragment)
+                # to existing system message content.
+                cloned.messages[sys_idx]["content"] = (
+                    f"{system_prompt}\n\n{cloned.messages[sys_idx]['content']}"
+                ).strip()
+            else:
+                # No existing system message — insert at position 0
+                cloned.messages.insert(0, {
+                    "role": "system",
+                    "content": system_prompt,
+                })
+        return cloned
 
     if user_input is None:
         raise ValueError("user_input is required when initial_chat is not provided")

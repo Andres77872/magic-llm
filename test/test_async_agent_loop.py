@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 
+from magic_llm import MagicLLM
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Choice, Message, UsageModel
 from magic_llm.model.ModelChatStream import (
@@ -718,6 +719,62 @@ class TestAsyncAgentLoopToolFunctions:
 
         asyncio.run(run_and_check())
 
+    def test_magic_llm_run_agent_async_executes_async_callable_tool_canonically(self):
+        """MagicLLM.run_agent_async() preserves async callable registration canonically."""
+
+        class FakeOpenAILLM:
+            engine = "openai"
+
+            def __init__(self):
+                self.calls = []
+
+            async def async_generate(self, chat, **kwargs):
+                self.calls.append((list(chat.messages), kwargs))
+                if len(self.calls) == 1:
+                    return _make_response(
+                        content=None,
+                        tool_calls=[
+                            _make_tool_call(
+                                id="call_weather",
+                                name="get_weather_async",
+                                arguments='{"city":"Montevideo"}',
+                            )
+                        ],
+                        finish_reason="tool_calls",
+                    )
+                return _make_response(content="Async weather is 22C.", finish_reason="stop")
+
+        async def get_weather_async(city: str) -> dict:
+            """Get async weather for a city."""
+            return {"city": city, "temperature_c": 22}
+
+        client = MagicLLM.__new__(MagicLLM)
+        client.llm = FakeOpenAILLM()
+        client._task_executor = None
+
+        async def run_and_check():
+            response = await client.run_agent_async(
+                user_input="What's the async weather?",
+                tools=[get_weather_async],
+                max_iterations=3,
+            )
+
+            assert response.content == "Async weather is 22C."
+            assert len(client.llm.calls) == 2
+            tool_def = client.llm.calls[0][1]["tools"][0]
+            assert tool_def["function"]["name"] == "get_weather_async"
+            assert tool_def["function"]["description"] == "Get async weather for a city."
+            properties = tool_def["function"]["parameters"]["properties"]
+            assert properties["city"]["type"] == "string"
+
+            second_messages = client.llm.calls[1][0]
+            tool_messages = [m for m in second_messages if m.get("role") == "tool"]
+            assert len(tool_messages) == 1
+            assert tool_messages[0]["tool_call_id"] == "call_weather"
+            assert "Montevideo" in tool_messages[0]["content"]
+
+        asyncio.run(run_and_check())
+
     def test_async_run_schema_name_mismatch_returns_unknown_tool_error(self):
         """Schema function.name mismatch with tool_functions key produces UnknownToolError."""
         tool_spec = {
@@ -1304,6 +1361,86 @@ class TestAsyncAgentLoopStream:
 
         asyncio.run(collect_and_check())
 
+    def test_magic_llm_run_agent_stream_async_continues_after_tool_call_canonically(self):
+        """MagicLLM.run_agent_stream_async() injects canonical tool results before continuing."""
+        from magic_llm.model.ModelChatStream import (
+            ToolCall as StreamToolCall,
+            FunctionCall as StreamFunctionCall,
+        )
+
+        class FakeOpenAILLM:
+            engine = "openai"
+
+            def __init__(self):
+                self.calls = []
+
+            async def async_stream_generate(self, chat, **kwargs):
+                self.calls.append((list(chat.messages), kwargs))
+                if len(self.calls) == 1:
+                    chunk = ChatCompletionModel(
+                        id="chunk-tool",
+                        model="test-model",
+                        choices=[
+                            ChoiceModel(
+                                index=0,
+                                delta=DeltaModel(content=""),
+                                finish_reason="tool_calls",
+                            )
+                        ],
+                    )
+                    chunk.choices[0].delta.tool_calls = [
+                        StreamToolCall(
+                            index=0,
+                            id="call_weather",
+                            function=StreamFunctionCall(
+                                name="get_weather_async",
+                                arguments='{"city":"Montevideo"}',
+                            ),
+                        )
+                    ]
+                    yield chunk
+                    return
+
+                yield ChatCompletionModel(
+                    id="chunk-final",
+                    model="test-model",
+                    choices=[
+                        ChoiceModel(
+                            index=0,
+                            delta=DeltaModel(content="Async stream weather used."),
+                            finish_reason="stop",
+                        )
+                    ],
+                )
+
+        async def get_weather_async(city: str) -> dict:
+            """Get async weather for a city."""
+            return {"city": city, "temperature_c": 22}
+
+        client = MagicLLM.__new__(MagicLLM)
+        client.llm = FakeOpenAILLM()
+        client._task_executor = None
+
+        async def collect_and_check():
+            chunks = []
+            async for chunk in client.run_agent_stream_async(
+                user_input="Stream async weather.",
+                tools=[get_weather_async],
+                max_iterations=3,
+            ):
+                chunks.append(chunk)
+
+            assert [chunk.id for chunk in chunks] == ["chunk-tool", "chunk-final"]
+            assert chunks[-1].choices[0].delta.content == "Async stream weather used."
+            assert len(client.llm.calls) == 2
+            second_messages = client.llm.calls[1][0]
+            tool_messages = [m for m in second_messages if m.get("role") == "tool"]
+            assert len(tool_messages) == 1
+            assert tool_messages[0]["tool_call_id"] == "call_weather"
+            assert "Montevideo" in tool_messages[0]["content"]
+
+        asyncio.run(collect_and_check())
+
 
 # ─── Slice 13: AsyncAgentLoop.state read-only copy
 
@@ -1697,3 +1834,470 @@ class TestBuildInitialChatInitialChat:
         assert cloned.messages == initial_chat.messages
         cloned.messages[0]["content"] = "mutated"
         assert initial_chat.messages[0]["content"] == "sys"
+
+    def test_build_initial_chat_with_initial_chat_and_system_prompt(self):
+        """system_prompt is merged into initial_chat when both provided."""
+        initial_chat = ModelChat(system="existing system")
+        initial_chat.add_user_message("hello")
+        chat = _build_initial_chat(
+            initial_chat=initial_chat,
+            system_prompt="PF: Use search first.",
+        )
+        assert len(chat.messages) == 2
+        assert chat.messages[0]["role"] == "system"
+        assert "PF: Use search first." in chat.messages[0]["content"]
+        assert "existing system" in chat.messages[0]["content"]
+        assert chat.messages[0]["content"].startswith("PF: Use search first.")
+
+    def test_build_initial_chat_with_initial_chat_and_no_system_prompt(self):
+        """When no system_prompt, initial_chat is returned as-is (cloned)."""
+        initial_chat = ModelChat(system="existing system")
+        chat = _build_initial_chat(
+            initial_chat=initial_chat,
+            system_prompt=None,
+        )
+        assert chat.messages[0]["content"] == "existing system"
+
+    def test_build_initial_chat_with_initial_chat_no_existing_system(self):
+        """system_prompt is inserted at position 0 when initial_chat has no system message."""
+        initial_chat = ModelChat()  # no system
+        initial_chat.add_user_message("hello")
+        chat = _build_initial_chat(
+            initial_chat=initial_chat,
+            system_prompt="PF: new instruction",
+        )
+        assert len(chat.messages) == 2
+        assert chat.messages[0]["role"] == "system"
+        assert chat.messages[0]["content"] == "PF: new instruction"
+
+    def test_build_initial_chat_does_not_mutate_original(self):
+        """Caller's initial_chat is not mutated."""
+        initial_chat = ModelChat(system="original")
+        original_messages = [dict(m) for m in initial_chat.messages]
+        _build_initial_chat(
+            initial_chat=initial_chat,
+            system_prompt="PF: new",
+        )
+        assert initial_chat.messages == original_messages
+
+    def test_build_initial_chat_merges_into_first_system_only(self):
+        """system_prompt is merged into the FIRST system message, not appended."""
+        initial_chat = ModelChat(system="first system")
+        initial_chat.add_system_message("second system")
+        initial_chat.add_user_message("hello")
+        chat = _build_initial_chat(
+            initial_chat=initial_chat,
+            system_prompt="PF: guidance",
+        )
+        assert len(chat.messages) == 3
+        assert "PF: guidance" in chat.messages[0]["content"]
+        assert "first system" in chat.messages[0]["content"]
+        assert chat.messages[1]["content"] == "second system"
+
+
+# ─── Phase 1A: prompt_fragment Tests ──────────────────────────────────────
+
+
+class TestAsyncAgentLoopPromptFragment:
+    """C6-C8: prompt_fragment injection tests for AsyncAgentLoop."""
+
+    def test_c6_static_prompt_fragment_in_system_prompt(self):
+        """C6: Static prompt_fragment is prepended to system prompt."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        captured_chat = {}
+
+        async def async_gen(chat, **kwargs):
+            captured_chat["messages"] = list(chat.messages)
+            return _make_response(content="done", finish_reason="stop")
+
+        client.llm.async_generate = async_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            prompt_fragment="Use search first.",
+        )
+
+        async def run_and_check():
+            await loop.run("hello", system_prompt="You are helpful.")
+            system_msgs = [
+                m for m in captured_chat["messages"]
+                if m.get("role") == "system"
+            ]
+            assert len(system_msgs) == 1
+            assert "Use search first." in system_msgs[0]["content"]
+            assert system_msgs[0]["content"].startswith("Use search first.")
+
+        asyncio.run(run_and_check())
+
+    def test_c7_callable_prompt_fragment_resolved(self):
+        """C7: Callable prompt_fragment is resolved at generation time."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        captured_chat = {}
+
+        async def async_gen(chat, **kwargs):
+            captured_chat["messages"] = list(chat.messages)
+            return _make_response(content="done", finish_reason="stop")
+
+        client.llm.async_generate = async_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            prompt_fragment=lambda: "Dynamic fragment",
+        )
+
+        async def run_and_check():
+            await loop.run("hello", system_prompt="You are helpful.")
+            system_msgs = [
+                m for m in captured_chat["messages"]
+                if m.get("role") == "system"
+            ]
+            assert len(system_msgs) == 1
+            assert "Dynamic fragment" in system_msgs[0]["content"]
+
+        asyncio.run(run_and_check())
+
+    def test_c8_callable_with_kwargs_forwarded(self):
+        """C8: Callable prompt_fragment receives forwarded kwargs."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        captured_chat = {}
+
+        async def async_gen(chat, **kwargs):
+            captured_chat["messages"] = list(chat.messages)
+            return _make_response(content="done", finish_reason="stop")
+
+        client.llm.async_generate = async_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        # url is passed via **kwargs and stored in _generate_kwargs
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            prompt_fragment=lambda url: f"URL: {url}",
+            url="https://img.jpg",
+        )
+
+        async def run_and_check():
+            await loop.run("hello", system_prompt="You are helpful.")
+            system_msgs = [
+                m for m in captured_chat["messages"]
+                if m.get("role") == "system"
+            ]
+            assert len(system_msgs) == 1
+            assert "URL: https://img.jpg" in system_msgs[0]["content"]
+
+        asyncio.run(run_and_check())
+
+    def test_prompt_fragment_none_does_not_modify_system(self):
+        """No prompt_fragment → system prompt is unmodified."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        captured_chat = {}
+
+        async def async_gen(chat, **kwargs):
+            captured_chat["messages"] = list(chat.messages)
+            return _make_response(content="done", finish_reason="stop")
+
+        client.llm.async_generate = async_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+
+        async def run_and_check():
+            await loop.run("hello", system_prompt="You are helpful.")
+            system_msgs = [
+                m for m in captured_chat["messages"]
+                if m.get("role") == "system"
+            ]
+            assert len(system_msgs) == 1
+            assert system_msgs[0]["content"] == "You are helpful."
+
+        asyncio.run(run_and_check())
+
+    def test_prompt_fragment_no_system_prompt(self):
+        """prompt_fragment with no system_prompt → fragment alone is used."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        captured_chat = {}
+
+        async def async_gen(chat, **kwargs):
+            captured_chat["messages"] = list(chat.messages)
+            return _make_response(content="done", finish_reason="stop")
+
+        client.llm.async_generate = async_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            prompt_fragment="Use tools.",
+        )
+
+        async def run_and_check():
+            await loop.run("hello", system_prompt=None)
+            system_msgs = [
+                m for m in captured_chat["messages"]
+                if m.get("role") == "system"
+            ]
+            assert len(system_msgs) == 1
+            assert system_msgs[0]["content"] == "Use tools."
+
+        asyncio.run(run_and_check())
+
+    # ─────────────────────────────────────────────────────────────────
+    # prompt_fragment + initial_chat (Phase 1B blocker regression tests)
+    # ─────────────────────────────────────────────────────────────────
+
+    def test_prompt_fragment_with_initial_chat(self):
+        """C9: Static prompt_fragment reaches system prompt when initial_chat is provided."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        captured_chat = {}
+
+        async def async_gen(chat, **kwargs):
+            captured_chat["messages"] = list(chat.messages)
+            return _make_response(content="done", finish_reason="stop")
+
+        client.llm.async_generate = async_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            prompt_fragment="Use search first.",
+        )
+
+        # Simulate api.magic_llm pattern: prebuilt chat + prompt_fragment
+        initial_chat = ModelChat(system="You are a helpful assistant.")
+        initial_chat.add_user_message("What is weather in London?")
+
+        async def run_and_check():
+            await loop.run(
+                user_input=None,
+                initial_chat=initial_chat,
+            )
+            system_msgs = [
+                m for m in captured_chat["messages"]
+                if m.get("role") == "system"
+            ]
+            assert len(system_msgs) == 1
+            content = system_msgs[0]["content"]
+            assert "Use search first." in content
+            assert "You are a helpful assistant." in content
+            assert content.startswith("Use search first.")
+
+        asyncio.run(run_and_check())
+
+    def test_prompt_fragment_callable_with_initial_chat(self):
+        """C9: Callable prompt_fragment resolved and merged when initial_chat is provided."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        captured_chat = {}
+
+        async def async_gen(chat, **kwargs):
+            captured_chat["messages"] = list(chat.messages)
+            return _make_response(content="done", finish_reason="stop")
+
+        client.llm.async_generate = async_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            prompt_fragment=lambda url: f"Edit URL: {url}",
+            url="https://example.com/image.jpg",
+        )
+
+        initial_chat = ModelChat(system="You edit images.")
+        initial_chat.add_user_message("Edit this image")
+
+        async def run_and_check():
+            await loop.run(
+                user_input=None,
+                initial_chat=initial_chat,
+            )
+            system_msgs = [
+                m for m in captured_chat["messages"]
+                if m.get("role") == "system"
+            ]
+            assert len(system_msgs) == 1
+            content = system_msgs[0]["content"]
+            assert "Edit URL: https://example.com/image.jpg" in content
+            assert "You edit images." in content
+            assert content.startswith("Edit URL:")
+
+        asyncio.run(run_and_check())
+
+    def test_prompt_fragment_with_initial_chat_no_system_in_initial(self):
+        """prompt_fragment + initial_chat: inserts at pos 0 when no system msg."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        captured_chat = {}
+
+        async def async_gen(chat, **kwargs):
+            captured_chat["messages"] = list(chat.messages)
+            return _make_response(content="done", finish_reason="stop")
+
+        client.llm.async_generate = async_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            prompt_fragment="PF: instructions.",
+        )
+
+        initial_chat = ModelChat()  # no system message
+        initial_chat.add_user_message("Direct question")
+
+        async def run_and_check():
+            await loop.run(
+                user_input=None,
+                initial_chat=initial_chat,
+            )
+            system_msgs = [
+                m for m in captured_chat["messages"]
+                if m.get("role") == "system"
+            ]
+            assert len(system_msgs) == 1
+            assert system_msgs[0]["content"] == "PF: instructions."
+
+        asyncio.run(run_and_check())
+
+    def test_prompt_fragment_with_initial_chat_stream(self):
+        """C9: prompt_fragment reaches system prompt in stream() with initial_chat."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        captured_chat = {}
+
+        async def async_stream_gen(chat, **kwargs):
+            captured_chat["messages"] = list(chat.messages)
+            # Return a single no-tool-call streaming response
+            yield ChatCompletionModel(
+                id="test-1",
+                model="test-model",
+                choices=[ChoiceModel(
+                    index=0,
+                    delta=DeltaModel(content="Hello"),
+                    finish_reason="stop",
+                )],
+            )
+
+        client.llm.async_stream_generate = async_stream_gen
+
+        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            prompt_fragment="Stream PF.",
+        )
+
+        initial_chat = ModelChat(system="System msg.")
+        initial_chat.add_user_message("Hi")
+
+        async def run_and_check():
+            async for _ in loop.stream(
+                user_input=None,
+                initial_chat=initial_chat,
+            ):
+                pass
+            system_msgs = [
+                m for m in captured_chat["messages"]
+                if m.get("role") == "system"
+            ]
+            assert len(system_msgs) == 1
+            content = system_msgs[0]["content"]
+            assert "Stream PF." in content
+            assert "System msg." in content
+            assert content.startswith("Stream PF.")
+
+        asyncio.run(run_and_check())
+
+
+class TestAsyncAgentLoopEngineTypeWarning:
+    """C5: engine_type warning tests for AsyncAgentLoop."""
+
+    def test_engine_type_passed_logs_warning(self):
+        """engine_type='anthropic' → logger.warning is called."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        adapter = _make_mock_adapter()
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+
+        with patch("magic_llm.agent.async_agent_loop.logger.warning") as mock_warning:
+            AsyncAgentLoop(
+                client,
+                tools=[],
+                adapter=adapter,
+                engine_type="anthropic",
+            )
+            mock_warning.assert_called_once()
+            args, _ = mock_warning.call_args
+            warning_fmt = args[0] if args else ""
+            # logger.warning receives format string + args separately
+            # Check format string contains expected semantics
+            assert "ignored" in warning_fmt
+            assert "adapter" in warning_fmt or "client.llm" in warning_fmt
+            # Check the engine_type value is passed as a formatting arg
+            assert len(args) > 1 and args[1] == "anthropic"
+
+    def test_engine_type_not_passed_no_warning(self):
+        """No engine_type → no logger.warning."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        adapter = _make_mock_adapter()
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+
+        with patch("magic_llm.agent.async_agent_loop.logger.warning") as mock_warning:
+            AsyncAgentLoop(client, tools=[], adapter=adapter)
+            mock_warning.assert_not_called()
+
+    def test_engine_type_not_in_generate_kwargs(self):
+        """engine_type is popped and NOT stored in _generate_kwargs."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        adapter = _make_mock_adapter()
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+
+        loop = AsyncAgentLoop(
+            client,
+            tools=[],
+            adapter=adapter,
+            engine_type="anthropic",
+        )
+        assert "engine_type" not in loop._generate_kwargs

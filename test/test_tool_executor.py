@@ -52,6 +52,25 @@ class TestToolExecutorSingleExecution:
         assert parsed["temperature"] == 18
         assert parsed["city"] == "London"
 
+    def test_callable_success_result_preserves_tool_call_id_and_json_content(self):
+        executor = ToolExecutor()
+
+        def search(query: str, limit: int = 5) -> list[str]:
+            return [query] * limit
+
+        executor.register("search", search)
+
+        result = executor.execute(
+            _make_call("search", {"query": "agent", "limit": 2}, id="call_search")
+        )
+
+        assert isinstance(result, ToolResult)
+        assert result.tool_call_id == "call_search"
+        assert result.name == "search"
+        assert result.is_error is False
+        assert result.error is None
+        assert json.loads(result.content) == ["agent", "agent"]
+
     def test_execute_unknown_tool_returns_error_result(self):
         """No registration, assert ToolResult(is_error=True, error contains 'Unknown tool')."""
         executor = ToolExecutor()
@@ -61,6 +80,8 @@ class TestToolExecutorSingleExecution:
         assert "Unknown tool" in result.error
         assert result.error_type == "UnknownToolError"
         assert result.name == "unknown_tool"
+        assert result.tool_call_id == "call_1"
+        assert result.content == ""
 
     def test_execute_tool_exception_returns_error_result(self):
         """Tool raises ValueError('boom'), assert ToolResult(is_error=True, error='boom', error_type='ValueError')."""
@@ -80,6 +101,7 @@ class TestToolExecutorSingleExecution:
         parsed = json.loads(result.content)
         assert parsed["error"] == "boom"
         assert parsed["type"] == "ValueError"
+        assert result.tool_call_id == "call_1"
 
     def test_execute_non_json_serializable_output_falls_back_to_str(self):
         """Tool returns file handle or object, assert str() conversion, is_error=False."""
@@ -138,6 +160,28 @@ class TestToolExecutorTimeout:
         assert result.is_error is False
         parsed = json.loads(result.content)
         assert parsed["status"] == "ok"
+
+    def test_per_tool_timeout_override_returns_structured_timeout_error(self):
+        executor = ToolExecutor(
+            per_tool_timeout=10.0,
+            tool_timeouts={"slow": 0.05},
+        )
+
+        def slow_tool():
+            time.sleep(1)
+            return "too slow"
+
+        executor.register("slow", slow_tool)
+        start = time.monotonic()
+        result = executor.execute(_make_call("slow", id="call_slow"))
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 0.5
+        assert result.tool_call_id == "call_slow"
+        assert result.is_error is True
+        assert result.error_type == "TimeoutError"
+        assert "0.05" in result.error
+        assert result.content == ""
 
 
 # ─── Slice 3: Parallel execution with ordering ──────────────────────────────
@@ -302,6 +346,23 @@ class TestToolExecutorAsync:
         assert result.is_error is False
         parsed = json.loads(result.content)
         assert parsed["async"] is True
+
+    @pytest.mark.asyncio
+    async def test_execute_async_callable_exception_returns_structured_error(self):
+        executor = ToolExecutor()
+
+        async def fail_async():
+            raise RuntimeError("async boom")
+
+        executor.register("fail_async", fail_async)
+        result = await executor.execute_async(_make_call("fail_async", id="call_fail"))
+
+        assert result.tool_call_id == "call_fail"
+        assert result.name == "fail_async"
+        assert result.is_error is True
+        assert result.error == "async boom"
+        assert result.error_type == "RuntimeError"
+        assert json.loads(result.content) == {"error": "async boom", "type": "RuntimeError"}
 
     @pytest.mark.asyncio
     async def test_execute_parallel_async_runs_concurrently(self):
