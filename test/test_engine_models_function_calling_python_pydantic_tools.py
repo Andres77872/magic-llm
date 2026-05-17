@@ -2,7 +2,7 @@ import json
 import os
 
 from magic_llm import MagicLLM
-from magic_llm.util.tools_mapping import normalize_openai_tools
+from magic_llm.engine.tooling import normalize_openai_tools
 
 import pytest
 
@@ -240,7 +240,7 @@ def test_python_and_pydantic_tools_at_init_stream(provider, key_name, model, _fa
     print(f"✓ {provider}: streaming tool_calls validated successfully")
 
 def test_normalize_python_callable_to_openai_format():
-    """Test that Python callables are correctly normalized to OpenAI tool format."""
+    """Raw callable tool is normalized by the engine/core tooling contract."""
     tools, primary_name = _python_tool_definitions()
     normalized = normalize_openai_tools([tools[0]])
 
@@ -267,6 +267,8 @@ def test_normalize_python_callable_to_openai_format():
     assert "location" in params["properties"], "Parameters should include 'location' property"
     assert "required" in params, "Parameters should have 'required' list"
     assert "location" in params["required"], "'location' should be required"
+    assert params["properties"]["location"]["type"] == "string"
+    assert "The name of the location" in params["properties"]["location"].get("description", "")
 
     print(f"✓ normalize_openai_tools: Python callable normalized correctly")
     print(f"  - name: {tool['name']}")
@@ -275,7 +277,7 @@ def test_normalize_python_callable_to_openai_format():
 
 @pytest.mark.skipif(BaseModel is None, reason="Pydantic not available")
 def test_normalize_pydantic_model_to_openai_format():
-    """Test that Pydantic models are correctly normalized to OpenAI tool format."""
+    """Pydantic tool schema remains supported by engine/core tooling."""
     tools, _ = _python_tool_definitions()
     # tools[1] is the GetForecast Pydantic model
     normalized = normalize_openai_tools([tools[1]])
@@ -314,7 +316,7 @@ def test_normalize_pydantic_model_to_openai_format():
 
 def test_unified_tool_format_across_input_types():
     """Test that all input formats produce identical canonical output."""
-    from magic_llm.util.tools_mapping import map_to_openai, map_to_anthropic
+    from magic_llm.engine.tooling import map_to_openai, map_to_anthropic
 
     # Define same tool in different formats
     openai_format = {

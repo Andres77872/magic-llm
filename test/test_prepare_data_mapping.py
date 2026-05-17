@@ -72,7 +72,7 @@ def test_openai_provider_prepare_data_accepts_callable(chat_simple):
     assert body["tool_choice"] == {"type": "function", "function": {"name": "get_weather"}}
 
 
-def test_deepinfra_provider_coerces_tool_choice_to_string(chat_simple):
+def test_deepinfra_provider_preserves_named_tool_choice(chat_simple):
     prov = ProviderDeepInfra(api_key="sk-xxx", model="meta-llama/Meta-Llama-3.1-70B-Instruct")
 
     body_bytes, _ = prov.prepare_data(chat_simple, tools=[LEGACY_FUNC], tool_choice={"name": "get_weather"})
@@ -81,8 +81,8 @@ def test_deepinfra_provider_coerces_tool_choice_to_string(chat_simple):
     # tools normalized to OpenAI function wrapper
     assert isinstance(body.get("tools"), list) and body["tools"][0]["type"] == "function"
 
-    # tool_choice coerced to a string (default 'auto')
-    assert body.get("tool_choice") == "auto"
+    # Named tool_choice intent is preserved; it is never silently downgraded to auto.
+    assert body.get("tool_choice") == {"type": "function", "function": {"name": "get_weather"}}
 
 
 @pytest.mark.parametrize(

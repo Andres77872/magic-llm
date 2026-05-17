@@ -1,11 +1,15 @@
 import base64
 import json
+import logging
+import os
 
-from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
+from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider, _dump_payload, _dump_payload_full
+
+logger = logging.getLogger(__name__)
+from magic_llm.engine.tooling import map_request_tools
 from magic_llm.model import ModelChat
 from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.util.http import AsyncHttpClient
-from magic_llm.util.tools_mapping import coerce_tool_choice_to_string, map_to_openai
 
 
 class ProviderDeepInfra(OpenAiBaseProvider):
@@ -51,16 +55,23 @@ class ProviderDeepInfra(OpenAiBaseProvider):
             data.pop('callback')
         if 'fallback' in data:
             data.pop('fallback')
-        # Normalize tools/tool_choice to canonical OpenAI schema
-        tools_mapped, choice_mapped = map_to_openai(data.get('tools'), data.get('tool_choice'))
-        if tools_mapped is not None:
-            data['tools'] = tools_mapped
-        if choice_mapped is not None:
-            data['tool_choice'] = choice_mapped
+        # Normalize through the engine/core tooling boundary and preserve named
+        # forced tool choices instead of silently downgrading them to "auto".
+        request_tools = map_request_tools('deepinfra', data.get('tools'), data.get('tool_choice'))
+        if request_tools.tools is not None:
+            data['tools'] = request_tools.tools
+        elif 'tools' in data:
+            data.pop('tools')
+        if request_tools.tool_choice is not None:
+            data['tool_choice'] = request_tools.tool_choice
+        elif 'tool_choice' in data:
+            data.pop('tool_choice')
 
-        # DeepInfra only accepts string tool_choice. Downgrade dict to string.
-        if (tc := data.get('tool_choice')) is not None:
-            data['tool_choice'] = coerce_tool_choice_to_string(tc, default='auto')
+        if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD"):
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", _dump_payload(self, data))
+
+        if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD_FULL"):
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", _dump_payload_full(self, data))
 
         json_data = json.dumps(data).encode('utf-8')
         return json_data, self.headers

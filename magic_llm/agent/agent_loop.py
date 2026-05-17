@@ -1,7 +1,9 @@
 """AgentLoop — synchronous ReAct-style agent loop.
 
 Encapsulates the full ReAct-style loop as a state machine with
-dependency-injected components (ToolExecutor, ToolAdapter, AgentHooks).
+dependency-injected orchestration components (ToolExecutor, AgentHooks).
+Engine/core tooling owns provider-specific tool mapping and result injection;
+ToolAdapter remains only as a deprecated compatibility constructor option.
 
 NOT thread-safe. Each instance should be used by a single thread.
 Concurrent .run()/.stream() calls on the same instance raise RuntimeError.
@@ -15,6 +17,16 @@ import threading
 import time
 from typing import Any, Callable, Iterator, Optional
 
+from magic_llm.engine.tooling import (
+    StreamIterationSummary,
+    accumulate_stream_chunk,
+    append_tool_results,
+    extract_tool_calls,
+    infer_provider_from_client,
+    is_finished,
+    stream_summary_tool_calls,
+    validate_tool_result_integrity,
+)
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Choice, Message
 from magic_llm.model.ModelChatStream import ChatCompletionModel, ChoiceModel, DeltaModel
@@ -51,7 +63,8 @@ class AgentLoop:
         tool_functions: Dict mapping custom names to callables.
         budget: An optional AgentBudget instance (defaults to AgentBudget()).
         hooks: An optional AgentHooks implementation (defaults to no-op).
-        adapter: An optional ToolAdapter instance. Auto-detected if None.
+        adapter: Deprecated compatibility option retained for direct callers.
+            Canonical tooling behavior does not use this adapter.
         tool_executor: An optional ToolExecutor instance. Created internally if None.
         deduplicate: Enable tool deduplication (default: False, opt-in).
         content_separator: String to join content between iterations (default: "\\n\\n").
@@ -101,12 +114,13 @@ class AgentLoop:
         self._deduplicate = deduplicate
         self._content_separator = content_separator
         self._tool_choice = tool_choice
+        self._provider = infer_provider_from_client(client)
 
         # Store kwargs for passthrough, but explicitly drop engine_type
         engine_type = kwargs.pop("engine_type", None)
         if engine_type is not None:
             logger.warning(
-                "engine_type=%r is ignored; provider adapter is selected from client.llm",
+                "engine_type=%r is ignored; provider is inferred from client.llm",
                 engine_type,
             )
         self._generate_kwargs = kwargs
@@ -249,11 +263,10 @@ class AgentLoop:
                     state=self.state,
                 )
 
-                # Step 2: LLM_CALL
-                tool_defs = self._adapter.serialize_tool_defs(self._tools)
+                # Step 2: LLM_CALL — pass raw tools to engine/core tooling.
                 response = self._client.llm.generate(
                     chat,
-                    tools=tool_defs,
+                    tools=self._tools,
                     tool_choice=self._tool_choice,
                     **self._generate_kwargs,
                 )
@@ -288,10 +301,8 @@ class AgentLoop:
                     state=self.state,
                 )
 
-                # Step 5: EXTRACT — use adapter to deserialize tool calls
-                tool_calls: list[CanonicalToolCall] = (
-                    self._adapter.deserialize_tool_calls(response)
-                )
+                # Step 5: EXTRACT — consume normalized engine response tool calls.
+                tool_calls: list[CanonicalToolCall] = extract_tool_calls(response)
 
                 # Step 6: RECORD content BEFORE checking done/break
                 content = response.content
@@ -302,7 +313,7 @@ class AgentLoop:
                 # Step 7: CHECK_DONE — no tool calls OR is_finished
                 # INVARIANT: Content recording runs BEFORE break so the final
                 # content-only assistant message is in state when the loop exits.
-                if not tool_calls or self._adapter.is_finished(response):
+                if not tool_calls or is_finished(self._provider, response):
                     # Exit loop
                     break
 
@@ -326,7 +337,7 @@ class AgentLoop:
                     )
 
                 # Step 8: VALIDATE_INTEGRITY
-                self._adapter.validate_pair_integrity(chat)
+                validate_tool_result_integrity(self._provider, chat)
 
                 # Hook: on_tool_start — invoke BEFORE execution for EACH tool call
                 for tc in tool_calls:
@@ -351,8 +362,8 @@ class AgentLoop:
                         state=self.state,
                     )
 
-                # Step 10: INJECT — serialize tool results into chat
-                self._adapter.serialize_tool_results(results, chat)
+                # Step 10: INJECT — engine/core builds provider-correct messages.
+                append_tool_results(self._provider, chat, results)
 
                 # Update state messages reference
                 self._state.messages = chat.messages
@@ -471,52 +482,23 @@ class AgentLoop:
                     state=self.state,
                 )
 
-                # Stream from LLM
-                tool_defs = self._adapter.serialize_tool_defs(self._tools)
-                accumulated_tool_calls: dict[int, dict[str, Any]] = {}
-                iteration_content: list[str] = []
+                # Stream from LLM. Engine/provider chunks are already normalized;
+                # the agent loop only accumulates via the engine/core summary helper.
+                summary = StreamIterationSummary()
                 last_chunk: Optional[ChatCompletionModel] = None
 
                 for chunk in self._client.llm.stream_generate(
                     chat,
-                    tools=tool_defs,
+                    tools=self._tools,
                     tool_choice=self._tool_choice,
                     **self._generate_kwargs,
                 ):
-                    # Accumulate tool calls from deltas
-                    if chunk.choices:
-                        delta = chunk.choices[0].delta
-                        if delta and delta.tool_calls:
-                            for tc in delta.tool_calls:
-                                idx = tc.index if tc.index is not None else 0
-                                if idx not in accumulated_tool_calls:
-                                    accumulated_tool_calls[idx] = {}
-                                if tc.id:
-                                    accumulated_tool_calls[idx]["id"] = tc.id
-                                if tc.function:
-                                    if "function" not in accumulated_tool_calls[idx]:
-                                        accumulated_tool_calls[idx]["function"] = {}
-                                    if tc.function.name:
-                                        accumulated_tool_calls[idx]["function"]["name"] = tc.function.name
-                                    if tc.function.arguments:
-                                        if "arguments" not in accumulated_tool_calls[idx]["function"]:
-                                            accumulated_tool_calls[idx]["function"]["arguments"] = ""
-                                        accumulated_tool_calls[idx]["function"]["arguments"] += tc.function.arguments
-                        if delta and delta.content:
-                            iteration_content.append(delta.content)
-
+                    accumulate_stream_chunk(summary, chunk)
                     yield chunk
                     last_chunk = chunk
 
-                # Build a ModelChatResponse from the last chunk for adapter methods
+                # Build a synthetic response from normalized engine/core stream summary.
                 if last_chunk is not None:
-                    # Build tool_calls list from accumulated data
-                    raw_tool_calls = []
-                    for idx in sorted(accumulated_tool_calls.keys()):
-                        tc_data = accumulated_tool_calls[idx]
-                        raw_tool_calls.append(tc_data)
-
-                    # Create a synthetic response for adapter methods
                     response = ModelChatResponse(
                         id=last_chunk.id or "stream-synthetic",
                         object="chat.completion",
@@ -527,14 +509,10 @@ class AgentLoop:
                                 index=0,
                                 message=Message(
                                     role="assistant",
-                                    content="".join(iteration_content) if iteration_content else None,
-                                    tool_calls=None,  # adapter uses accumulated data
+                                    content=summary.content if summary.content else None,
+                                    tool_calls=None,
                                 ),
-                                finish_reason=(
-                                    last_chunk.choices[0].finish_reason
-                                    if last_chunk.choices
-                                    else None
-                                ),
+                                finish_reason=summary.finish_reason,
                             )
                         ],
                     )
@@ -570,36 +548,21 @@ class AgentLoop:
                         state=self.state,
                     )
 
-                    # Extract tool calls from accumulated data
-                    tool_calls = []
-                    for idx in sorted(accumulated_tool_calls.keys()):
-                        tc_data = accumulated_tool_calls[idx]
-                        func_data = tc_data.get("function", {})
-                        try:
-                            arguments = json.loads(func_data.get("arguments", "{}"))
-                        except (json.JSONDecodeError, TypeError):
-                            arguments = {}
-                        tool_calls.append(
-                            CanonicalToolCall(
-                                id=tc_data.get("id", ""),
-                                name=func_data.get("name", ""),
-                                arguments=arguments,
-                            )
-                        )
+                    tool_calls = stream_summary_tool_calls(summary)
 
                     # Record content — runs for EVERY iteration (including final no-tool answer)
                     # INVARIANT: When tool_calls are present, pre-tool content is
                     # speculative and MUST be suppressed — condition `not tool_calls`
                     # ensures only content-only iterations are recorded.
-                    if iteration_content and not tool_calls:
-                        iter_content = "".join(iteration_content)
+                    if summary.content and not tool_calls:
+                        iter_content = summary.content
                         chat.add_assistant_message(iter_content)
                         collected_content.append(iter_content)
                         self._state.messages = chat.messages
 
                     # Check done — AFTER content recording so final content-only
                     # assistant message is synced to state before the break.
-                    if not tool_calls or self._adapter.is_finished(response):
+                    if not tool_calls or is_finished(self._provider, response):
                         break
 
                     # Add tool_call message (no speculative content)
@@ -621,7 +584,7 @@ class AgentLoop:
                         )
 
                     # Validate integrity
-                    self._adapter.validate_pair_integrity(chat)
+                    validate_tool_result_integrity(self._provider, chat)
 
                     # Hook: on_tool_start — invoke BEFORE execution for EACH tool call
                     for tc in tool_calls:
@@ -647,11 +610,11 @@ class AgentLoop:
                         )
 
                     # Inject results
-                    self._adapter.serialize_tool_results(results, chat)
+                    append_tool_results(self._provider, chat, results)
                     self._state.messages = chat.messages
 
                     # Yield separator between iterations
-                    if iteration_content and self._content_separator and last_chunk:
+                    if summary.content and self._content_separator and last_chunk:
                         separator_chunk = ChatCompletionModel(
                             id=f"separator-{self._state.step}",
                             model=last_chunk.model,

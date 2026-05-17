@@ -956,11 +956,8 @@ class TestAgentLoopRun:
         assert len(client.llm.calls) == 2
 
         first_kwargs = client.llm.calls[0][1]
-        tool_def = first_kwargs["tools"][0]
-        assert tool_def["function"]["name"] == "get_weather"
-        assert tool_def["function"]["description"] == "Get the current weather for a city."
-        properties = tool_def["function"]["parameters"]["properties"]
-        assert properties["city"]["type"] == "string"
+        assert first_kwargs["tools"] == [get_weather]
+        assert first_kwargs["tool_choice"] == "auto"
 
         second_messages = client.llm.calls[1][0]
         tool_messages = [m for m in second_messages if m.get("role") == "tool"]
@@ -1159,8 +1156,8 @@ class TestAgentLoopToolFunctions:
         """Both tools=[callable_a] and tool_functions={"custom_b": fn_b} are callable."""
         client = MagicMock()
         client.llm = MagicMock()
-        tc_a = _make_tool_call(id="call_a", name="tool_a")
-        tc_b = _make_tool_call(id="call_b", name="custom_b")
+        tc_a = _make_tool_call(id="call_a", name="tool_a", arguments="{}")
+        tc_b = _make_tool_call(id="call_b", name="custom_b", arguments='{"x": 1}')
 
         client.llm.generate.side_effect = [
             _make_response(content=None, tool_calls=[tc_a, tc_b], finish_reason="tool_calls"),
@@ -1258,7 +1255,7 @@ class TestAgentLoopToolFunctions:
         """tool_functions entry overrides callable with same __name__."""
         client = MagicMock()
         client.llm = MagicMock()
-        tc = _make_tool_call(name="get_data")
+        tc = _make_tool_call(name="get_data", arguments="{}")
 
         client.llm.generate.side_effect = [
             _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls"),
@@ -1292,12 +1289,12 @@ class TestAgentLoopToolFunctions:
 
         # The override should have been used (registered last, wins)
         assert response.content == "done"
-        # Verify by checking the tool result content in serialize_tool_results call
-        serialize_call = adapter.serialize_tool_results.call_args
-        results = serialize_call[0][0]
-        assert len(results) == 1
-        assert "from_tool_functions" in results[0].content
-        assert "from_callable" not in results[0].content
+        # Verify through engine/core-injected tool messages; canonical loop no
+        # longer calls adapter.serialize_tool_results().
+        tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+        assert len(tool_messages) == 1
+        assert "from_tool_functions" in tool_messages[0]["content"]
+        assert "from_callable" not in tool_messages[0]["content"]
 
 
 # ─── Slice 8: AgentLoop.run() deduplication, adapter override, state read-only
@@ -1315,7 +1312,7 @@ class TestAgentLoopDedupAndState:
 
         client = MagicMock()
         client.llm = MagicMock()
-        tc = _make_tool_call(name="counter")
+        tc = _make_tool_call(name="counter", arguments="{}")
 
         # First iteration: tool_call, second: done
         client.llm.generate.side_effect = [
@@ -1356,7 +1353,7 @@ class TestAgentLoopDedupAndState:
 
         client = MagicMock()
         client.llm = MagicMock()
-        tc = _make_tool_call(name="counter")
+        tc = _make_tool_call(name="counter", arguments="{}")
 
         # Each run: one tool call then done
         client.llm.generate.side_effect = [
@@ -1413,8 +1410,12 @@ class TestAgentLoopDedupAndState:
 
         loop.run("hello")
 
-        assert custom_adapter.serialize_tool_defs.called
-        assert custom_adapter.deserialize_tool_calls.called
+        # Adapter override is retained for compatibility/storage, but canonical
+        # agent-loop tooling now goes through magic_llm.engine.tooling.
+        assert loop._adapter is custom_adapter
+        custom_adapter.serialize_tool_defs.assert_not_called()
+        custom_adapter.deserialize_tool_calls.assert_not_called()
+        custom_adapter.serialize_tool_results.assert_not_called()
 
     def test_state_property_returns_copy(self):
         client = MagicMock()
@@ -1652,6 +1653,7 @@ class TestAgentLoopStream:
         assert [chunk.id for chunk in chunks] == ["chunk-tool", "chunk-final"]
         assert chunks[-1].choices[0].delta.content == "Weather result used."
         assert len(client.llm.calls) == 2
+        assert client.llm.calls[0][1]["tools"] == [get_weather]
         second_messages = client.llm.calls[1][0]
         tool_messages = [m for m in second_messages if m.get("role") == "tool"]
         assert len(tool_messages) == 1

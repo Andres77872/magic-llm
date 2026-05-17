@@ -1,4 +1,5 @@
 from magic_llm.engine.base_chat import BaseChat
+from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.util.http import AsyncHttpClient
@@ -18,18 +19,38 @@ class EngineAzure(BaseChat):
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        guard_tools_supported(
+            'Azure',
+            kwargs.get('tools', self.kwargs.get('tools')),
+            kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
+        )
         raise NotImplementedError
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        guard_tools_supported(
+            'Azure',
+            kwargs.get('tools', self.kwargs.get('tools')),
+            kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
+        )
         raise NotImplementedError
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
+        guard_tools_supported(
+            'Azure',
+            kwargs.get('tools', self.kwargs.get('tools')),
+            kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
+        )
         raise NotImplementedError
 
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
+        guard_tools_supported(
+            'Azure',
+            kwargs.get('tools', self.kwargs.get('tools')),
+            kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
+        )
         raise NotImplementedError
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):

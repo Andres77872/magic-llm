@@ -1,10 +1,15 @@
 # https://docs.anthropic.com/claude/reference/messages-streaming
 import json
+import logging
+import os
 import time
 from typing import Dict, Any, Tuple, Optional
 
 from magic_llm.engine.base_chat import BaseChat
+from magic_llm.engine.tooling import AnthropicStreamState, map_request_tools
 from magic_llm.model import ModelChat, ModelChatResponse
+
+logger = logging.getLogger(__name__)
 from magic_llm.model.ModelChatResponse import (
     ToolCall as RespToolCall,
     FunctionCall as RespFunctionCall,
@@ -21,7 +26,6 @@ from magic_llm.model.ModelChatStream import (
     FunctionCall as StreamFunctionCall,
 )
 from magic_llm.util.http import AsyncHttpClient, HttpClient
-from magic_llm.util.tools_mapping import map_to_anthropic
 from magic_llm.util.response_mapping import (
     ANTHROPIC_FINISH_REASON_MAP,
     map_finish_reason,
@@ -30,6 +34,61 @@ from magic_llm.util.response_mapping import (
     build_tool_call,
     build_stream_tool_call,
 )
+
+
+def _dump_payload(provider: "EngineAnthropic", data: dict) -> str:
+    summary = {
+        "marker": "MAGIC_LLM_DEBUG_PAYLOAD",
+        "provider": provider.__class__.__name__,
+        "model": getattr(provider, "model", None),
+        "base_url": getattr(provider, "base_url", None),
+    }
+    msgs = data.get("messages", [])
+    by_role: dict[str, int] = {}
+    last_tool_call_names: list[str] = []
+    tool_results: list[dict] = []
+    for m in msgs:
+        role = m.get("role", "?")
+        by_role[role] = by_role.get(role, 0) + 1
+        content = m.get("content", [])
+        if role in {"assistant", "user"} and isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") == "tool_use":
+                        last_tool_call_names.append(part.get("name", "?"))
+                    if part.get("type") == "tool_result":
+                        preview = (str(part.get("content", ""))[:120] + "...") if part.get("content") else "(empty)"
+                        tool_results.append({"tool_use_id": part.get("tool_use_id", "?"), "content_preview": preview})
+    summary["messages"] = {"total": len(msgs), "by_role": by_role}
+    if last_tool_call_names:
+        summary["last_assistant_tool_calls"] = last_tool_call_names
+    if tool_results:
+        summary["tool_results"] = tool_results[:5]
+    summary["tool_choice"] = data.get("tool_choice")
+    tools_raw = data.get("tools")
+    if tools_raw:
+        summary["tools"] = [
+            {"name": t.get("name", "?"), "has_description": bool(t.get("description"))}
+            for t in tools_raw
+        ]
+    return json.dumps(summary)
+
+
+def _dump_payload_full(provider: "EngineAnthropic", data: dict) -> str:
+    """Full payload dump for diagnosis. Single-line JSON with stable marker."""
+    payload = {
+        "marker": "MAGIC_LLM_DEBUG_PAYLOAD_FULL",
+        "provider": provider.__class__.__name__,
+        "model": data.get("model"),
+        "base_url": getattr(provider, "base_url", None),
+        "stream": data.get("stream", False),
+        "tool_choice": data.get("tool_choice"),
+        "max_tokens": data.get("max_tokens"),
+        "system": data.get("system"),
+        "messages": data.get("messages"),
+        "tools": data.get("tools"),
+    }
+    return json.dumps(payload, default=str)
 
 
 class EngineAnthropic(BaseChat):
@@ -41,13 +100,9 @@ class EngineAnthropic(BaseChat):
         super().__init__(**kwargs)
         self.base_url = 'https://api.anthropic.com/v1/messages'
         self.api_key = api_key
-        # Streaming state: tracks active content blocks (by event index)
-        # so we can assemble tool_use partial JSON and map to OpenAI-style tool_calls
-        self._active_blocks: dict[int, dict] = {}
-        # Persist the latest mapped finish_reason (OpenAI-style) for the stream
-        self._finish_reason: str | None = None
 
-    def prepare_chunk(self, event: dict, idx, usage):
+    def prepare_chunk(self, event: dict, idx, usage, state: AnthropicStreamState | None = None):
+        state = state or AnthropicStreamState()
         if event['type'] == 'message_start':
             idx = event['message']['id']
             meta = event['message']['usage']
@@ -71,7 +126,7 @@ class EngineAnthropic(BaseChat):
         # Map Anthropic stop_reason to OpenAI-style finish_reason and persist it
         finish_reason = event.get('delta', {}).get('stop_reason', None)
         if finish_reason:
-            self._finish_reason = map_finish_reason(
+            state.finish_reason = map_finish_reason(
                 finish_reason,
                 ANTHROPIC_FINISH_REASON_MAP,
                 default=finish_reason
@@ -90,7 +145,7 @@ class EngineAnthropic(BaseChat):
         if event['type'] == 'message_stop':
             sr = event.get('message', {}).get('stop_reason') or event.get('stop_reason')
             if sr:
-                self._finish_reason = map_finish_reason(
+                state.finish_reason = map_finish_reason(
                     sr,
                     ANTHROPIC_FINISH_REASON_MAP,
                     default=sr
@@ -100,14 +155,14 @@ class EngineAnthropic(BaseChat):
         if event['type'] == 'content_block_start':
             # Save the content block context by its stream index
             # Example for tool use: {"type":"tool_use","id":"toolu_...","name":"get_weather","input":{}}
-            self._active_blocks[event['index']] = {
+            state.active_blocks[event['index']] = {
                 'block': event.get('content_block', {}),
                 'args': ''  # accumulate partial_json for tool_use
             }
             return None, idx, usage
         if event['type'] == 'content_block_stop':
             # Cleanup finished block
-            self._active_blocks.pop(event['index'], None)
+            state.active_blocks.pop(event['index'], None)
             return None, idx, usage
         if event['type'] == 'content_block_delta':
             d = event.get('delta', {})
@@ -126,13 +181,13 @@ class EngineAnthropic(BaseChat):
 
             # Tool use JSON input streaming
             if d_type == 'input_json_delta':
-                block_ctx = self._active_blocks.get(event['index'], {})
+                block_ctx = state.active_blocks.get(event['index'], {})
                 block = block_ctx.get('block', {})
                 if block.get('type') == 'tool_use':
                     # Append partial JSON chunk to accumulated args string
                     partial = d.get('partial_json', '') or ''
                     block_ctx['args'] = block_ctx.get('args', '') + partial
-                    self._active_blocks[event['index']] = block_ctx
+                    state.active_blocks[event['index']] = block_ctx
 
                     tool_call = build_stream_tool_call(
                         id=block.get('id'),
@@ -304,11 +359,12 @@ class EngineAnthropic(BaseChat):
         else:
             openai_tool_choice = self.kwargs.get('tool_choice', None)
 
+        engine_kwargs = {k: v for k, v in self.kwargs.items() if k not in {'tools', 'tool_choice'}}
         data: dict = {
             'model': self.model,
             'messages': anthropic_chat,
             # init-time defaults first, call-time overrides second
-            **self.kwargs,
+            **engine_kwargs,
             **kwargs,
         }
 
@@ -316,15 +372,21 @@ class EngineAnthropic(BaseChat):
         if stream_mode:
             data['stream'] = True
 
-        anthropic_tools, anthropic_choice = map_to_anthropic(openai_tools, openai_tool_choice)
-        if anthropic_tools:
-            data['tools'] = anthropic_tools
-        if anthropic_choice:
-            data['tool_choice'] = anthropic_choice
+        request_tools = map_request_tools('anthropic', openai_tools, openai_tool_choice)
+        if request_tools.tools:
+            data['tools'] = request_tools.tools
+        if request_tools.tool_choice:
+            data['tool_choice'] = request_tools.tool_choice
 
         data.setdefault('max_tokens', 4096)
         if preamble:
             data['system'] = preamble
+
+        if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD"):
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", _dump_payload(self, data))
+
+        if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD_FULL"):
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", _dump_payload_full(self, data))
 
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
@@ -373,12 +435,13 @@ class EngineAnthropic(BaseChat):
         model, _, _ = self.process_chunk(
             raw,
             context.get('idx'),
-            context.get('usage')
+            context.get('usage'),
+            context.get('state'),
         )
         return model
 
-    def process_chunk(self, chunk: str, idx, usage):
-        model, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage)
+    def process_chunk(self, chunk: str, idx, usage, state: AnthropicStreamState | None = None):
+        model, idx, usage = self.prepare_chunk(json.loads(chunk), idx, usage, state)
         return model, idx, usage
 
     def process_generate(self, claude_response: dict) -> ModelChatResponse:
@@ -463,9 +526,7 @@ class EngineAnthropic(BaseChat):
         # Make the request and read the response.
         json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
         with HttpClient() as client:
-            # Reset streaming block state per request
-            self._active_blocks = {}
-            self._finish_reason = None
+            state = AnthropicStreamState()
             idx = None
             usage = None
             for chunk in client.stream_request("POST",
@@ -477,13 +538,13 @@ class EngineAnthropic(BaseChat):
                     evt = chunk.split('data:')
                     if len(evt) != 2:
                         continue
-                    if c := self.process_chunk(evt[-1].strip(), idx, usage):
+                    if c := self.process_chunk(evt[-1].strip(), idx, usage, state):
                         idx = c[1]
                         usage = c[2]
                         if c[0]:
                             yield c[0]
             delta = DeltaModel(content='', role=None)
-            choice = ChoiceModel(delta=delta, finish_reason=self._finish_reason, index=0)
+            choice = ChoiceModel(delta=delta, finish_reason=state.finish_reason, index=0)
             yield ChatCompletionModel(
                 id=idx,
                 choices=[choice],
@@ -497,9 +558,7 @@ class EngineAnthropic(BaseChat):
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self.prepare_data(chat, stream=True, **kwargs)
         async with AsyncHttpClient() as client:
-            # Reset streaming block state per request
-            self._active_blocks = {}
-            self._finish_reason = None
+            state = AnthropicStreamState()
             idx = None
             usage = None
             async for chunk in client.post_stream(self.base_url,
@@ -510,13 +569,13 @@ class EngineAnthropic(BaseChat):
                     evt = chunk.decode().split('data:')
                     if len(evt) != 2:
                         continue
-                    if c := self.process_chunk(evt[-1].strip(), idx, usage):
+                    if c := self.process_chunk(evt[-1].strip(), idx, usage, state):
                         idx = c[1]
                         usage = c[2]
                         if c[0]:
                             yield c[0]
             delta = DeltaModel(content='', role=None)
-            choice = ChoiceModel(delta=delta, finish_reason=self._finish_reason, index=0)
+            choice = ChoiceModel(delta=delta, finish_reason=state.finish_reason, index=0)
             yield ChatCompletionModel(
                 id=idx,
                 choices=[choice],

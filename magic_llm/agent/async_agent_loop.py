@@ -16,6 +16,16 @@ import logging
 import time
 from typing import Any, AsyncIterator, Callable, Optional
 
+from magic_llm.engine.tooling import (
+    StreamIterationSummary,
+    accumulate_stream_chunk,
+    append_tool_results,
+    extract_tool_calls,
+    infer_provider_from_client,
+    is_finished,
+    stream_summary_tool_calls,
+    validate_tool_result_integrity,
+)
 from magic_llm.model import ModelChat
 from magic_llm.model.ModelChatResponse import (
     ModelChatResponse, Choice, Message,
@@ -62,7 +72,8 @@ class AsyncAgentLoop:
         tool_functions: Dict mapping custom names to callables.
         budget: An optional AgentBudget instance (defaults to AgentBudget()).
         hooks: An optional AgentHooks implementation (defaults to no-op).
-        adapter: An optional ToolAdapter instance. Auto-detected if None.
+        adapter: Deprecated compatibility option retained for direct callers.
+            Canonical tooling behavior does not use this adapter.
         tool_executor: An optional ToolExecutor instance. Created internally if None.
         deduplicate: Enable tool deduplication (default: False, opt-in).
         content_separator: String to join content between iterations (default: "\\n\\n").
@@ -120,12 +131,13 @@ class AsyncAgentLoop:
         self._content_separator = content_separator
         self._tool_choice = tool_choice
         self._heartbeat_cb = heartbeat_cb
+        self._provider = infer_provider_from_client(client)
 
         # Store kwargs for passthrough, but explicitly drop engine_type
         engine_type = kwargs.pop("engine_type", None)
         if engine_type is not None:
             logger.warning(
-                "engine_type=%r is ignored; provider adapter is selected from client.llm",
+                "engine_type=%r is ignored; provider is inferred from client.llm",
                 engine_type,
             )
         self._generate_kwargs = kwargs
@@ -288,11 +300,10 @@ class AsyncAgentLoop:
                         state=self.state,
                     )
 
-                    # Step 2: LLM_CALL (async)
-                    tool_defs = self._adapter.serialize_tool_defs(self._tools)
+                    # Step 2: LLM_CALL (async) — pass raw tools to engine/core tooling.
                     response = await self._client.llm.async_generate(
                         chat,
-                        tools=tool_defs,
+                        tools=self._tools,
                         tool_choice=self._tool_choice,
                         **self._generate_kwargs,
                     )
@@ -327,10 +338,8 @@ class AsyncAgentLoop:
                         state=self.state,
                     )
 
-                    # Step 5: EXTRACT — use adapter to deserialize tool calls
-                    tool_calls: list[CanonicalToolCall] = (
-                        self._adapter.deserialize_tool_calls(response)
-                    )
+                    # Step 5: EXTRACT — consume normalized engine response tool calls.
+                    tool_calls: list[CanonicalToolCall] = extract_tool_calls(response)
 
                     # Step 6: RECORD_CONTENT — INVARIANT: suppress when tool_calls present
                     content = response.content
@@ -340,7 +349,7 @@ class AsyncAgentLoop:
 
                     # Step 7: CHECK_DONE — AFTER content recording (Phase 7)
                     # INVARIANT: Final content-only iteration must persist to state BEFORE break
-                    if not tool_calls or self._adapter.is_finished(response):
+                    if not tool_calls or is_finished(self._provider, response):
                         break
 
                     # Step 8: ADD_TOOL_CALL — tool-call message (no speculative content)
@@ -362,7 +371,7 @@ class AsyncAgentLoop:
                         )
 
                     # Step 8: VALIDATE_INTEGRITY
-                    self._adapter.validate_pair_integrity(chat)
+                    validate_tool_result_integrity(self._provider, chat)
 
                     # Hook: on_tool_start — invoke BEFORE execution for EACH tool call
                     for tc in tool_calls:
@@ -387,8 +396,8 @@ class AsyncAgentLoop:
                             state=self.state,
                         )
 
-                    # Step 10: INJECT
-                    self._adapter.serialize_tool_results(results, chat)
+                    # Step 10: INJECT — engine/core builds provider-correct messages.
+                    append_tool_results(self._provider, chat, results)
 
                     # Update state messages reference
                     self._state.messages = chat.messages
@@ -526,44 +535,22 @@ class AsyncAgentLoop:
                         state=self.state,
                     )
 
-                    # Stream from LLM (async)
-                    tool_defs = self._adapter.serialize_tool_defs(self._tools)
-                    accumulated_tool_calls: dict[int, dict[str, Any]] = {}
-                    iteration_content: list[str] = []
+                    # Stream from LLM (async). Engine/provider chunks are already
+                    # normalized; the loop accumulates via engine/core summary only.
+                    summary = StreamIterationSummary()
                     last_chunk: Optional[ChatCompletionModel] = None
 
                     async for chunk in self._client.llm.async_stream_generate(
                         chat,
-                        tools=tool_defs,
+                        tools=self._tools,
                         tool_choice=self._tool_choice,
                         **self._generate_kwargs,
                     ):
-                        # Accumulate tool calls from deltas
-                        if chunk.choices:
-                            delta = chunk.choices[0].delta
-                            if delta and delta.tool_calls:
-                                for tc in delta.tool_calls:
-                                    idx = tc.index if tc.index is not None else 0
-                                    if idx not in accumulated_tool_calls:
-                                        accumulated_tool_calls[idx] = {}
-                                    if tc.id:
-                                        accumulated_tool_calls[idx]["id"] = tc.id
-                                    if tc.function:
-                                        if "function" not in accumulated_tool_calls[idx]:
-                                            accumulated_tool_calls[idx]["function"] = {}
-                                        if tc.function.name:
-                                            accumulated_tool_calls[idx]["function"]["name"] = tc.function.name
-                                        if tc.function.arguments:
-                                            if "arguments" not in accumulated_tool_calls[idx]["function"]:
-                                                accumulated_tool_calls[idx]["function"]["arguments"] = ""
-                                            accumulated_tool_calls[idx]["function"]["arguments"] += tc.function.arguments
-                            if delta and delta.content:
-                                iteration_content.append(delta.content)
-
+                        accumulate_stream_chunk(summary, chunk)
                         yield chunk
                         last_chunk = chunk
 
-                    # Build synthetic response for adapter methods
+                    # Build a synthetic response from normalized engine/core stream summary.
                     if last_chunk is not None:
                         response = ModelChatResponse(
                             id=last_chunk.id or "stream-synthetic",
@@ -575,14 +562,10 @@ class AsyncAgentLoop:
                                     index=0,
                                     message=Message(
                                         role="assistant",
-                                        content="".join(iteration_content) if iteration_content else None,
+                                        content=summary.content if summary.content else None,
                                         tool_calls=None,
                                     ),
-                                    finish_reason=(
-                                        last_chunk.choices[0].finish_reason
-                                        if last_chunk.choices
-                                        else None
-                                    ),
+                                    finish_reason=summary.finish_reason,
                                 )
                             ],
                         )
@@ -618,32 +601,17 @@ class AsyncAgentLoop:
                             state=self.state,
                         )
 
-                        # Extract tool calls from accumulated data
-                        tool_calls = []
-                        for idx in sorted(accumulated_tool_calls.keys()):
-                            tc_data = accumulated_tool_calls[idx]
-                            func_data = tc_data.get("function", {})
-                            try:
-                                arguments = json.loads(func_data.get("arguments", "{}"))
-                            except (json.JSONDecodeError, TypeError):
-                                arguments = {}
-                            tool_calls.append(
-                                CanonicalToolCall(
-                                    id=tc_data.get("id", ""),
-                                    name=func_data.get("name", ""),
-                                    arguments=arguments,
-                                )
-                            )
+                        tool_calls = stream_summary_tool_calls(summary)
 
                         # Record content — runs for EVERY iteration (including final no-tool answer)
-                        if iteration_content and not tool_calls:
-                            iter_content = "".join(iteration_content)
+                        if summary.content and not tool_calls:
+                            iter_content = summary.content
                             chat.add_assistant_message(iter_content)
                             collected_content.append(iter_content)
                             self._state.messages = chat.messages  # State sync BEFORE break
 
                         # Check done — AFTER content recording
-                        if not tool_calls or self._adapter.is_finished(response):
+                        if not tool_calls or is_finished(self._provider, response):
                             break
 
                         # Add tool_call message (no speculative content)
@@ -665,7 +633,7 @@ class AsyncAgentLoop:
                             )
 
                         # Validate integrity
-                        self._adapter.validate_pair_integrity(chat)
+                        validate_tool_result_integrity(self._provider, chat)
 
                         # Hook: on_tool_start — invoke BEFORE execution for EACH tool call
                         for tc in tool_calls:
@@ -691,7 +659,7 @@ class AsyncAgentLoop:
                             results = await self._executor.execute_parallel_async(tool_calls)
 
                             # INVARIANT: inject results immediately — even partial results are valid
-                            self._adapter.serialize_tool_results(results, chat)
+                            append_tool_results(self._provider, chat, results)
                             self._state.messages = chat.messages
                         finally:
                             if heartbeat_task is not None:
@@ -711,7 +679,7 @@ class AsyncAgentLoop:
                             )
 
                         # Yield separator between iterations
-                        if iteration_content and self._content_separator and last_chunk:
+                        if summary.content and self._content_separator and last_chunk:
                             separator_chunk = ChatCompletionModel(
                                 id=f"separator-{self._state.step}",
                                 model=last_chunk.model,

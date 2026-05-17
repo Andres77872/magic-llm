@@ -1,11 +1,14 @@
-"""ToolAdapter protocol and ToolAdapterFactory for provider-specific tool serialization.
+"""Deprecated compatibility shims for provider-specific tool serialization.
 
 This module defines:
 - ToolAdapter: Runtime-checkable Protocol for provider-specific tool call
-  serialization/deserialization. This is the PUBLIC SDK-facing contract that
-  AgentLoop depends on.
+  serialization/deserialization. It remains for direct import compatibility.
 - ToolAdapterFactory: Factory that selects the appropriate ToolAdapter based
   on engine type, with auto-registration of builtin adapters.
+
+Canonical agent loops no longer depend on these adapters. Engine/core tooling
+in :mod:`magic_llm.engine.tooling` owns tool normalization, request mapping,
+response extraction, and tool-result injection.
 """
 
 from __future__ import annotations
@@ -18,10 +21,10 @@ from magic_llm.agent.types import CanonicalToolCall, ToolResult
 
 @runtime_checkable
 class ToolAdapter(Protocol):
-    """Protocol for provider-specific tool call serialization/deserialization.
+    """Deprecated compatibility protocol for provider-specific tooling.
 
-    This is the PUBLIC SDK-facing contract that AgentLoop depends on.
-    All provider-specific concerns are encapsulated in concrete implementations.
+    Agent loops use engine/core tooling directly; this protocol is retained for
+    callers that import concrete adapters themselves.
     """
 
     def serialize_tool_defs(self, tools: list[Any]) -> Any:
@@ -62,7 +65,7 @@ class ToolAdapter(Protocol):
 
 
 class ToolAdapterFactory:
-    """Factory that selects the appropriate ToolAdapter based on engine type."""
+    """Compatibility factory for deprecated ToolAdapter shims."""
 
     _registry: dict[str, type[ToolAdapter]] = {}
 
@@ -73,8 +76,10 @@ class ToolAdapterFactory:
 
     @classmethod
     def create(cls, engine_type: str) -> ToolAdapter:
-        """Create an adapter instance for the given engine type.
-        Falls back to OpenAIToolAdapter for unrecognized engines.
+        """Create a compatibility adapter instance for the given engine type.
+
+        Falls back to OpenAIToolAdapter for unknown direct callers only. Canonical
+        agent loops do not use this factory for tool request/response handling.
         """
         adapter_cls = cls._registry.get(engine_type)
         if adapter_cls is None:
@@ -112,7 +117,7 @@ def _register_builtin_adapters() -> None:
     ToolAdapterFactory.register("anthropic", AnthropicToolAdapter)
     ToolAdapterFactory.register("google", GeminiToolAdapter)
 
-    # OpenAI-compatible providers (all use OpenAIToolAdapter)
+    # OpenAI-compatible providers (all use OpenAIToolAdapter as compatibility shim)
     for provider in (
         "openrouter",
         "deepinfra",
@@ -127,14 +132,12 @@ def _register_builtin_adapters() -> None:
         "novita",
         "deepseek",
         "sambanova",
-        "azure",
-        "cloudflare",
-        "cohere",
     ):
         ToolAdapterFactory.register(provider, OpenAIToolAdapter)
 
-    # NOTE: "amazon" is NOT registered — it falls back to
-    # OpenAIToolAdapter. BedrockToolAdapter is OUT OF SCOPE.
+    # NOTE: azure/cloudflare/cohere/amazon package paths are intentionally not
+    # registered as tool-capable canonical paths. Engine/core guardrails handle
+    # those incomplete package-side wiring cases when tools are requested.
 
 
 # Auto-register adapters on import

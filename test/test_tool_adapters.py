@@ -456,8 +456,15 @@ class TestAnthropicValidatePairIntegrity:
                 {"id": "toolu_2", "function": {"name": "tool_b"}},
             ]
         )
-        chat.add_tool_result(tool_call_id="toolu_1", content="result_a")
-        chat.add_tool_result(tool_call_id="toolu_2", content="result_b")
+        chat.add_tool_messages([
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "result_a"},
+                    {"type": "tool_result", "tool_use_id": "toolu_2", "content": "result_b"},
+                ],
+            }
+        ])
 
         adapter = AnthropicToolAdapter()
         assert adapter.validate_pair_integrity(chat) is True
@@ -471,7 +478,14 @@ class TestAnthropicValidatePairIntegrity:
                 {"id": "toolu_2", "function": {"name": "tool_b"}},
             ]
         )
-        chat.add_tool_result(tool_call_id="toolu_1", content="result_a")
+        chat.add_tool_messages([
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "result_a"},
+                ],
+            }
+        ])
 
         adapter = AnthropicToolAdapter()
         assert adapter.validate_pair_integrity(chat) is False

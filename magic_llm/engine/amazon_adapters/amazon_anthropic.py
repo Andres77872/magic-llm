@@ -2,6 +2,7 @@ import json
 import time
 
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
+from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 from magic_llm.util.response_mapping import (
@@ -34,6 +35,7 @@ class ProviderAmazonAnthropic(AmazonBaseProvider):
         Note: This is for legacy Claude format via Bedrock. Image support
         would require updating to the Messages API format.
         """
+        guard_tools_supported('Amazon Bedrock Anthropic', kwargs.get('tools'), kwargs.get('tool_choice'))
         self._validate_vision_support(chat)
         body = json.dumps({
             "prompt": chat.generic_chat(format='claude'),

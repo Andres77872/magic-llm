@@ -1,17 +1,22 @@
-"""OpenAIToolAdapter — OpenAI-format tool serialization/deserialization.
+"""OpenAIToolAdapter — deprecated OpenAI-format compatibility shim.
 
 Handles OpenAI, Azure OpenAI, OpenRouter, and all OpenAI-compatible providers.
+Canonical agent loops use magic_llm.engine.tooling instead.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.agent.types import CanonicalToolCall, ToolResult
 from magic_llm.agent.tool_adapters import ToolAdapter
-from magic_llm.util.tools_mapping import map_to_openai, normalize_openai_tools
+from magic_llm.engine.tooling import (
+    append_tool_results,
+    extract_tool_calls,
+    map_request_tools,
+    validate_tool_result_integrity,
+)
 
 
 class OpenAIToolAdapter(ToolAdapter):
@@ -33,8 +38,7 @@ class OpenAIToolAdapter(ToolAdapter):
         """
         if not tools:
             return None
-        openai_tools, _ = map_to_openai(tools, tool_choice=None)
-        return openai_tools
+        return map_request_tools("openai", tools, tool_choice=None).tools
 
     def deserialize_tool_calls(
         self, response: ModelChatResponse
@@ -47,28 +51,7 @@ class OpenAIToolAdapter(ToolAdapter):
         Returns:
             List of CanonicalToolCall objects with parsed arguments.
         """
-        raw_calls = response.tool_calls
-        if not raw_calls:
-            return []
-
-        result = []
-        for tc in raw_calls:
-            if tc.function is None:
-                continue
-            # Parse arguments from JSON string to dict
-            try:
-                arguments = json.loads(tc.function.arguments)
-            except (json.JSONDecodeError, TypeError):
-                arguments = {}
-
-            result.append(
-                CanonicalToolCall(
-                    id=tc.id or "",
-                    name=tc.function.name,
-                    arguments=arguments,
-                )
-            )
-        return result
+        return extract_tool_calls(response)
 
     def serialize_tool_results(
         self, results: list[ToolResult], chat: ModelChat
@@ -82,12 +65,7 @@ class OpenAIToolAdapter(ToolAdapter):
             results: The list of tool execution results.
             chat: The ModelChat to mutate.
         """
-        for result in results:
-            chat.add_tool_result(
-                tool_call_id=result.tool_call_id or "",
-                content=result.content,
-                is_error=result.is_error,
-            )
+        append_tool_results("openai", chat, results)
 
     def is_finished(self, response: ModelChatResponse) -> bool:
         """Return True if the response indicates the loop should stop.
@@ -113,24 +91,4 @@ class OpenAIToolAdapter(ToolAdapter):
         Returns:
             True if all tool calls have matching results, False otherwise.
         """
-        # Collect all expected tool_call_ids from assistant messages
-        expected_ids: set[str] = set()
-        for msg in chat.messages:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                for tc in msg["tool_calls"]:
-                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                    if tc_id:
-                        expected_ids.add(tc_id)
-
-        if not expected_ids:
-            return True
-
-        # Collect all actual tool_call_ids from tool messages
-        actual_ids: set[str] = set()
-        for msg in chat.messages:
-            if msg.get("role") == "tool":
-                tc_id = msg.get("tool_call_id")
-                if tc_id:
-                    actual_ids.add(tc_id)
-
-        return expected_ids.issubset(actual_ids)
+        return validate_tool_result_integrity("openai", chat)

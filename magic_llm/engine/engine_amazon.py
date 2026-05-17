@@ -12,6 +12,7 @@ from magic_llm.engine.amazon_adapters import (
 )
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
 from magic_llm.engine.base_chat import BaseChat
+from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChatResponse, ModelChat
 from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
@@ -96,6 +97,11 @@ class EngineAmazon(BaseChat):
         - Anthropic (Bedrock): Legacy format, no image support
         - Meta: No image support
         """
+        guard_tools_supported(
+            'Amazon Bedrock',
+            kwargs.get('tools', self.kwargs.get('tools')),
+            kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
+        )
         body = self.provider.transform_request(chat, **kwargs)
         headers = {
             'accept': 'application/json',
@@ -150,6 +156,11 @@ class EngineAmazon(BaseChat):
         )
 
         # Build request body and SigV4-signed prepared request
+        guard_tools_supported(
+            'Amazon Bedrock',
+            kwargs.get('tools', self.kwargs.get('tools')),
+            kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
+        )
         body = self.provider.transform_request(chat, **kwargs)
         url = build_bedrock_url(region, self.model, stream=False)
         prepared = build_sigv4_prepared_request(
@@ -191,6 +202,11 @@ class EngineAmazon(BaseChat):
         )
 
         # Build request body and SigV4-signed URL/headers
+        guard_tools_supported(
+            'Amazon Bedrock',
+            kwargs.get('tools', self.kwargs.get('tools')),
+            kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
+        )
         body = self.provider.transform_request(chat, **kwargs)
         url = build_bedrock_url(region, self.model, stream=False)
         sigv4_headers = build_sigv4_headers(
@@ -227,6 +243,11 @@ class EngineAmazon(BaseChat):
         )
 
         # Build request body and SigV4-signed URL/headers
+        guard_tools_supported(
+            'Amazon Bedrock',
+            kwargs.get('tools', self.kwargs.get('tools')),
+            kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
+        )
         body = self.provider.transform_request(chat, **kwargs)
         url = build_bedrock_url(region, self.model, stream=True)
         sigv4_headers = build_sigv4_headers(
@@ -284,6 +305,11 @@ class EngineAmazon(BaseChat):
         )
 
         # Build request body and SigV4-signed prepared request
+        guard_tools_supported(
+            'Amazon Bedrock',
+            kwargs.get('tools', self.kwargs.get('tools')),
+            kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
+        )
         body = self.provider.transform_request(chat, **kwargs)
         url = build_bedrock_url(region, self.model, stream=True)
         prepared = build_sigv4_prepared_request(

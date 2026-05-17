@@ -5,12 +5,14 @@ import io
 import json
 import logging
 import mimetypes
+import os
 import time
 import wave
 from typing import Dict, Any, Tuple, Optional
 from urllib.parse import urlparse
 
 from magic_llm.engine.base_chat import BaseChat
+from magic_llm.engine.tooling import map_request_tools
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatResponse import ToolCall, FunctionCall, Choice, Message
@@ -29,6 +31,58 @@ from magic_llm.util.response_mapping import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _dump_payload(provider: "EngineGoogle", data: dict) -> str:
+    summary = {
+        "marker": "MAGIC_LLM_DEBUG_PAYLOAD",
+        "provider": provider.__class__.__name__,
+        "model": getattr(provider, "model", None),
+        "base_url": None,
+    }
+    contents = data.get("contents", [])
+    by_role: dict[str, int] = {}
+    last_fn_calls: list[str] = []
+    fn_results: list[str] = []
+    for c in contents:
+        role = c.get("role", "?")
+        by_role[role] = by_role.get(role, 0) + 1
+        for part in c.get("parts", []):
+            if isinstance(part, dict):
+                if "functionCall" in part:
+                    last_fn_calls.append(part["functionCall"].get("name", "?"))
+                if "functionResponse" in part:
+                    fn_results.append(part["functionResponse"].get("name", "?"))
+    summary["messages"] = {"total": len(contents), "by_role": by_role}
+    if last_fn_calls:
+        summary["last_assistant_function_calls"] = last_fn_calls
+    if fn_results:
+        summary["tool_results"] = fn_results[:5]
+    summary["tool_choice"] = data.get("toolConfig")
+    tools_raw = data.get("tools")
+    if tools_raw:
+        flat = []
+        for entry in tools_raw:
+            for fd in entry.get("functionDeclarations") or []:
+                flat.append({"name": fd.get("name", "?"), "has_description": bool(fd.get("description"))})
+        summary["tools"] = flat
+    return json.dumps(summary)
+
+
+def _dump_payload_full(provider: "EngineGoogle", data: dict) -> str:
+    """Full payload dump for diagnosis. Single-line JSON with stable marker."""
+    payload = {
+        "marker": "MAGIC_LLM_DEBUG_PAYLOAD_FULL",
+        "provider": provider.__class__.__name__,
+        "model": getattr(provider, "model", None),
+        "base_url": None,
+        "contents": data.get("contents"),
+        "tools": data.get("tools"),
+        "toolConfig": data.get("toolConfig"),
+        "systemInstruction": data.get("systemInstruction"),
+        "generationConfig": data.get("generationConfig"),
+    }
+    return json.dumps(payload, default=str)
 
 
 class EngineGoogle(BaseChat):
@@ -150,38 +204,28 @@ class EngineGoogle(BaseChat):
 
         # ----------------------- Final payload ---------------------------- #
         # Extract tools/tool_choice BEFORE building generationConfig (they are not JSON serializable)
-        openai_tools = kwargs.pop('tools', None) or self.kwargs.get('tools', None)
-        openai_tool_choice = kwargs.pop('tool_choice', None) or self.kwargs.get('tool_choice', None)
+        openai_tools = kwargs.pop('tools') if 'tools' in kwargs else self.kwargs.get('tools', None)
+        openai_tool_choice = kwargs.pop('tool_choice') if 'tool_choice' in kwargs else self.kwargs.get('tool_choice', None)
 
+        engine_kwargs = {k: v for k, v in self.kwargs.items() if k not in {'tools', 'tool_choice'}}
         data: dict = {
             "contents": api_contents,
-            "generationConfig": {**self.kwargs, **kwargs},
+            "generationConfig": {**engine_kwargs, **kwargs},
         }
         if preamble:
             data["systemInstruction"] = {"parts": [{"text": preamble}]}
 
-        if openai_tools is not None:
-            # Detect already-serialized Gemini tools from GeminiToolAdapter
-            # (format: [{"functionDeclarations": [...]}])
-            if (isinstance(openai_tools, list) and len(openai_tools) == 1
-                    and isinstance(openai_tools[0], dict)
-                    and "functionDeclarations" in openai_tools[0]):
-                # Already in Gemini format — pass through directly
-                data["tools"] = openai_tools
-                # Still map tool_choice if provided
-                if openai_tool_choice is not None:
-                    from magic_llm.util.tools_mapping import map_to_gemini
-                    _, gemini_tool_config = map_to_gemini(None, openai_tool_choice)
-                    if gemini_tool_config:
-                        data["toolConfig"] = gemini_tool_config
-            else:
-                # OpenAI format or raw callables — convert via map_to_gemini
-                from magic_llm.util.tools_mapping import map_to_gemini
-                gemini_tools, gemini_tool_config = map_to_gemini(openai_tools, openai_tool_choice)
-                if gemini_tools:
-                    data["tools"] = [{"functionDeclarations": gemini_tools}]
-                if gemini_tool_config:
-                    data["toolConfig"] = gemini_tool_config
+        request_tools = map_request_tools('google', openai_tools, openai_tool_choice)
+        if request_tools.tools:
+            data["tools"] = request_tools.tools
+        if request_tools.tool_choice:
+            data["toolConfig"] = request_tools.tool_choice
+
+        if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD"):
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", _dump_payload(self, data))
+
+        if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD_FULL"):
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", _dump_payload_full(self, data))
 
         json_bytes = json.dumps(data).encode("utf-8")
         return json_bytes, headers, data
@@ -293,41 +337,34 @@ class EngineGoogle(BaseChat):
 
         # ----------------------- Final payload ---------------------------- #
         # Extract tools/tool_choice BEFORE building generationConfig (they are not JSON serializable)
-        openai_tools = kwargs.pop('tools', None) or self.kwargs.get('tools', None)
-        openai_tool_choice = kwargs.pop('tool_choice', None) or self.kwargs.get('tool_choice', None)
+        openai_tools = kwargs.pop('tools') if 'tools' in kwargs else self.kwargs.get('tools', None)
+        openai_tool_choice = kwargs.pop('tool_choice') if 'tool_choice' in kwargs else self.kwargs.get('tool_choice', None)
 
+        engine_kwargs = {k: v for k, v in self.kwargs.items() if k not in {'tools', 'tool_choice'}}
         data: dict = {
             "contents": api_contents,
-            "generationConfig": {**self.kwargs, **kwargs},
+            "generationConfig": {**engine_kwargs, **kwargs},
         }
         if preamble:
             data["systemInstruction"] = {"parts": [{"text": preamble}]}
 
-        if openai_tools is not None:
-            # Detect already-serialized Gemini tools from GeminiToolAdapter
-            # (format: [{"functionDeclarations": [...]}])
-            if (isinstance(openai_tools, list) and len(openai_tools) == 1
-                    and isinstance(openai_tools[0], dict)
-                    and "functionDeclarations" in openai_tools[0]):
-                # Already in Gemini format — pass through directly
-                data["tools"] = openai_tools
-                # Still map tool_choice if provided
-                if openai_tool_choice is not None:
-                    from magic_llm.util.tools_mapping import map_to_gemini
-                    _, gemini_tool_config = map_to_gemini(None, openai_tool_choice)
-                    if gemini_tool_config:
-                        data["toolConfig"] = gemini_tool_config
-            else:
-                # OpenAI format or raw callables — convert via map_to_gemini
-                from magic_llm.util.tools_mapping import map_to_gemini
-                gemini_tools, gemini_tool_config = map_to_gemini(openai_tools, openai_tool_choice)
-                if gemini_tools:
-                    data["tools"] = [{"functionDeclarations": gemini_tools}]
-                if gemini_tool_config:
-                    data["toolConfig"] = gemini_tool_config
+        request_tools = map_request_tools('google', openai_tools, openai_tool_choice)
+        if request_tools.tools:
+            data["tools"] = request_tools.tools
+        if request_tools.tool_choice:
+            data["toolConfig"] = request_tools.tool_choice
+
+        if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD"):
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", _dump_payload(self, data))
+
+        if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD_FULL"):
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", _dump_payload_full(self, data))
 
         json_bytes = json.dumps(data).encode("utf-8")
         return json_bytes, headers, data
+
+
+
 
     # ═══════════════════════════════════════════════════════════════════
     # TRANSFORMATION METHODS

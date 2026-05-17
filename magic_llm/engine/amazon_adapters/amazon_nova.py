@@ -2,6 +2,7 @@ import json
 import time
 
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
+from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Choice, Message
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
@@ -33,6 +34,7 @@ class ProviderAmazonNova(AmazonBaseProvider):
         Note: Nova models support images via the content array format.
         Image support can be added by including image parts in messages.
         """
+        guard_tools_supported('Amazon Bedrock Nova', kwargs.get('tools'), kwargs.get('tool_choice'))
         m = chat.get_messages()
         for i in m:
             if (c := i.get('content')) and type(c) == str:

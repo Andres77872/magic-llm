@@ -526,8 +526,8 @@ class TestAsyncAgentLoopToolFunctions:
         """Both tools=[callable_a] and tool_functions={"custom_b": fn_b} are callable in async loop."""
         client = MagicMock()
         client.llm = MagicMock()
-        tc_a = _make_tool_call(id="call_a", name="tool_a")
-        tc_b = _make_tool_call(id="call_b", name="custom_b")
+        tc_a = _make_tool_call(id="call_a", name="tool_a", arguments="{}")
+        tc_b = _make_tool_call(id="call_b", name="custom_b", arguments='{"x": 1}')
 
         client.llm.async_generate = AsyncMock(
             side_effect=[
@@ -632,7 +632,7 @@ class TestAsyncAgentLoopToolFunctions:
         """tool_functions entry overrides callable with same __name__ in async loop."""
         client = MagicMock()
         client.llm = MagicMock()
-        tc = _make_tool_call(name="get_data")
+        tc = _make_tool_call(name="get_data", arguments="{}")
 
         client.llm.async_generate = AsyncMock(
             side_effect=[
@@ -667,11 +667,10 @@ class TestAsyncAgentLoopToolFunctions:
         async def run_and_check():
             response = await loop.run("test")
             assert response.content == "done"
-            serialize_call = adapter.serialize_tool_results.call_args
-            results = serialize_call[0][0]
-            assert len(results) == 1
-            assert "from_tool_functions" in results[0].content
-            assert "from_callable" not in results[0].content
+            tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+            assert len(tool_messages) == 1
+            assert "from_tool_functions" in tool_messages[0]["content"]
+            assert "from_callable" not in tool_messages[0]["content"]
 
         asyncio.run(run_and_check())
 
@@ -761,11 +760,8 @@ class TestAsyncAgentLoopToolFunctions:
 
             assert response.content == "Async weather is 22C."
             assert len(client.llm.calls) == 2
-            tool_def = client.llm.calls[0][1]["tools"][0]
-            assert tool_def["function"]["name"] == "get_weather_async"
-            assert tool_def["function"]["description"] == "Get async weather for a city."
-            properties = tool_def["function"]["parameters"]["properties"]
-            assert properties["city"]["type"] == "string"
+            assert client.llm.calls[0][1]["tools"] == [get_weather_async]
+            assert client.llm.calls[0][1]["tool_choice"] == "auto"
 
             second_messages = client.llm.calls[1][0]
             tool_messages = [m for m in second_messages if m.get("role") == "tool"]
@@ -819,12 +815,10 @@ class TestAsyncAgentLoopToolFunctions:
         async def run_and_check():
             response = await loop.run("test mismatch")
             assert response.content == "handled error"
-            serialize_call = adapter.serialize_tool_results.call_args
-            results = serialize_call[0][0]
-            assert len(results) == 1
-            assert results[0].is_error is True
-            assert "Unknown tool" in results[0].error
-            assert results[0].name == "schema_tool_name"
+            tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+            assert len(tool_messages) == 1
+            assert tool_messages[0]["is_error"] is True
+            assert tool_messages[0]["tool_call_id"] == "call_1"
 
         asyncio.run(run_and_check())
 
@@ -1433,6 +1427,7 @@ class TestAsyncAgentLoopStream:
             assert [chunk.id for chunk in chunks] == ["chunk-tool", "chunk-final"]
             assert chunks[-1].choices[0].delta.content == "Async stream weather used."
             assert len(client.llm.calls) == 2
+            assert client.llm.calls[0][1]["tools"] == [get_weather_async]
             second_messages = client.llm.calls[1][0]
             tool_messages = [m for m in second_messages if m.get("role") == "tool"]
             assert len(tool_messages) == 1

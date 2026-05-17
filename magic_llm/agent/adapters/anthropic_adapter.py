@@ -1,17 +1,22 @@
-"""AnthropicToolAdapter — Anthropic-format tool serialization/deserialization.
+"""AnthropicToolAdapter — deprecated Anthropic-format compatibility shim.
 
 Handles Anthropic Claude models with strict tool_use/tool_result pairing.
+Canonical agent loops use magic_llm.engine.tooling instead.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.agent.types import CanonicalToolCall, ToolResult
 from magic_llm.agent.tool_adapters import ToolAdapter
-from magic_llm.util.tools_mapping import map_to_anthropic, normalize_openai_tools
+from magic_llm.engine.tooling import (
+    append_tool_results,
+    extract_tool_calls,
+    map_request_tools,
+    validate_tool_result_integrity,
+)
 
 
 class AnthropicToolAdapter(ToolAdapter):
@@ -36,8 +41,7 @@ class AnthropicToolAdapter(ToolAdapter):
         """
         if not tools:
             return None
-        anthropic_tools, _ = map_to_anthropic(tools, tool_choice=None)
-        return anthropic_tools
+        return map_request_tools("anthropic", tools, tool_choice=None).tools
 
     def deserialize_tool_calls(
         self, response: ModelChatResponse
@@ -53,27 +57,7 @@ class AnthropicToolAdapter(ToolAdapter):
         Returns:
             List of CanonicalToolCall objects with parsed arguments.
         """
-        raw_calls = response.tool_calls
-        if not raw_calls:
-            return []
-
-        result = []
-        for tc in raw_calls:
-            if tc.function is None:
-                continue
-            try:
-                arguments = json.loads(tc.function.arguments)
-            except (json.JSONDecodeError, TypeError):
-                arguments = {}
-
-            result.append(
-                CanonicalToolCall(
-                    id=tc.id or "",
-                    name=tc.function.name,
-                    arguments=arguments,
-                )
-            )
-        return result
+        return extract_tool_calls(response)
 
     def serialize_tool_results(
         self, results: list[ToolResult], chat: ModelChat
@@ -91,28 +75,7 @@ class AnthropicToolAdapter(ToolAdapter):
         Raises:
             ValueError: If tool_use IDs are missing from the results.
         """
-        # Validate completeness before serialization
-        self._validate_completeness(results, chat)
-
-        # Build a single user message with all tool_result content blocks
-        content_blocks = []
-        for result in results:
-            content_blocks.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": result.tool_call_id or "",
-                    "content": result.content,
-                }
-            )
-
-        chat.add_tool_messages(
-            [
-                {
-                    "role": "user",
-                    "content": content_blocks,
-                }
-            ]
-        )
+        append_tool_results("anthropic", chat, results)
 
     def is_finished(self, response: ModelChatResponse) -> bool:
         """Return True if the response indicates the loop should stop.
@@ -140,35 +103,7 @@ class AnthropicToolAdapter(ToolAdapter):
         Returns:
             True if all tool_use IDs have matching results, False otherwise.
         """
-        # Find the last assistant message with tool_calls
-        last_assistant_tool_calls = None
-        for msg in reversed(chat.messages):
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                last_assistant_tool_calls = msg["tool_calls"]
-                break
-
-        if not last_assistant_tool_calls:
-            return True
-
-        # Collect expected tool_use IDs
-        expected_ids: set[str] = set()
-        for tc in last_assistant_tool_calls:
-            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-            if tc_id:
-                expected_ids.add(tc_id)
-
-        if not expected_ids:
-            return True
-
-        # Collect actual tool_call_ids from tool messages
-        actual_ids: set[str] = set()
-        for msg in chat.messages:
-            if msg.get("role") == "tool":
-                tc_id = msg.get("tool_call_id")
-                if tc_id:
-                    actual_ids.add(tc_id)
-
-        return expected_ids.issubset(actual_ids)
+        return validate_tool_result_integrity("anthropic", chat)
 
     def _validate_completeness(
         self, results: list[ToolResult], chat: ModelChat
@@ -184,36 +119,23 @@ class AnthropicToolAdapter(ToolAdapter):
         Raises:
             ValueError: If tool_use IDs are missing.
         """
-        # Find the last assistant message with tool_calls
-        last_assistant_tool_calls = None
-        for msg in reversed(chat.messages):
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                last_assistant_tool_calls = msg["tool_calls"]
-                break
-
-        if not last_assistant_tool_calls:
-            return
-
-        # Collect expected tool_use IDs
-        expected_ids: set[str] = set()
-        for tc in last_assistant_tool_calls:
-            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-            if tc_id:
-                expected_ids.add(tc_id)
-
-        if not expected_ids:
-            return
-
-        # Collect actual tool_call_ids from results
-        actual_ids: set[str] = set()
-        for result in results:
-            if result.tool_call_id:
-                actual_ids.add(result.tool_call_id)
-
-        # Check for missing IDs
-        missing = expected_ids - actual_ids
+        # Compatibility-only validation; canonical loops inject via engine tooling.
+        expected = _last_assistant_tool_call_ids(chat)
+        actual = {result.tool_call_id for result in results if result.tool_call_id}
+        missing = expected - actual
         if missing:
-            missing_str = ", ".join(sorted(missing))
             raise ValueError(
-                f"Incomplete tool results: missing tool_use_id(s): {missing_str}"
+                f"Incomplete tool results: missing tool_use_id(s): {', '.join(sorted(missing))}"
             )
+
+
+def _last_assistant_tool_call_ids(chat: ModelChat) -> set[str]:
+    for msg in reversed(chat.messages):
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            ids = set()
+            for tc in msg["tool_calls"]:
+                tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                if tc_id:
+                    ids.add(tc_id)
+            return ids
+    return set()

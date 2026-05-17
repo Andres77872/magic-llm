@@ -1,7 +1,8 @@
 import json
 import pytest
 
-from magic_llm.util.tools_mapping import (
+from magic_llm.exception.ChatException import ChatException
+from magic_llm.engine.tooling import (
     _extract_param_docs_from_docstring,
     _schema_from_callable,
     normalize_openai_tools,
@@ -10,6 +11,7 @@ from magic_llm.util.tools_mapping import (
     map_to_anthropic,
     coerce_tool_choice_to_string,
 )
+from magic_llm.util import tools_mapping as compat_tools_mapping
 
 
 FUNCTION_DEF_NEW = {
@@ -40,12 +42,11 @@ FUNCTION_DEF_LEGACY = {
 }
 
 
-def test_normalize_openai_tools_mixed_forms_and_invalids():
+def test_normalize_openai_tools_mixed_forms():
     tools = [
         FUNCTION_DEF_NEW,
         FUNCTION_DEF_LEGACY,
         None,
-        {"description": "missing name"},
     ]
     out = normalize_openai_tools(tools)
 
@@ -56,6 +57,22 @@ def test_normalize_openai_tools_mixed_forms_and_invalids():
         assert t["name"] == "get_weather"
         # parameters is a schema-like dict
         assert isinstance(t["parameters"], dict)
+
+
+def test_normalize_openai_tools_invalid_dict_fails_descriptively():
+    with pytest.raises(ChatException) as exc_info:
+        normalize_openai_tools([{"description": "missing name"}])
+
+    assert exc_info.value.error_code == "TOOL_NORMALIZATION_ERROR"
+    assert "Unsupported tool definition" in str(exc_info.value)
+    assert "missing tool name" in str(exc_info.value)
+
+
+def test_old_util_imports_delegate_to_engine_tooling():
+    """Compatibility wrapper remains, but engine/core owns the implementation."""
+
+    assert compat_tools_mapping.normalize_openai_tools is normalize_openai_tools
+    assert compat_tools_mapping.map_to_openai is map_to_openai
 
 
 def test_normalize_openai_tool_choice_variants():
@@ -160,6 +177,29 @@ def test_normalize_openai_tools_accepts_callable_and_schema_alias():
     assert "location" in callable_entry["parameters"]["properties"]
 
 
+def test_callable_name_docstring_type_hints_and_param_docs_from_engine_tooling():
+    def get_weather(city: str, days: int = 1) -> str:
+        """Get current weather.
+
+        Args:
+            city: City to inspect.
+            days: Forecast window in days.
+        """
+        return ""
+
+    out = normalize_openai_tools([get_weather])
+
+    tool = out[0]
+    assert tool["name"] == "get_weather"
+    assert tool["description"].startswith("Get current weather.")
+    params = tool["parameters"]
+    assert params["properties"]["city"]["type"] == "string"
+    assert params["properties"]["city"]["description"] == "City to inspect."
+    assert params["properties"]["days"]["type"] == "integer"
+    assert params["properties"]["days"]["description"] == "Forecast window in days."
+    assert params["required"] == ["city"]
+
+
 def test_normalize_openai_tools_accepts_pydantic_model():
     try:
         from pydantic import BaseModel
@@ -176,6 +216,33 @@ def test_normalize_openai_tools_accepts_pydantic_model():
     # name uses class name by default
     assert t0["name"] == "GetWeather"
     assert t0["parameters"]["type"] == "object"
+
+
+def test_pydantic_field_descriptions_and_nested_refs_are_preserved_by_engine_tooling():
+    try:
+        from pydantic import BaseModel, Field
+    except Exception:
+        pytest.skip("pydantic not available")
+
+    class Location(BaseModel):
+        """Location payload."""
+        city: str = Field(description="City name")
+
+    class ForecastRequest(BaseModel):
+        """Forecast request."""
+        location: Location
+        days: int = Field(description="Number of forecast days")
+
+    out = normalize_openai_tools([ForecastRequest])
+    params = out[0]["parameters"]
+
+    assert out[0]["name"] == "ForecastRequest"
+    assert "Forecast request" in out[0]["description"]
+    assert "$defs" not in params
+    assert "$ref" not in json.dumps(params)
+    assert params["properties"]["days"]["description"] == "Number of forecast days"
+    location = params["properties"]["location"]
+    assert location["properties"]["city"]["description"] == "City name"
 
 
 def test_map_to_openai_from_callable():

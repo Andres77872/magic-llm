@@ -4,6 +4,7 @@ import time
 from typing import Dict, Any, Tuple, Optional
 
 from magic_llm.engine.base_chat import BaseChat
+from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Message, Choice
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel
@@ -27,6 +28,11 @@ class EngineCohere(BaseChat):
         self.api_key = api_key
 
     def prepare_data(self, chat: ModelChat, **kwargs):
+        guard_tools_supported(
+            'Cohere',
+            kwargs.get('tools', self.kwargs.get('tools')),
+            kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
+        )
         headers = {
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {self.api_key}',

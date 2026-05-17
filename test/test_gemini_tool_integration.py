@@ -9,8 +9,8 @@ Gemini API responses:
 - Streaming tool loop: mock HttpClient.stream_request to yield SSE chunks
   including functionCall, assert loop continues and completes
 - Non-tool Gemini call unchanged: regression test for backward compatibility
-- Pre-serialized Gemini tools passthrough: engine detects already-Gemini-format
-  tools from GeminiToolAdapter and passes through without double-mapping
+- Raw Gemini tools: engine/core maps raw tools; canonical flow does not require
+  pre-serialized functionDeclarations from GeminiToolAdapter
 """
 
 import json
@@ -29,7 +29,6 @@ from magic_llm.model.ModelChatStream import (
 )
 from magic_llm.agent.agent_loop import AgentLoop
 from magic_llm.agent.types import AgentBudget
-from magic_llm.agent.adapters import GeminiToolAdapter
 from magic_llm.engine.engine_google import EngineGoogle
 
 
@@ -352,7 +351,7 @@ class TestGeminiNonToolRegression:
 
         def mock_generate(chat, **kwargs):
             # Verify no tools were passed
-            assert "tools" not in kwargs or kwargs.get("tools") is None
+            assert "tools" not in kwargs or kwargs.get("tools") in (None, [])
             return engine.process_generate(response)
 
         engine.generate = MagicMock(side_effect=mock_generate)
@@ -380,46 +379,37 @@ class TestGeminiNonToolRegression:
         assert "generationConfig" in data
 
 
-# ─── Test 4: Pre-serialized Gemini tools passthrough ───────────────────────
+# ─── Test 4: Raw Gemini tool mapping ───────────────────────────────────────
 
 
-class TestGeminiPreSerializedToolsPassthrough:
-    """Engine detects already-Gemini-format tools and passes through."""
+class TestGeminiRawToolMapping:
+    """Engine/core maps raw tools; adapter pre-serialization is not canonical."""
 
-    def test_pre_serialized_tools_passed_through(self):
-        """Tools already in [{"functionDeclarations": [...]}] format → used directly."""
+    def test_raw_callable_tools_mapped_by_engine_core(self):
+        """Raw callable tools → provider-correct functionDeclarations."""
         engine = EngineGoogle(api_key="test-key", model="gemini-2.5-flash")
         chat = ModelChat()
         chat.add_user_message("Weather?")
-
-        # Simulate what GeminiToolAdapter.serialize_tool_defs returns
-        adapter = GeminiToolAdapter()
 
         def get_weather(city: str) -> str:
             """Get weather."""
             return "sunny"
 
-        serialized = adapter.serialize_tool_defs([get_weather])
-
-        # This is what the agent loop passes to generate()
         json_bytes, headers, data = engine.prepare_data_sync(
-            chat, tools=serialized, tool_choice="auto"
+            chat, tools=[get_weather], tool_choice="auto"
         )
 
-        # Tools should be passed through directly (not double-mapped)
         assert "tools" in data
-        assert data["tools"] == serialized
-        # tool_choice should still be mapped
+        decls = data["tools"][0]["functionDeclarations"]
+        assert decls[0]["name"] == "get_weather"
         assert "toolConfig" in data
         assert data["toolConfig"] == {"functionCallingConfig": {"mode": "AUTO"}}
 
-    def test_pre_serialized_tools_with_named_choice(self):
-        """Pre-serialized tools + named tool_choice → correct toolConfig."""
+    def test_raw_tools_with_named_choice(self):
+        """Raw tools + named tool_choice → correct toolConfig."""
         engine = EngineGoogle(api_key="test-key", model="gemini-2.5-flash")
         chat = ModelChat()
         chat.add_user_message("Weather?")
-
-        adapter = GeminiToolAdapter()
 
         def get_weather(city: str) -> str:
             """Get weather."""
@@ -429,14 +419,13 @@ class TestGeminiPreSerializedToolsPassthrough:
             """Search."""
             return "found"
 
-        serialized = adapter.serialize_tool_defs([get_weather, search])
-
         json_bytes, headers, data = engine.prepare_data_sync(
-            chat, tools=serialized, tool_choice={"name": "get_weather"}
+            chat, tools=[get_weather, search], tool_choice={"name": "get_weather"}
         )
 
         assert "tools" in data
-        assert data["tools"] == serialized
+        names = [d["name"] for d in data["tools"][0]["functionDeclarations"]]
+        assert names == ["get_weather", "search"]
         assert data["toolConfig"] == {
             "functionCallingConfig": {
                 "mode": "ANY",
