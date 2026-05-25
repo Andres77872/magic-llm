@@ -2296,3 +2296,289 @@ class TestAsyncAgentLoopEngineTypeWarning:
             engine_type="anthropic",
         )
         assert "engine_type" not in loop._generate_kwargs
+
+
+# ─── Phase 6: Per-Iteration prompt_fragment Resolution ────────────────────
+
+
+class TestAsyncAgentLoopPerIterationPromptFragment:
+    """C10-C12: Prompt_fragment is resolved per iteration, not once at init.
+
+    These tests verify the key behavioral change: callable prompt_fragment
+    is re-resolved before each LLM call, so document state mutations (or
+    any dynamic content) are reflected in each iteration's system prompt.
+    """
+
+    def test_run_callable_pf_called_per_iteration(self):
+        """C10: Callable prompt_fragment is called once per run() iteration."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        tc = _make_tool_call(id="call_1", name="get_weather")
+
+        # Two iterations: first with tool calls, second with final answer
+        client.llm.async_generate = AsyncMock(
+            side_effect=[
+                _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls"),
+                _make_response(content="done", finish_reason="stop"),
+            ]
+        )
+
+        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
+        adapter.is_finished.side_effect = [False, True]
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        # Callable PF that tracks invocation count
+        call_count = [0]
+
+        def counting_pf() -> str:
+            call_count[0] += 1
+            return f"Doc state version {call_count[0]}"
+
+        def get_weather():
+            return {"temp": 22}
+
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[get_weather],
+            adapter=adapter,
+            prompt_fragment=counting_pf,
+        )
+
+        async def run_and_check():
+            await loop.run("weather?", system_prompt="You are helpful.")
+            # PF should have been called once per iteration (2 iterations)
+            assert call_count[0] == 2, (
+                f"Expected 2 PF calls (one per iteration), got {call_count[0]}"
+            )
+
+        asyncio.run(run_and_check())
+
+    def test_stream_callable_pf_called_per_iteration(self):
+        """C11: Callable prompt_fragment is called once per stream() iteration."""
+        client = MagicMock()
+        client.llm = MagicMock()
+
+        from magic_llm.model.ModelChatStream import (
+            ToolCall as StreamToolCall,
+            FunctionCall as StreamFunctionCall,
+        )
+
+        # Iteration 1: tool call
+        chunks_iter0 = [
+            ChatCompletionModel(
+                id="chunk-0",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content="thinking"),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            )
+        ]
+        chunks_iter0[0].choices[0].delta.tool_calls = [
+            StreamToolCall(
+                index=0, id="call_1",
+                function=StreamFunctionCall(name="get_weather", arguments="{}"),
+            )
+        ]
+
+        # Iteration 2: final answer
+        chunks_iter1 = [
+            ChatCompletionModel(
+                id="chunk-1",
+                model="test-model",
+                choices=[
+                    ChoiceModel(
+                        index=0,
+                        delta=DeltaModel(content="done"),
+                        finish_reason="stop",
+                    )
+                ],
+            )
+        ]
+
+        iter_count = [0]
+
+        async def async_gen(*args, **kwargs):
+            iter_count[0] += 1
+            if iter_count[0] == 1:
+                for chunk in chunks_iter0:
+                    yield chunk
+            else:
+                for chunk in chunks_iter1:
+                    yield chunk
+
+        client.llm.async_stream_generate = async_gen
+
+        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
+        adapter.is_finished.side_effect = [False, True]
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        # Callable PF that tracks invocation count
+        call_count = [0]
+
+        def counting_pf() -> str:
+            call_count[0] += 1
+            return f"Doc state version {call_count[0]}"
+
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[lambda: None],
+            adapter=adapter,
+            prompt_fragment=counting_pf,
+        )
+
+        async def collect_and_check():
+            async for _ in loop.stream("hello"):
+                pass
+            # PF should have been called once per iteration (2 iterations)
+            assert call_count[0] == 2, (
+                f"Expected 2 PF calls (one per iteration), got {call_count[0]}"
+            )
+
+        asyncio.run(collect_and_check())
+
+    def test_run_callable_pf_sees_different_values_per_iteration(self):
+        """C12: Each iteration's PF call can return different content."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        tc = _make_tool_call(id="call_1", name="get_weather")
+
+        # Capture the system messages seen by each LLM call
+        captured_system_messages: list[str] = []
+
+        async def async_gen_capture(chat, **kwargs):
+            for msg in chat.messages:
+                if msg.get("role") == "system":
+                    captured_system_messages.append(msg["content"])
+                    break
+            return _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls")
+
+        client.llm.async_generate = AsyncMock(
+            side_effect=[
+                _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls"),
+                _make_response(content="done", finish_reason="stop"),
+            ]
+        )
+
+        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
+        adapter.is_finished.side_effect = [False, True]
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        # Stateful PF that simulates document version changes
+        doc_state = {"version": 1}
+
+        def doc_pf() -> str:
+            v = doc_state["version"]
+            doc_state["version"] += 1
+            return f"Document version {v}"
+
+        # Simulate tool that updates doc_ref
+        def get_weather():
+            return {"temp": 22}
+
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[get_weather],
+            adapter=adapter,
+            prompt_fragment=doc_pf,
+        )
+
+        async def run_and_check():
+            await loop.run("weather?", system_prompt="You are helpful.")
+
+        asyncio.run(run_and_check())
+
+    def test_static_prompt_fragment_backward_compat(self):
+        """Static prompt_fragment still works identically in multi-iteration run()."""
+        client = MagicMock()
+        client.llm = MagicMock()
+        tc = _make_tool_call(id="call_1", name="get_weather")
+
+        client.llm.async_generate = AsyncMock(
+            side_effect=[
+                _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls"),
+                _make_response(content="done", finish_reason="stop"),
+            ]
+        )
+
+        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
+        adapter = MagicMock(spec=ToolAdapter)
+        adapter.serialize_tool_defs.return_value = None
+        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
+        adapter.is_finished.side_effect = [False, True]
+        adapter.extract_final_text.return_value = ""
+        adapter.validate_pair_integrity.return_value = True
+        adapter.serialize_tool_results.return_value = None
+
+        captured_first: list[str] = []
+        captured_second: list[str] = []
+        call_idx = [0]
+
+        async def capturing_gen(chat, **kwargs):
+            idx = call_idx[0]
+            call_idx[0] += 1
+            for msg in chat.messages:
+                if msg.get("role") == "system":
+                    if idx == 0:
+                        captured_first.append(msg["content"])
+                    else:
+                        captured_second.append(msg["content"])
+                    break
+            return _make_response(
+                content=None if idx == 0 else "done",
+                tool_calls=[tc] if idx == 0 else None,
+                finish_reason="tool_calls" if idx == 0 else "stop",
+            )
+
+        client.llm.async_generate = capturing_gen
+
+        tool_calls_iter1 = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
+        adapter2 = MagicMock(spec=ToolAdapter)
+        adapter2.serialize_tool_defs.return_value = None
+        adapter2.deserialize_tool_calls.side_effect = [tool_calls_iter1, []]
+        adapter2.is_finished.side_effect = [False, True]
+        adapter2.extract_final_text.return_value = ""
+        adapter2.validate_pair_integrity.return_value = True
+        adapter2.serialize_tool_results.return_value = None
+
+        def get_weather():
+            return {"temp": 22}
+
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+        loop = AsyncAgentLoop(
+            client,
+            tools=[get_weather],
+            adapter=adapter2,
+            prompt_fragment="Static context.",
+        )
+
+        async def run_and_check():
+            await loop.run("test", system_prompt="You are helpful.")
+            # Both iterations should have the same static PF
+            assert len(captured_first) == 1
+            assert len(captured_second) == 1
+            assert captured_first[0] == "Static context.\n\nYou are helpful."
+            assert captured_second[0] == "Static context.\n\nYou are helpful."
+
+        asyncio.run(run_and_check())

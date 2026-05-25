@@ -233,4 +233,190 @@ def test_anthropic_engine_prepare_data_accepts_callable_and_pydantic(chat_simple
 
     assert isinstance(body.get("tools"), list) and len(body["tools"]) >= 1
     # First tool is callable get_weather
-    assert any(t.get("name") == "get_weather" and "input_schema" in t for t in body["tools"]) 
+    assert any(t.get("name") == "get_weather" and "input_schema" in t for t in body["tools"])
+
+
+# ─── Task: max_tokens → max_completion_tokens for official OpenAI ─────
+
+@pytest.mark.parametrize("base_url,expect_rename", [
+    ("https://api.openai.com/v1", True),
+    ("https://api.openai.com/v1/", True),
+    ("https://API.OPENAI.COM/v1", True),
+    ("https://api.openai.com", True),
+    ("https://api.openai.com/", True),
+    ("https://api.openai.com/v1/models", False),
+    ("https://api.groq.com/openai/v1", False),
+    ("https://api.deepinfra.com/v1/openai", False),
+    ("https://openrouter.ai/api/v1", False),
+])
+def test_openai_max_tokens_rename(chat_simple, base_url, expect_rename):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-5.4", base_url=base_url)
+    body_bytes, _ = prov.transform_request(chat_simple, max_tokens=512)
+    body = _decode_body(body_bytes)
+    if expect_rename:
+        assert "max_tokens" not in body, f"Expected max_tokens removed for {base_url}"
+        assert body.get("max_completion_tokens") == 512, f"Expected max_completion_tokens=512 for {base_url}"
+    else:
+        assert body.get("max_tokens") == 512, f"Expected max_tokens preserved for {base_url}"
+        assert "max_completion_tokens" not in body, f"Expected no max_completion_tokens for {base_url}"
+
+
+def test_openai_max_completion_tokens_already_present_not_overwritten(chat_simple):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-5.4", base_url="https://api.openai.com/v1")
+    body_bytes, _ = prov.transform_request(chat_simple, max_tokens=512, max_completion_tokens=1024)
+    body = _decode_body(body_bytes)
+    assert body.get("max_completion_tokens") == 1024, "Existing max_completion_tokens must not be overwritten"
+    assert "max_tokens" not in body, "max_tokens must be removed when max_completion_tokens already set"
+
+
+def test_openai_streaming_renames_max_tokens_and_adds_stream_options(chat_simple):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-5.4", base_url="https://api.openai.com/v1")
+    body_bytes, _ = prov.transform_request(chat_simple, max_tokens=512, stream=True)
+    body = _decode_body(body_bytes)
+    assert "max_tokens" not in body
+    assert body.get("max_completion_tokens") == 512
+    assert body.get("stream_options") == {"include_usage": True}
+
+
+def test_openai_non_streaming_no_max_tokens_no_op(chat_simple):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-5.4", base_url="https://api.openai.com/v1")
+    body_bytes, _ = prov.transform_request(chat_simple, temperature=0.5)
+    body = _decode_body(body_bytes)
+    assert "max_tokens" not in body
+    assert "max_completion_tokens" not in body
+    assert body.get("temperature") == 0.5
+
+
+def test_non_openai_provider_keeps_max_tokens(chat_simple):
+    from magic_llm.engine.openai_adapters import ProviderGroq
+    prov = ProviderGroq(api_key="gsk-xxx", model="mixtral-8x7b-32768")
+    body_bytes, _ = prov.transform_request(chat_simple, max_tokens=512)
+    body = _decode_body(body_bytes)
+    assert body.get("max_tokens") == 512
+    assert "max_completion_tokens" not in body 
+
+
+# ─── json_output/json_mode → response_format mapping ───────────────────
+
+
+def test_openai_json_output_true_adds_response_format(chat_simple):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-4o")
+    body_bytes, _ = prov.prepare_data(chat_simple, json_output=True)
+    body = _decode_body(body_bytes)
+    assert "json_output" not in body, "json_output must be stripped"
+    assert body.get("response_format") == {"type": "json_object"}, (
+        "json_output=True must map to response_format=json_object"
+    )
+
+
+def test_openai_json_mode_true_adds_response_format(chat_simple):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-4o")
+    body_bytes, _ = prov.prepare_data(chat_simple, json_mode=True)
+    body = _decode_body(body_bytes)
+    assert "json_mode" not in body, "json_mode must be stripped"
+    assert body.get("response_format") == {"type": "json_object"}, (
+        "json_mode=True must map to response_format=json_object"
+    )
+
+
+def test_openai_json_output_false_stripped_no_response_format(chat_simple):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-4o")
+    body_bytes, _ = prov.prepare_data(chat_simple, json_output=False)
+    body = _decode_body(body_bytes)
+    assert "json_output" not in body, "json_output=False must be stripped"
+    assert "response_format" not in body, (
+        "json_output=False must NOT add response_format"
+    )
+
+
+def test_openai_json_mode_false_stripped_no_response_format(chat_simple):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-4o")
+    body_bytes, _ = prov.prepare_data(chat_simple, json_mode=False)
+    body = _decode_body(body_bytes)
+    assert "json_mode" not in body, "json_mode=False must be stripped"
+    assert "response_format" not in body, (
+        "json_mode=False must NOT add response_format"
+    )
+
+
+def test_openai_json_output_true_from_constructor_adds_response_format(chat_simple):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-4o", json_output=True)
+    body_bytes, _ = prov.prepare_data(chat_simple)
+    body = _decode_body(body_bytes)
+    assert "json_output" not in body, "json_output from constructor must be stripped"
+    assert body.get("response_format") == {"type": "json_object"}, (
+        "json_output=True from constructor must map to response_format"
+    )
+
+
+def test_openai_json_mode_true_from_constructor_adds_response_format(chat_simple):
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-4o", json_mode=True)
+    body_bytes, _ = prov.prepare_data(chat_simple)
+    body = _decode_body(body_bytes)
+    assert "json_mode" not in body, "json_mode from constructor must be stripped"
+    assert body.get("response_format") == {"type": "json_object"}, (
+        "json_mode=True from constructor must map to response_format"
+    )
+
+
+def test_openai_preserves_explicit_response_format(chat_simple):
+    rf = {"type": "json_object"}
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-4o")
+    body_bytes, _ = prov.prepare_data(chat_simple, response_format=rf)
+    body = _decode_body(body_bytes)
+    assert body.get("response_format") == rf, "explicit response_format must be preserved"
+
+
+def test_openai_json_output_true_does_not_overwrite_explicit_response_format(chat_simple):
+    rf = {"type": "json_schema", "json_schema": {"name": "test", "strict": True, "schema": {"type": "object"}}}
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-4o")
+    body_bytes, _ = prov.prepare_data(chat_simple, json_output=True, response_format=rf)
+    body = _decode_body(body_bytes)
+    assert "json_output" not in body, "json_output stripped even with response_format present"
+    assert body.get("response_format") == rf, "explicit response_format must NOT be overwritten"
+
+
+def test_openai_json_mode_true_does_not_overwrite_explicit_response_format(chat_simple):
+    rf = {"type": "json_schema", "json_schema": {"name": "test", "strict": True, "schema": {"type": "object"}}}
+    prov = ProviderOpenAI(api_key="sk-xxx", model="gpt-4o")
+    body_bytes, _ = prov.prepare_data(chat_simple, json_mode=True, response_format=rf)
+    body = _decode_body(body_bytes)
+    assert "json_mode" not in body, "json_mode stripped even with response_format present"
+    assert body.get("response_format") == rf, "explicit response_format must NOT be overwritten"
+
+
+def test_deepinfra_json_output_true_adds_response_format(chat_simple):
+    prov = ProviderDeepInfra(api_key="sk-xxx", model="meta-llama/Meta-Llama-3.1-70B-Instruct")
+    body_bytes, _ = prov.prepare_data(chat_simple, json_output=True, json_mode=True)
+    body = _decode_body(body_bytes)
+    assert "json_output" not in body, "DeepInfra: json_output must be stripped"
+    assert "json_mode" not in body, "DeepInfra: json_mode must be stripped"
+    assert body.get("response_format") == {"type": "json_object"}, (
+        "DeepInfra: json_output=True must map to response_format"
+    )
+
+
+def test_deepinfra_json_output_true_from_constructor_adds_response_format(chat_simple):
+    prov = ProviderDeepInfra(
+        api_key="sk-xxx",
+        model="meta-llama/Meta-Llama-3.1-70B-Instruct",
+        json_output=True,
+        json_mode=True,
+    )
+    body_bytes, _ = prov.prepare_data(chat_simple)
+    body = _decode_body(body_bytes)
+    assert "json_output" not in body, "DeepInfra: json_output from constructor must be stripped"
+    assert "json_mode" not in body, "DeepInfra: json_mode from constructor must be stripped"
+    assert body.get("response_format") == {"type": "json_object"}, (
+        "DeepInfra: json_output=True from constructor must map to response_format"
+    )
+
+
+def test_sambanova_json_output_true_adds_response_format_via_base_class(chat_simple):
+    prov = ProviderSambaNova(api_key="sk-xxx", model="Meta-Llama-3.1-8B-Instruct")
+    body_bytes, _ = prov.prepare_data(chat_simple, json_output=True)
+    body = _decode_body(body_bytes)
+    assert "json_output" not in body, "SambaNova (via base): json_output must be stripped"
+    assert body.get("response_format") == {"type": "json_object"}, (
+        "SambaNova (via base): json_output=True must map to response_format"
+    )

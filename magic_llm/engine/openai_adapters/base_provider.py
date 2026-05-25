@@ -181,6 +181,12 @@ class OpenAiBaseProvider(ABC):
             data.pop('callback')
         if 'fallback' in data:
             data.pop('fallback')
+        if data.pop('json_output', False):
+            if 'response_format' not in data:
+                data['response_format'] = {"type": "json_object"}
+        if data.pop('json_mode', False):
+            if 'response_format' not in data:
+                data['response_format'] = {"type": "json_object"}
 
         request_tools = map_request_tools('openai', data.get('tools'), data.get('tool_choice'))
         if request_tools.tools is not None:

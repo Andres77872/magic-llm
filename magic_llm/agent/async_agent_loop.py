@@ -103,6 +103,8 @@ class AsyncAgentLoop:
     ) -> None:
         self._client = client
         self._prompt_fragment = prompt_fragment
+        # Base system prompt WITHOUT fragment — used for per-iteration resolution
+        self._base_system_prompt: Optional[str] = None
 
         # Store tools for registration at run time
         self._tools = tools or []
@@ -227,22 +229,22 @@ class AsyncAgentLoop:
             RuntimeError: If called while the loop is already running.
             AgentBudgetExceeded: If any budget constraint is violated.
         """
-        # INIT: Resolve prompt_fragment and prepend to system prompt (C3)
-        pf = self._resolve_prompt_fragment(**self._generate_kwargs)
-        if pf:
-            system_prompt = (
-                f"{pf}\n\n{system_prompt}".strip()
-                if system_prompt
-                else pf
-            )
-
-        # Build initial chat
+        # Build initial chat — NO prompt_fragment prepended at init
         chat = _build_initial_chat(
             user_input=user_input,
             system_prompt=system_prompt,
             extra_messages=extra_messages,
             initial_chat=initial_chat,
         )
+
+        # Capture the base system prompt WITHOUT prompt_fragment from the chat.
+        # This covers all cases: system_prompt param, initial_chat system,
+        # or the merged combination of both (from _build_initial_chat).
+        self._base_system_prompt = None
+        for msg in chat.messages:
+            if msg.get("role") == "system":
+                self._base_system_prompt = msg["content"]
+                break
 
         # Register tools
         _register_tools_with_executor(
@@ -299,6 +301,30 @@ class AsyncAgentLoop:
                         self.state,
                         state=self.state,
                     )
+
+                    # Resolve prompt_fragment per-iteration and inject into system message.
+                    # Prepend the resolved PF to the base system prompt so the agent
+                    # sees fresh document context (e.g., updated doc JSON) each turn.
+                    if self._prompt_fragment is not None:
+                        pf = self._resolve_prompt_fragment(**self._generate_kwargs)
+                        if pf:
+                            iteration_system = (
+                                f"{pf}\n\n{self._base_system_prompt}".strip()
+                                if self._base_system_prompt
+                                else pf
+                            )
+                            # Find or create system message
+                            sys_idx = None
+                            for i, msg in enumerate(chat.messages):
+                                if msg.get("role") == "system":
+                                    sys_idx = i
+                                    break
+                            if sys_idx is not None:
+                                chat.messages[sys_idx]["content"] = iteration_system
+                            else:
+                                chat.messages.insert(
+                                    0, {"role": "system", "content": iteration_system}
+                                )
 
                     # Step 2: LLM_CALL (async) — pass raw tools to engine/core tooling.
                     response = await self._client.llm.async_generate(
@@ -457,22 +483,22 @@ class AsyncAgentLoop:
             RuntimeError: If called while the loop is already running.
             TypeError: If used with sync iteration (for in ...).
         """
-        # INIT: Resolve prompt_fragment and prepend to system prompt (C3)
-        pf = self._resolve_prompt_fragment(**self._generate_kwargs)
-        if pf:
-            system_prompt = (
-                f"{pf}\n\n{system_prompt}".strip()
-                if system_prompt
-                else pf
-            )
-
-        # Build initial chat
+        # Build initial chat — NO prompt_fragment prepended at init
         chat = _build_initial_chat(
             user_input=user_input,
             system_prompt=system_prompt,
             extra_messages=extra_messages,
             initial_chat=initial_chat,
         )
+
+        # Capture the base system prompt WITHOUT prompt_fragment from the chat.
+        # This covers all cases: system_prompt param, initial_chat system,
+        # or the merged combination of both (from _build_initial_chat).
+        self._base_system_prompt = None
+        for msg in chat.messages:
+            if msg.get("role") == "system":
+                self._base_system_prompt = msg["content"]
+                break
 
         # Register tools
         _register_tools_with_executor(
@@ -534,6 +560,28 @@ class AsyncAgentLoop:
                         self.state,
                         state=self.state,
                     )
+
+                    # Resolve prompt_fragment per-iteration and inject into system message
+                    if self._prompt_fragment is not None:
+                        pf = self._resolve_prompt_fragment(**self._generate_kwargs)
+                        if pf:
+                            iteration_system = (
+                                f"{pf}\n\n{self._base_system_prompt}".strip()
+                                if self._base_system_prompt
+                                else pf
+                            )
+                            # Update the system message (search for existing system msg)
+                            sys_idx = None
+                            for i, msg in enumerate(chat.messages):
+                                if msg.get("role") == "system":
+                                    sys_idx = i
+                                    break
+                            if sys_idx is not None:
+                                chat.messages[sys_idx]["content"] = iteration_system
+                            else:
+                                chat.messages.insert(
+                                    0, {"role": "system", "content": iteration_system}
+                                )
 
                     # Stream from LLM (async). Engine/provider chunks are already
                     # normalized; the loop accumulates via engine/core summary only.
