@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
 
 from magic_llm import MagicLLM
+from magic_llm.agent import config as agent_config
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Choice, Message, UsageModel
 from magic_llm.model.ModelChatStream import (
@@ -39,6 +40,13 @@ from magic_llm.agent._loop_shared import (
     _invoke_hook_safely,
     _register_tools_with_executor,
 )
+
+
+@pytest.fixture(autouse=True)
+def restore_builtin_todo_tools_flag():
+    original = agent_config.ENABLE_BUILTIN_TODO_TOOLS
+    yield
+    agent_config.ENABLE_BUILTIN_TODO_TOOLS = original
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
@@ -67,6 +75,10 @@ def _make_tool_call(id="call_1", name="get_weather",
     """Build a valid ToolCall."""
     from magic_llm.model.ModelChatResponse import ToolCall, FunctionCall
     return ToolCall(id=id, function=FunctionCall(name=name, arguments=arguments))
+
+
+def _todo(todo_id=1, content="Do work", status="in_progress", priority="high"):
+    return {"id": todo_id, "content": content, "status": status, "priority": priority}
 
 
 def _make_mock_adapter(is_finished=True, tool_calls=None):
@@ -208,6 +220,192 @@ class TestAsyncAgentLoopRun:
             response = await loop.run("hello")
             assert client.llm.async_generate.call_count == 1
             assert response.content == "hello world"
+
+        asyncio.run(run_and_check())
+
+
+class TestAsyncAgentLoopBuiltinTodoTools:
+    def test_async_builtin_schemas_are_injected_by_default(self):
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+
+        client = MagicMock()
+        client.llm = MagicMock()
+        loop = AsyncAgentLoop(client, tools=[])
+
+        assert [tool["function"]["name"] for tool in loop._tools[:2]] == [
+            "todowrite",
+            "todoread",
+        ]
+
+    def test_async_builtin_write_read_and_state_persistence(self):
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.async_generate = AsyncMock(
+            side_effect=[
+                _make_response(
+                    tool_calls=[
+                        _make_tool_call(
+                            id="write_1",
+                            name="todowrite",
+                            arguments=json.dumps({"todos": [_todo()]}),
+                        )
+                    ],
+                    finish_reason="tool_calls",
+                ),
+                _make_response(
+                    tool_calls=[_make_tool_call(id="read_1", name="todoread", arguments="{}")],
+                    finish_reason="tool_calls",
+                ),
+                _make_response(content="done", finish_reason="stop"),
+            ]
+        )
+
+        async def run_and_check():
+            loop = AsyncAgentLoop(client, tools=[], budget=AgentBudget(max_iterations=5))
+            response = await loop.run("track")
+            assert response.content == "done"
+            tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+            assert json.loads(tool_messages[0]["content"]) == {"ok": True, "todos": [_todo()]}
+            assert json.loads(tool_messages[1]["content"]) == {"ok": True, "todos": [_todo()]}
+
+        asyncio.run(run_and_check())
+
+    def test_async_separate_runs_start_empty(self):
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+
+        async def run_and_check():
+            client_a = MagicMock()
+            client_a.llm = MagicMock()
+            client_a.llm.async_generate = AsyncMock(
+                side_effect=[
+                    _make_response(
+                        tool_calls=[
+                            _make_tool_call(
+                                id="write_a",
+                                name="todowrite",
+                                arguments=json.dumps({"todos": [_todo(4, "A")]}),
+                            )
+                        ],
+                        finish_reason="tool_calls",
+                    ),
+                    _make_response(content="done", finish_reason="stop"),
+                ]
+            )
+            await AsyncAgentLoop(client_a, tools=[]).run("first")
+
+            client_b = MagicMock()
+            client_b.llm = MagicMock()
+            client_b.llm.async_generate = AsyncMock(
+                side_effect=[
+                    _make_response(
+                        tool_calls=[_make_tool_call(id="read_b", name="todoread", arguments="{}")],
+                        finish_reason="tool_calls",
+                    ),
+                    _make_response(content="done", finish_reason="stop"),
+                ]
+            )
+            loop_b = AsyncAgentLoop(client_b, tools=[])
+            await loop_b.run("second")
+            tool_messages = [m for m in loop_b.state.messages if m.get("role") == "tool"]
+            assert json.loads(tool_messages[0]["content"]) == {"ok": True, "todos": []}
+
+        asyncio.run(run_and_check())
+
+    def test_async_reusing_same_loop_starts_next_run_empty(self):
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+
+        async def run_and_check():
+            client = MagicMock()
+            client.llm = MagicMock()
+            loop = AsyncAgentLoop(client, tools=[])
+
+            client.llm.async_generate = AsyncMock(
+                side_effect=[
+                    _make_response(
+                        tool_calls=[
+                            _make_tool_call(
+                                id="write_1",
+                                name="todowrite",
+                                arguments=json.dumps({"todos": [_todo(9, "First run")]}),
+                            )
+                        ],
+                        finish_reason="tool_calls",
+                    ),
+                    _make_response(content="done", finish_reason="stop"),
+                ]
+            )
+            await loop.run("first")
+
+            client.llm.async_generate = AsyncMock(
+                side_effect=[
+                    _make_response(
+                        tool_calls=[_make_tool_call(id="read_2", name="todoread", arguments="{}")],
+                        finish_reason="tool_calls",
+                    ),
+                    _make_response(content="done", finish_reason="stop"),
+                ]
+            )
+            await loop.run("second")
+
+            tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+            assert json.loads(tool_messages[0]["content"]) == {"ok": True, "todos": []}
+
+        asyncio.run(run_and_check())
+
+    def test_async_disable_removes_builtin_schemas_and_callables(self):
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+
+        agent_config.disable_builtin_todo_tools()
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.async_generate = AsyncMock(
+            side_effect=[
+                _make_response(
+                    tool_calls=[_make_tool_call(id="read_1", name="todoread", arguments="{}")],
+                    finish_reason="tool_calls",
+                ),
+                _make_response(content="done", finish_reason="stop"),
+            ]
+        )
+
+        async def run_and_check():
+            loop = AsyncAgentLoop(client, tools=[])
+            await loop.run("try")
+            assert loop._tools == []
+            tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+            assert tool_messages[0]["is_error"] is True
+            assert tool_messages[0]["content"] == ""
+
+        asyncio.run(run_and_check())
+
+    def test_async_exact_todoread_collision_warns_and_user_tool_wins(self, caplog):
+        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
+
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.async_generate = AsyncMock(
+            side_effect=[
+                _make_response(
+                    tool_calls=[_make_tool_call(id="read_1", name="todoread", arguments="{}")],
+                    finish_reason="tool_calls",
+                ),
+                _make_response(content="done", finish_reason="stop"),
+            ]
+        )
+
+        def todoread():
+            return {"user": True}
+
+        async def run_and_check():
+            with caplog.at_level("WARNING"):
+                loop = AsyncAgentLoop(client, tools=[todoread])
+                await loop.run("read")
+            assert "todoread" in caplog.text
+            assert "user-provided tool wins" in caplog.text
+            tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+            assert json.loads(tool_messages[0]["content"]) == {"user": True}
 
         asyncio.run(run_and_check())
 
@@ -760,7 +958,12 @@ class TestAsyncAgentLoopToolFunctions:
 
             assert response.content == "Async weather is 22C."
             assert len(client.llm.calls) == 2
-            assert client.llm.calls[0][1]["tools"] == [get_weather_async]
+            run_tools = client.llm.calls[0][1]["tools"]
+            assert [tool["function"]["name"] for tool in run_tools[:2]] == [
+                "todowrite",
+                "todoread",
+            ]
+            assert run_tools[2:] == [get_weather_async]
             assert client.llm.calls[0][1]["tool_choice"] == "auto"
 
             second_messages = client.llm.calls[1][0]
@@ -1427,7 +1630,12 @@ class TestAsyncAgentLoopStream:
             assert [chunk.id for chunk in chunks] == ["chunk-tool", "chunk-final"]
             assert chunks[-1].choices[0].delta.content == "Async stream weather used."
             assert len(client.llm.calls) == 2
-            assert client.llm.calls[0][1]["tools"] == [get_weather_async]
+            stream_tools = client.llm.calls[0][1]["tools"]
+            assert [tool["function"]["name"] for tool in stream_tools[:2]] == [
+                "todowrite",
+                "todoread",
+            ]
+            assert stream_tools[2:] == [get_weather_async]
             second_messages = client.llm.calls[1][0]
             tool_messages = [m for m in second_messages if m.get("role") == "tool"]
             assert len(tool_messages) == 1

@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from magic_llm import MagicLLM
+from magic_llm.agent import config as agent_config
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Choice, Message, UsageModel
 from magic_llm.model.ModelChatStream import ChatCompletionModel, ChoiceModel, DeltaModel
@@ -43,6 +44,13 @@ from magic_llm.agent._loop_shared import (
     _invoke_hook_safely,
     _register_tools_with_executor,
 )
+
+
+@pytest.fixture(autouse=True)
+def restore_builtin_todo_tools_flag():
+    original = agent_config.ENABLE_BUILTIN_TODO_TOOLS
+    yield
+    agent_config.ENABLE_BUILTIN_TODO_TOOLS = original
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────────
@@ -71,6 +79,10 @@ def _make_tool_call(id="call_1", name="get_weather",
     """Build a valid ToolCall."""
     from magic_llm.model.ModelChatResponse import ToolCall, FunctionCall
     return ToolCall(id=id, function=FunctionCall(name=name, arguments=arguments))
+
+
+def _todo(todo_id=1, content="Do work", status="in_progress", priority="high"):
+    return {"id": todo_id, "content": content, "status": status, "priority": priority}
 
 
 def _make_mock_adapter(is_finished=True, tool_calls=None):
@@ -956,7 +968,11 @@ class TestAgentLoopRun:
         assert len(client.llm.calls) == 2
 
         first_kwargs = client.llm.calls[0][1]
-        assert first_kwargs["tools"] == [get_weather]
+        assert [tool["function"]["name"] for tool in first_kwargs["tools"][:2]] == [
+            "todowrite",
+            "todoread",
+        ]
+        assert first_kwargs["tools"][2:] == [get_weather]
         assert first_kwargs["tool_choice"] == "auto"
 
         second_messages = client.llm.calls[1][0]
@@ -966,6 +982,205 @@ class TestAgentLoopRun:
         assert "Montevideo" in tool_messages[0]["content"]
         assert not hasattr(MagicLLM, "agentic")
         assert not hasattr(MagicLLM, "agentic_stream")
+
+
+class TestAgentLoopBuiltinTodoTools:
+    def test_builtin_schemas_are_injected_by_default(self):
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        client = MagicMock()
+        client.llm = MagicMock()
+        loop = AgentLoop(client, tools=[])
+
+        names = [tool["function"]["name"] for tool in loop._tools[:2]]
+        assert names == ["todowrite", "todoread"]
+
+    def test_builtin_callables_execute_and_state_persists_across_iterations(self):
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.generate.side_effect = [
+            _make_response(
+                tool_calls=[
+                    _make_tool_call(
+                        id="write_1",
+                        name="todowrite",
+                        arguments=json.dumps({"todos": [_todo()]}),
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            _make_response(
+                tool_calls=[_make_tool_call(id="read_1", name="todoread", arguments="{}")],
+                finish_reason="tool_calls",
+            ),
+            _make_response(content="done", finish_reason="stop"),
+        ]
+
+        loop = AgentLoop(client, tools=[], budget=AgentBudget(max_iterations=5))
+        response = loop.run("track work")
+
+        assert response.content == "done"
+        tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+        assert len(tool_messages) == 2
+        assert json.loads(tool_messages[0]["content"]) == {"ok": True, "todos": [_todo()]}
+        assert json.loads(tool_messages[1]["content"]) == {"ok": True, "todos": [_todo()]}
+
+    def test_separate_sync_runs_start_with_empty_builtin_todo_state(self):
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        client_a = MagicMock()
+        client_a.llm = MagicMock()
+        client_a.llm.generate.side_effect = [
+            _make_response(
+                tool_calls=[
+                    _make_tool_call(
+                        id="write_a",
+                        name="todowrite",
+                        arguments=json.dumps({"todos": [_todo(7, "A")]}),
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            _make_response(content="done", finish_reason="stop"),
+        ]
+        AgentLoop(client_a, tools=[]).run("first")
+
+        client_b = MagicMock()
+        client_b.llm = MagicMock()
+        client_b.llm.generate.side_effect = [
+            _make_response(
+                tool_calls=[_make_tool_call(id="read_b", name="todoread", arguments="{}")],
+                finish_reason="tool_calls",
+            ),
+            _make_response(content="done", finish_reason="stop"),
+        ]
+        loop_b = AgentLoop(client_b, tools=[])
+        loop_b.run("second")
+
+        tool_messages = [m for m in loop_b.state.messages if m.get("role") == "tool"]
+        assert json.loads(tool_messages[0]["content"]) == {"ok": True, "todos": []}
+
+    def test_reusing_same_sync_loop_starts_next_run_with_empty_todo_state(self):
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        client = MagicMock()
+        client.llm = MagicMock()
+        loop = AgentLoop(client, tools=[])
+
+        client.llm.generate.side_effect = [
+            _make_response(
+                tool_calls=[
+                    _make_tool_call(
+                        id="write_1",
+                        name="todowrite",
+                        arguments=json.dumps({"todos": [_todo(8, "First run")]}),
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            _make_response(content="done", finish_reason="stop"),
+        ]
+        loop.run("first")
+
+        client.llm.generate.side_effect = [
+            _make_response(
+                tool_calls=[_make_tool_call(id="read_2", name="todoread", arguments="{}")],
+                finish_reason="tool_calls",
+            ),
+            _make_response(content="done", finish_reason="stop"),
+        ]
+        loop.run("second")
+
+        tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+        assert json.loads(tool_messages[0]["content"]) == {"ok": True, "todos": []}
+
+    def test_disabling_builtin_todo_tools_removes_schemas_and_callables(self):
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        agent_config.disable_builtin_todo_tools()
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.generate.side_effect = [
+            _make_response(
+                tool_calls=[_make_tool_call(id="read_1", name="todoread", arguments="{}")],
+                finish_reason="tool_calls",
+            ),
+            _make_response(content="done", finish_reason="stop"),
+        ]
+
+        loop = AgentLoop(client, tools=[])
+        loop.run("try todo")
+
+        assert loop._tools == []
+        tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+        assert tool_messages[0]["is_error"] is True
+        assert tool_messages[0]["content"] == ""
+
+    def test_unrelated_user_tool_still_executes_with_builtins_enabled(self):
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.generate.side_effect = [
+            _make_response(
+                tool_calls=[_make_tool_call(id="lookup_1", name="lookup", arguments='{"q":"x"}')],
+                finish_reason="tool_calls",
+            ),
+            _make_response(content="done", finish_reason="stop"),
+        ]
+
+        def lookup(q):
+            return {"q": q}
+
+        loop = AgentLoop(client, tools=[lookup])
+        loop.run("lookup")
+
+        tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+        assert json.loads(tool_messages[0]["content"]) == {"q": "x"}
+
+    def test_exact_todowrite_collision_warns_and_user_tool_wins(self, caplog):
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        client = MagicMock()
+        client.llm = MagicMock()
+        client.llm.generate.side_effect = [
+            _make_response(
+                tool_calls=[_make_tool_call(id="write_1", name="todowrite", arguments='{"todos": []}')],
+                finish_reason="tool_calls",
+            ),
+            _make_response(content="done", finish_reason="stop"),
+        ]
+
+        def todowrite(todos):
+            return {"user": True, "todos": todos}
+
+        with caplog.at_level("WARNING"):
+            loop = AgentLoop(client, tools=[todowrite])
+            loop.run("write")
+
+        assert "todowrite" in caplog.text
+        assert "user-provided tool wins" in caplog.text
+        tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+        assert json.loads(tool_messages[0]["content"]) == {"user": True, "todos": []}
+
+    def test_similar_todo_name_does_not_collide(self, caplog):
+        from magic_llm.agent.agent_loop import AgentLoop
+
+        def todo_write():
+            return "similar"
+
+        client = MagicMock()
+        client.llm = MagicMock()
+        with caplog.at_level("WARNING"):
+            loop = AgentLoop(client, tools=[todo_write])
+
+        assert "todo_write" not in caplog.text
+        assert [tool["function"]["name"] for tool in loop._tools[:2]] == [
+            "todowrite",
+            "todoread",
+        ]
 
 
 # ─── Slice 7: AgentLoop.run() budget enforcement, error paths
@@ -1653,7 +1868,12 @@ class TestAgentLoopStream:
         assert [chunk.id for chunk in chunks] == ["chunk-tool", "chunk-final"]
         assert chunks[-1].choices[0].delta.content == "Weather result used."
         assert len(client.llm.calls) == 2
-        assert client.llm.calls[0][1]["tools"] == [get_weather]
+        stream_tools = client.llm.calls[0][1]["tools"]
+        assert [tool["function"]["name"] for tool in stream_tools[:2]] == [
+            "todowrite",
+            "todoread",
+        ]
+        assert stream_tools[2:] == [get_weather]
         second_messages = client.llm.calls[1][0]
         tool_messages = [m for m in second_messages if m.get("role") == "tool"]
         assert len(tool_messages) == 1

@@ -308,6 +308,54 @@ class TestToolExecutorDedup:
         assert result1.is_deduplicated is False
         assert result2.is_deduplicated is False
 
+    def test_dedup_excluded_tool_executes_identical_calls_every_time(self):
+        call_count = 0
+
+        def todowrite(todos):
+            nonlocal call_count
+            call_count += 1
+            return {"ok": True, "count": call_count, "todos": todos}
+
+        executor = ToolExecutor(enable_dedup=True, dedup_excluded_tools={"todowrite"})
+        executor.register("todowrite", todowrite)
+        call = _make_call("todowrite", {"todos": []})
+
+        result1 = executor.execute(call)
+        result2 = executor.execute(call)
+
+        assert call_count == 2
+        assert json.loads(result1.content)["count"] == 1
+        assert json.loads(result2.content)["count"] == 2
+        assert result1.is_deduplicated is False
+        assert result2.is_deduplicated is False
+
+    def test_exclude_from_dedup_hook_preserves_other_dedup_behavior(self):
+        counts = {"todoread": 0, "lookup": 0}
+
+        def todoread():
+            counts["todoread"] += 1
+            return {"count": counts["todoread"]}
+
+        def lookup():
+            counts["lookup"] += 1
+            return {"count": counts["lookup"]}
+
+        executor = ToolExecutor(enable_dedup=True)
+        executor.exclude_from_dedup("todoread")
+        executor.register("todoread", todoread)
+        executor.register("lookup", lookup)
+
+        read1 = executor.execute(_make_call("todoread"))
+        read2 = executor.execute(_make_call("todoread"))
+        lookup1 = executor.execute(_make_call("lookup"))
+        lookup2 = executor.execute(_make_call("lookup"))
+
+        assert counts == {"todoread": 2, "lookup": 1}
+        assert json.loads(read1.content)["count"] == 1
+        assert json.loads(read2.content)["count"] == 2
+        assert lookup1.is_deduplicated is False
+        assert lookup2.is_deduplicated is True
+
 
 # ─── Slice 12: Async execution variants ─────────────────────────────────────
 

@@ -37,6 +37,8 @@ from magic_llm.agent.types import (
     CanonicalToolCall,
 )
 from magic_llm.agent.hooks import AgentHooks
+from magic_llm.agent import config as agent_config
+from magic_llm.agent.builtin_tools import create_builtin_todo_bundle
 from magic_llm.agent.tool_executor import ToolExecutor
 from magic_llm.agent.tool_adapters import ToolAdapter, ToolAdapterFactory
 from magic_llm.agent._loop_shared import (
@@ -92,7 +94,14 @@ class AgentLoop:
         self._prompt_fragment = prompt_fragment
 
         # Store tools for registration at run time
-        self._tools = tools or []
+        self._user_tools = list(tools or [])
+        self._builtin_tool_functions: dict[str, Callable[..., Any]] = {}
+        self._builtin_todo_enabled = agent_config.is_builtin_todo_tools_enabled()
+        if self._builtin_todo_enabled:
+            builtin_schemas, self._builtin_tool_functions = create_builtin_todo_bundle()
+            self._tools = [*builtin_schemas, *self._user_tools]
+        else:
+            self._tools = self._user_tools
         self._tool_functions = tool_functions or {}
 
         # Budget defaults
@@ -218,10 +227,13 @@ class AgentLoop:
         )
 
         # Register tools
+        if self._builtin_todo_enabled:
+            _, self._builtin_tool_functions = create_builtin_todo_bundle()
         _register_tools_with_executor(
             self._executor,
-            tools=self._tools,
+            tools=self._user_tools,
             tool_functions=self._tool_functions,
+            builtin_tool_functions=self._builtin_tool_functions,
         )
 
         # Reset dedup fingerprints for this run
@@ -430,10 +442,13 @@ class AgentLoop:
         )
 
         # Register tools
+        if self._builtin_todo_enabled:
+            _, self._builtin_tool_functions = create_builtin_todo_bundle()
         _register_tools_with_executor(
             self._executor,
-            tools=self._tools,
+            tools=self._user_tools,
             tool_functions=self._tool_functions,
+            builtin_tool_functions=self._builtin_tool_functions,
         )
 
         # Reset dedup fingerprints for this run

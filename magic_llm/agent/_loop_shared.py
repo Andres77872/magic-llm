@@ -46,6 +46,7 @@ from magic_llm.agent.types import (
     TaskManifest,
 )
 from magic_llm.agent.tool_executor import ToolExecutor
+from magic_llm.agent.builtin_tools import TODO_TOOL_NAMES
 
 if TYPE_CHECKING:
     from magic_llm.agent.hooks import AgentHooks
@@ -285,6 +286,7 @@ def _register_tools_with_executor(
     executor: ToolExecutor,
     tools: Optional[list[Any]] = None,
     tool_functions: Optional[dict[str, Callable[..., Any]]] = None,
+    builtin_tool_functions: Optional[dict[str, Callable[..., Any]]] = None,
 ) -> None:
     """Register tools with the executor from both callables and dict sources.
 
@@ -293,7 +295,21 @@ def _register_tools_with_executor(
         tools: List of callable tools (registered by __name__) or dict tool
             specs (name extracted and resolved from tool_functions).
         tool_functions: Dict mapping custom names to callables.
+        builtin_tool_functions: Dict of loop-local builtin tools registered before
+            user tools. User tools intentionally win exact-name collisions.
     """
+    if builtin_tool_functions:
+        executor.exclude_from_dedup(*TODO_TOOL_NAMES)
+        for name, fn in builtin_tool_functions.items():
+            if callable(fn):
+                executor.register(name, fn)
+
+        for name in sorted(_find_builtin_name_collisions(tools, tool_functions)):
+            logger.warning(
+                "Builtin tool name collision for '%s'; user-provided tool wins execution.",
+                name,
+            )
+
     # Register callable tools by their __name__
     if tools:
         for tool in tools:
@@ -313,6 +329,27 @@ def _register_tools_with_executor(
         for name, fn in tool_functions.items():
             if callable(fn):
                 executor.register(name, fn)
+
+
+def _find_builtin_name_collisions(
+    tools: Optional[list[Any]] = None,
+    tool_functions: Optional[dict[str, Callable[..., Any]]] = None,
+) -> set[str]:
+    """Find exact user-provided todo builtin name collisions."""
+    collisions: set[str] = set()
+    if tools:
+        for tool in tools:
+            name = None
+            if callable(tool) and not isinstance(tool, dict):
+                name = getattr(tool, "__name__", None)
+            elif isinstance(tool, dict):
+                fn_def = tool.get("function") if tool.get("type") == "function" else tool
+                name = fn_def.get("name") if isinstance(fn_def, dict) else None
+            if name in TODO_TOOL_NAMES:
+                collisions.add(name)
+    if tool_functions:
+        collisions.update(name for name in tool_functions if name in TODO_TOOL_NAMES)
+    return collisions
 
 
 def _finalize_response(

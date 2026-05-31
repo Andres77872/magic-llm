@@ -3,7 +3,7 @@
 magic-llm owns repo-level feature flags and defaults.
 Application-level enable/disable is controlled by caller (magic-agents).
 
-Feature flags default to disabled for safe rollout.
+Feature flags default to disabled for safe rollout unless noted otherwise.
 """
 from __future__ import annotations
 
@@ -23,6 +23,11 @@ ENABLE_SUBAGENTS: bool = False
 # When False, tasks with nested_config fall back to legacy callable pattern
 # Default: False for backward compatibility and safe rollout
 ENABLE_NESTED_LLM_NODES: bool = False
+
+
+# Feature flag: Enable run-local builtin todo tools in agent loops.
+# Default: True per SDD proposal; additive, in-memory only, and rollback-safe.
+ENABLE_BUILTIN_TODO_TOOLS: bool = True
 
 
 # Maximum global nesting depth (safety cap for unbounded nesting)
@@ -104,3 +109,22 @@ def disable_nested_llm_nodes() -> None:
     global ENABLE_NESTED_LLM_NODES
     ENABLE_NESTED_LLM_NODES = False
     logger.debug("Nested LLM node execution disabled at repo-level")
+
+
+def is_builtin_todo_tools_enabled() -> bool:
+    """Check if builtin todo tools are enabled for agent loops."""
+    return ENABLE_BUILTIN_TODO_TOOLS
+
+
+def enable_builtin_todo_tools() -> None:
+    """Enable run-local builtin todo tools."""
+    global ENABLE_BUILTIN_TODO_TOOLS
+    ENABLE_BUILTIN_TODO_TOOLS = True
+    logger.debug("Builtin todo tools enabled at repo-level")
+
+
+def disable_builtin_todo_tools() -> None:
+    """Disable run-local builtin todo tools."""
+    global ENABLE_BUILTIN_TODO_TOOLS
+    ENABLE_BUILTIN_TODO_TOOLS = False
+    logger.debug("Builtin todo tools disabled at repo-level")

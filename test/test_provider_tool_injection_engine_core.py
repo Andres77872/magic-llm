@@ -3,6 +3,7 @@
 import json
 import pytest
 
+from magic_llm.agent.builtin_tools import builtin_todo_tool_schemas
 from magic_llm.agent.types import ToolResult
 from magic_llm.engine.engine_amazon import EngineAmazon
 from magic_llm.engine.engine_anthropic import EngineAnthropic
@@ -119,6 +120,35 @@ class TestExactlyOnceProviderMapping:
         body = engine.prepare_data_sync(_chat(), tools=[_get_weather], tool_choice="auto")[2]
 
         assert body["tools"][0]["functionDeclarations"][0]["name"] == "_get_weather"
+
+    def test_builtin_todo_schemas_map_for_openai_anthropic_and_gemini(self):
+        tools = [*builtin_todo_tool_schemas(), _legacy_tool()]
+
+        openai = map_request_tools("openai", tools, "auto")
+        assert [tool["function"]["name"] for tool in openai.tools[:2]] == [
+            "todowrite",
+            "todoread",
+        ]
+        assert openai.tools[2]["function"]["name"] == "get_weather"
+
+        anthropic = map_request_tools("anthropic", tools, "auto")
+        assert [tool["name"] for tool in anthropic.tools[:2]] == [
+            "todowrite",
+            "todoread",
+        ]
+        assert anthropic.tools[0]["input_schema"]["properties"]["todos"]["items"]["properties"]["id"]["type"] == "integer"
+        assert anthropic.tools[2]["name"] == "get_weather"
+
+        gemini = map_request_tools("google", tools, "auto")
+        declarations = gemini.tools[0]["functionDeclarations"]
+        assert [decl["name"] for decl in declarations[:2]] == ["todowrite", "todoread"]
+        assert declarations[0]["parametersJsonSchema"]["properties"]["todos"]["items"]["required"] == [
+            "id",
+            "content",
+            "status",
+            "priority",
+        ]
+        assert declarations[2]["name"] == "get_weather"
 
 
 class TestToolResultMessages:

@@ -43,14 +43,20 @@ class ToolExecutor:
         max_content_size: int = 50000,
         max_content_sizes: dict[str, int] | None = None,
         tool_timeouts: dict[str, float] | None = None,
+        dedup_excluded_tools: set[str] | None = None,
     ) -> None:
         self._per_tool_timeout = per_tool_timeout
         self._enable_dedup = enable_dedup
         self._max_content_size = max_content_size
         self._max_content_sizes = max_content_sizes or {}
         self._tool_timeouts = tool_timeouts or {}
+        self._dedup_excluded_tools = set(dedup_excluded_tools or set())
         self._registry: dict[str, Callable[..., Any]] = {}
         self._dedup_cache: dict[str, ToolResult] = {}
+
+    def exclude_from_dedup(self, *names: str) -> None:
+        """Exclude stateful tools from fingerprint deduplication."""
+        self._dedup_excluded_tools.update(names)
 
     def register(self, name: str, fn: Callable[..., Any]) -> None:
         """Register a tool callable under the given name.
@@ -95,7 +101,10 @@ class ToolExecutor:
             A ToolResult with the execution outcome (success or error).
         """
         # Check dedup cache
-        if self._enable_dedup:
+        dedup_enabled = (
+            self._enable_dedup and tool_call.name not in self._dedup_excluded_tools
+        )
+        if dedup_enabled:
             fingerprint = self._compute_fingerprint(
                 tool_call.name, tool_call.arguments
             )
@@ -169,7 +178,7 @@ class ToolExecutor:
         )
 
         # Cache for dedup
-        if self._enable_dedup:
+        if dedup_enabled:
             self._dedup_cache[fingerprint] = result
 
         return result
@@ -207,7 +216,10 @@ class ToolExecutor:
             A ToolResult with the execution outcome.
         """
         # Check dedup cache
-        if self._enable_dedup:
+        dedup_enabled = (
+            self._enable_dedup and tool_call.name not in self._dedup_excluded_tools
+        )
+        if dedup_enabled:
             fingerprint = self._compute_fingerprint(
                 tool_call.name, tool_call.arguments
             )
@@ -284,7 +296,7 @@ class ToolExecutor:
             duration_ms=duration_ms,
         )
 
-        if self._enable_dedup:
+        if dedup_enabled:
             self._dedup_cache[fingerprint] = result
 
         return result
