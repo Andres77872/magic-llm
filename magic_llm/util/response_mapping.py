@@ -11,7 +11,6 @@ from magic_llm.model.ModelChatStream import (
     ToolCall as StreamToolCall, FunctionCall as StreamFunctionCall
 )
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # FINISH REASON MAPPINGS
 # ═══════════════════════════════════════════════════════════════════════

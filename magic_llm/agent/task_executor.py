@@ -26,23 +26,9 @@ import time
 import uuid
 from typing import Any, Callable, Optional
 
-from magic_llm.agent.types import (
-    AgentBudget,
-    AgentBudgetExceeded,
-    AgentState,
-    CanonicalToolCall,
-    TaskError,
-    TaskManifest,
-    TaskResult,
-    ToolResult,
-)
-from magic_llm.agent.tool_executor import ToolExecutor
-from magic_llm.agent.normalizer import ResultNormalizer
-
 # Global depth helpers and budget cascade helper
 from magic_llm.agent._loop_shared import (
     DEPTH,
-    GLOBAL_DEPTH,
     PARENT_BUDGET,
     PARENT_HOOKS,
     PARENT_STATE,
@@ -53,15 +39,23 @@ from magic_llm.agent._loop_shared import (
     _compute_child_budget,
     _register_tools_with_executor,
 )
-
 # Config for nested LLM node feature flag and depth cap
 from magic_llm.agent.config import (
     MAX_GLOBAL_DEPTH,
     is_nested_llm_nodes_enabled,
 )
+from magic_llm.agent.normalizer import ResultNormalizer
+from magic_llm.agent.tool_executor import ToolExecutor
+from magic_llm.agent.types import (
+    AgentBudgetExceeded,
+    CanonicalToolCall,
+    TaskError,
+    TaskManifest,
+    TaskResult,
+    ToolResult,
+)
 
 logger = logging.getLogger(__name__)
-
 
 # ContextVar for depth tracking (async task isolation)
 # Each asyncio task has isolated context, ensuring per-execution isolation

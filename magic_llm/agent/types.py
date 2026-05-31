@@ -35,7 +35,6 @@ from typing import Any, Callable, ClassVar, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
-
 ToolSpec = Union[Callable[..., Any], Dict[str, Any], Any]
 
 
@@ -319,12 +318,3 @@ class ToolExecutionError(AgentLoopError):
 # _loop_shared.py (GLOBAL_DEPTH, helpers) and config.py (MAX_GLOBAL_DEPTH).
 # This ensures consumers of types.py observe the same state as TaskExecutor.
 
-from magic_llm.agent._loop_shared import (
-    GLOBAL_DEPTH,
-    get_global_depth,
-    increment_global_depth,
-    decrement_global_depth,
-    reset_global_depth,
-)
-
-from magic_llm.agent.config import MAX_GLOBAL_DEPTH

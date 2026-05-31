@@ -1,11 +1,10 @@
-import json
-import time
 from abc import ABC, abstractmethod
-from typing import Dict, Tuple, Optional, Any
+from abc import ABC, abstractmethod
+from typing import Optional
 
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel
 
 
 def _has_image_content(messages: list[dict]) -> bool:

@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.agent.types import CanonicalToolCall, ToolResult
+from magic_llm.model import ModelChat, ModelChatResponse
 
 
 @runtime_checkable
@@ -119,19 +119,19 @@ def _register_builtin_adapters() -> None:
 
     # OpenAI-compatible providers (all use OpenAIToolAdapter as compatibility shim)
     for provider in (
-        "openrouter",
-        "deepinfra",
-        "groq",
-        "together",
-        "fireworks",
-        "anyscale",
-        "perplexity",
-        "mistral",
-        "cerebras",
-        "friendliai",
-        "novita",
-        "deepseek",
-        "sambanova",
+            "openrouter",
+            "deepinfra",
+            "groq",
+            "together",
+            "fireworks",
+            "anyscale",
+            "perplexity",
+            "mistral",
+            "cerebras",
+            "friendliai",
+            "novita",
+            "deepseek",
+            "sambanova",
     ):
         ToolAdapterFactory.register(provider, OpenAIToolAdapter)
 

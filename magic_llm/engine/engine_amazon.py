@@ -16,6 +16,7 @@ from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChatResponse, ModelChat
 from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.util.eventstream import AWSEventStreamParser
 from magic_llm.util.http import AsyncHttpClient, HttpClient, HttpError
 from magic_llm.util.sigv4 import (
     build_sigv4_headers,
@@ -25,7 +26,6 @@ from magic_llm.util.sigv4 import (
     resolve_credentials,
     resolve_credentials_async,
 )
-from magic_llm.util.eventstream import AWSEventStreamParser
 
 
 class EngineAmazon(BaseChat):

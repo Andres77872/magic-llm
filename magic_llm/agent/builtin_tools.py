@@ -7,7 +7,6 @@ import threading
 from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
-
 TODO_STATUSES = {"pending", "in_progress", "completed", "cancelled"}
 TODO_PRIORITIES = {"high", "medium", "low"}
 TODO_TOOL_NAMES = {"todowrite", "todoread"}

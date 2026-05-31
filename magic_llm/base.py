@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Type, List, TYPE_CHECKING
+from typing import Optional, Dict, Type, TYPE_CHECKING
 
 from magic_llm.engine import (
     EngineOpenAI,
@@ -13,7 +13,6 @@ from magic_llm.engine.base_chat import BaseChat
 
 if TYPE_CHECKING:
     from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
-    from magic_llm.model.discovery import NormalizedDiscoveredModel
 
 
 class MagicLlmBase:
@@ -29,11 +28,11 @@ class MagicLlmBase:
     }
 
     def __init__(
-            self,
-            engine: str,
-            private_key: Optional[str] = None,
-            model: Optional[str] = None,
-            **kwargs
+        self,
+        engine: str,
+        private_key: Optional[str] = None,
+        model: Optional[str] = None,
+        **kwargs
     ) -> None:
         """
         Initialize the MagicLlmBase instance.

@@ -27,7 +27,6 @@ try:
 except Exception:  # pragma: no cover - optional import safety
     BaseModel = None  # type: ignore
 
-
 OpenAITool = Dict[str, Any]
 ToolChoice = Union[str, Dict[str, Any], None]
 ProviderKey = Literal["openai", "anthropic", "google", "deepinfra"]
@@ -353,7 +352,8 @@ def normalize_openai_tool_choice(tool_choice: ToolChoice) -> ToolChoice:
     return None
 
 
-def map_to_anthropic(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
+def map_to_anthropic(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice) -> Tuple[
+    Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
     normalized_tools = normalize_openai_tools(tools)
     normalized_choice = normalize_openai_tool_choice(tool_choice)
     anthropic_tools = None
@@ -379,7 +379,8 @@ def map_to_anthropic(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice)
     return anthropic_tools, anthropic_choice
 
 
-def map_to_openai(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice) -> Tuple[Optional[List[Dict[str, Any]]], ToolChoice]:
+def map_to_openai(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice) -> Tuple[
+    Optional[List[Dict[str, Any]]], ToolChoice]:
     normalized_tools = normalize_openai_tools(tools)
     normalized_choice = normalize_openai_tool_choice(tool_choice)
     openai_tools = None
@@ -402,7 +403,8 @@ def map_to_openai(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice) ->
     return openai_tools, openai_choice
 
 
-def map_to_gemini(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
+def map_to_gemini(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice) -> Tuple[
+    Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]]]:
     normalized_tools = normalize_openai_tools(tools)
     normalized_choice = normalize_openai_tool_choice(tool_choice)
     gemini_tools = None
@@ -424,7 +426,8 @@ def map_to_gemini(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice) ->
         if mode := mode_map.get(normalized_choice):
             gemini_tool_config = {"functionCallingConfig": {"mode": mode}}
     elif isinstance(normalized_choice, dict) and normalized_choice.get("name"):
-        gemini_tool_config = {"functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [normalized_choice["name"]]}}
+        gemini_tool_config = {
+            "functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [normalized_choice["name"]]}}
     return gemini_tools, gemini_tool_config
 
 

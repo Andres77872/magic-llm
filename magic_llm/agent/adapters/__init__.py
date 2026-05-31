@@ -5,8 +5,8 @@
 #
 # No eager imports — adapters are loaded on demand by the factory.
 
-from magic_llm.agent.adapters.openai_adapter import OpenAIToolAdapter
 from magic_llm.agent.adapters.anthropic_adapter import AnthropicToolAdapter
 from magic_llm.agent.adapters.gemini_adapter import GeminiToolAdapter
+from magic_llm.agent.adapters.openai_adapter import OpenAIToolAdapter
 
 __all__ = ["OpenAIToolAdapter", "AnthropicToolAdapter", "GeminiToolAdapter"]

@@ -46,7 +46,8 @@ class ModelChat:
                         except ValueError:
                             raise ValueError("Invalid data URI. Expected 'data:<mime>;base64,<data>'")
                         if ';base64' not in header:
-                            raise ValueError("Data URI for images must declare base64 encoding, e.g., data:image/png;base64,....")
+                            raise ValueError(
+                                "Data URI for images must declare base64 encoding, e.g., data:image/png;base64,....")
                         mime = header[5:].split(';', 1)[0]
                         if not mime or '/' not in mime:
                             raise ValueError("Data URI must include a MIME type, e.g., data:image/png;base64,....")
@@ -328,9 +329,9 @@ class ModelChat:
         for msg in reversed(self.messages):
             if msg['role'] in {'user', 'assistant'}:
                 msg_tokens = (
-                        self._count_content_tokens(msg['content']) +
-                        len(from_openai(msg['role'])) +
-                        self.TOKENS_PER_MESSAGE
+                    self._count_content_tokens(msg['content']) +
+                    len(from_openai(msg['role'])) +
+                    self.TOKENS_PER_MESSAGE
                 )
 
                 if current_tokens + msg_tokens + self.ASSISTANT_PRIME_TOKENS <= self.max_input_tokens:

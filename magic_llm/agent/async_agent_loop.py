@@ -16,6 +16,28 @@ import logging
 import time
 from typing import Any, AsyncIterator, Callable, Optional
 
+from magic_llm.agent import config as agent_config
+from magic_llm.agent._loop_shared import (
+    _build_initial_chat,
+    _check_budget,
+    _finalize_response,
+    _invoke_hook_safely,
+    _register_tools_with_executor,
+    # Parent context ContextVars for nested LLM node execution
+    PARENT_BUDGET,
+    PARENT_HOOKS,
+    PARENT_STATE,
+)
+from magic_llm.agent.builtin_tools import create_builtin_todo_bundle
+from magic_llm.agent.hooks import AgentHooks
+from magic_llm.agent.tool_adapters import ToolAdapter, ToolAdapterFactory
+from magic_llm.agent.tool_executor import ToolExecutor
+from magic_llm.agent.types import (
+    AgentBudget,
+    AgentBudgetExceeded,
+    AgentState,
+    CanonicalToolCall,
+)
 from magic_llm.engine.tooling import (
     StreamIterationSummary,
     accumulate_stream_chunk,
@@ -34,28 +56,6 @@ from magic_llm.model.ModelChatStream import (
     ChatCompletionModel,
     ChoiceModel,
     DeltaModel,
-)
-from magic_llm.agent.types import (
-    AgentBudget,
-    AgentBudgetExceeded,
-    AgentState,
-    CanonicalToolCall,
-)
-from magic_llm.agent.hooks import AgentHooks
-from magic_llm.agent import config as agent_config
-from magic_llm.agent.builtin_tools import create_builtin_todo_bundle
-from magic_llm.agent.tool_executor import ToolExecutor
-from magic_llm.agent.tool_adapters import ToolAdapter, ToolAdapterFactory
-from magic_llm.agent._loop_shared import (
-    _build_initial_chat,
-    _check_budget,
-    _finalize_response,
-    _invoke_hook_safely,
-    _register_tools_with_executor,
-    # Parent context ContextVars for nested LLM node execution
-    PARENT_BUDGET,
-    PARENT_HOOKS,
-    PARENT_STATE,
 )
 
 logger = logging.getLogger(__name__)
@@ -717,6 +717,7 @@ class AsyncAgentLoop:
                                     while True:
                                         await asyncio.sleep(8)
                                         await self._heartbeat_cb()  # type: ignore[misc]
+
                                 heartbeat_task = asyncio.create_task(_heartbeat_loop())
 
                             results = await self._executor.execute_parallel_async(tool_calls)

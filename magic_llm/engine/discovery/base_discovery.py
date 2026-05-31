@@ -20,7 +20,7 @@ from __future__ import annotations
 import abc
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 from magic_llm.engine.discovery.alias_resolver import TokenAliasResolver
@@ -144,10 +144,10 @@ class DiscoveryPolicy:
     - Transport/other → propagate as DiscoveryError
     """
 
-    graceful_on_404: bool = True     # Error Policy B: 404 → return []
-    graceful_on_5xx: bool = False    # Error Policy B: always propagate 5xx
+    graceful_on_404: bool = True  # Error Policy B: 404 → return []
+    graceful_on_5xx: bool = False  # Error Policy B: always propagate 5xx
     graceful_on_other: bool = False  # Reserved for future use
-    warn_on_graceful: bool = True    # Log warning when degrading
+    warn_on_graceful: bool = True  # Log warning when degrading
 
 
 # =============================================================================

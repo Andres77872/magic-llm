@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from typing import Any, Generator, AsyncGenerator, Optional, Dict, Union, TypeVar, Generic
+from typing import Any, Generator, AsyncGenerator, Optional, TypeVar
 
 import aiohttp
 import requests
@@ -14,6 +14,7 @@ T = TypeVar('T')
 
 class HttpError(Exception):
     """Base exception for HTTP client errors."""
+
     def __init__(self, message: str, status_code: Optional[int] = None, response_content: Optional[bytes] = None):
         self.status_code = status_code
         self.response_content = response_content
@@ -42,10 +43,10 @@ class AsyncHttpClient:
             raise RuntimeError("Session not initialized. Use 'with' block or call 'connect()'.")
 
     async def request(
-            self,
-            method: str,
-            url: str,
-            **kwargs,
+        self,
+        method: str,
+        url: str,
+        **kwargs,
     ) -> bytes:
         """
         Makes an HTTP request.
@@ -60,10 +61,10 @@ class AsyncHttpClient:
         timeout = aiohttp.ClientTimeout(total=kwargs.pop('timeout', 30))
         try:
             async with self.session.request(
-                    method,
-                    url,
-                    timeout=timeout,
-                    **kwargs,
+                method,
+                url,
+                timeout=timeout,
+                **kwargs,
             ) as response:
                 content = await response.read()
                 if response.status != 200:
@@ -103,10 +104,10 @@ class AsyncHttpClient:
         return await self.request("POST", url, **kwargs)
 
     async def stream_request(
-            self,
-            method: str,
-            url: str,
-            **kwargs
+        self,
+        method: str,
+        url: str,
+        **kwargs
     ) -> AsyncGenerator[bytes, None]:
         """
         Makes a streaming HTTP request.
@@ -123,10 +124,10 @@ class AsyncHttpClient:
         timeout = aiohttp.ClientTimeout(total=None, sock_read=read_timeout)
         try:
             async with self.session.request(
-                    method,
-                    url,
-                    timeout=timeout,
-                    **kwargs
+                method,
+                url,
+                timeout=timeout,
+                **kwargs
             ) as response:
                 if response.status != 200:
                     content = await response.read()
@@ -183,10 +184,10 @@ class HttpClient:
             raise RuntimeError("Session not initialized. Use 'with' block.")
 
     def request(
-            self,
-            method: str,
-            url: str,
-            **kwargs,
+        self,
+        method: str,
+        url: str,
+        **kwargs,
     ) -> bytes:
         """
         Makes an HTTP request.
@@ -212,8 +213,8 @@ class HttpClient:
                 error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
                 logger.error(f"Request to {url} failed: {error_message}")
                 raise HttpError(error_message,
-                               getattr(e.response, 'status_code', None),
-                               getattr(e.response, 'content', None))
+                                getattr(e.response, 'status_code', None),
+                                getattr(e.response, 'content', None))
             logger.error(f"Request to {url} failed with requests error: {str(e)}")
             raise HttpError(f"requests error: {str(e)}")
 
@@ -245,10 +246,10 @@ class HttpClient:
         return self.request("POST", url, **kwargs)
 
     def stream_request(
-            self,
-            method: str,
-            url: str,
-            **kwargs
+        self,
+        method: str,
+        url: str,
+        **kwargs
     ) -> Generator[str, None, None]:
         """
         Makes a streaming HTTP request.
@@ -281,17 +282,17 @@ class HttpClient:
                 error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
                 logger.error(f"Streaming request to {url} failed: {error_message}")
                 raise HttpError(error_message,
-                               getattr(e.response, 'status_code', None),
-                               getattr(e.response, 'content', None))
+                                getattr(e.response, 'status_code', None),
+                                getattr(e.response, 'content', None))
             logger.error(f"Streaming request to {url} failed with requests error: {str(e)}")
             raise HttpError(f"requests streaming error: {str(e)}")
 
     def stream_request_bytes(
-            self,
-            method: str,
-            url: str,
-            chunk_size: int = 8192,
-            **kwargs
+        self,
+        method: str,
+        url: str,
+        chunk_size: int = 8192,
+        **kwargs
     ) -> Generator[bytes, None, None]:
         """
         Makes a streaming HTTP request yielding raw binary chunks.
@@ -326,7 +327,7 @@ class HttpClient:
                 error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
                 logger.error(f"Streaming request to {url} failed: {error_message}")
                 raise HttpError(error_message,
-                               getattr(e.response, 'status_code', None),
-                               getattr(e.response, 'content', None))
+                                getattr(e.response, 'status_code', None),
+                                getattr(e.response, 'content', None))
             logger.error(f"Streaming request to {url} failed with requests error: {str(e)}")
             raise HttpError(f"requests streaming error: {str(e)}")

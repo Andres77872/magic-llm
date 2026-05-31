@@ -13,8 +13,8 @@ from __future__ import annotations
 import logging
 from typing import Dict, Any, List, Optional
 
-from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
 from magic_llm.engine.discovery import register_adapter
+from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
 from magic_llm.engine.discovery.capabilities import (
     CompositeCapabilityInference,
     ProviderDefaultsStrategy,
@@ -22,6 +22,7 @@ from magic_llm.engine.discovery.capabilities import (
 from magic_llm.model.discovery import ModelCapabilities, PricingInfo
 
 logger = logging.getLogger(__name__)
+
 
 # =============================================================================
 # Azure OpenAI Data Plane Adapter
@@ -324,7 +325,6 @@ class AzureSpeechDiscoveryAdapter(BaseDiscoveryAdapter):
             "Azure Speech Services discovery is not supported in v1. "
             "Use 'azure' engine for Azure OpenAI or 'azure-foundry' for Azure AI Foundry."
         )
-
 
 # NOTE: azure-speech is intentionally NOT registered.
 # AzureSpeechDiscoveryAdapter remains as a stub class for a future implementation.

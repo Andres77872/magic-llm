@@ -10,12 +10,12 @@ tests, and snapshot-verified independently.
 # Covers OpenAI GPT-4o/Turbo/Vision, Claude 3, Gemini, and any model
 # with "vision" in the name.
 VISION_PATTERNS = [
-    r"gpt-4o",           # GPT-4o models have vision
-    r"gpt-4-turbo",      # GPT-4 Turbo with vision
-    r"gpt-4-vision",     # Explicit vision models
-    r"claude-3",         # Claude 3 models (if via OpenAI-compatible)
-    r"vision",           # Any model with 'vision' in name
-    r"gemini",           # Gemini models (if via OpenAI-compatible)
+    r"gpt-4o",  # GPT-4o models have vision
+    r"gpt-4-turbo",  # GPT-4 Turbo with vision
+    r"gpt-4-vision",  # Explicit vision models
+    r"claude-3",  # Claude 3 models (if via OpenAI-compatible)
+    r"vision",  # Any model with 'vision' in name
+    r"gemini",  # Gemini models (if via OpenAI-compatible)
 ]
 
 # ── Embedding capability patterns ─────────────────────────────────────

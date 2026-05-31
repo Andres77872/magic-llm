@@ -49,25 +49,25 @@ class TokenAliasResolver:
     DEFAULT_ALIASES: Dict[str, List[str]] = {
         # Explicit context fields first, then input-limit fallbacks
         "context_window": [
-            "context_window",          # explicit combined window (OpenAI, Groq, etc.)
-            "context_length",          # alternate explicit field (OpenRouter, Together, Cohere)
-            "max_context",             # Azure OpenAI alternate
-            "limits.context",          # Azure Foundry nested path
-            "max_input_tokens",        # input-limit proxy (Anthropic, hybrid providers)
-            "inputTokenLimit",         # Google camelCase input limit
-            "max_prompt_tokens",       # alternate input-limit field (rare)
+            "context_window",  # explicit combined window (OpenAI, Groq, etc.)
+            "context_length",  # alternate explicit field (OpenRouter, Together, Cohere)
+            "max_context",  # Azure OpenAI alternate
+            "limits.context",  # Azure Foundry nested path
+            "max_input_tokens",  # input-limit proxy (Anthropic, hybrid providers)
+            "inputTokenLimit",  # Google camelCase input limit
+            "max_prompt_tokens",  # alternate input-limit field (rare)
         ],
         "max_input_tokens": [
-            "max_input_tokens",        # canonical field (Anthropic, OpenAI-compatible)
-            "inputTokenLimit",         # Google camelCase
-            "max_prompt_tokens",       # alternate field (rare)
+            "max_input_tokens",  # canonical field (Anthropic, OpenAI-compatible)
+            "inputTokenLimit",  # Google camelCase
+            "max_prompt_tokens",  # alternate field (rare)
         ],
         "max_output_tokens": [
-            "max_output_tokens",               # canonical field
-            "max_tokens",                       # Anthropic, legacy
-            "max_completion_tokens",            # Groq, OpenAI-compatible
+            "max_output_tokens",  # canonical field
+            "max_tokens",  # Anthropic, legacy
+            "max_completion_tokens",  # Groq, OpenAI-compatible
             "top_provider.max_completion_tokens",  # OpenRouter-style nested
-            "outputTokenLimit",                 # Google camelCase
+            "outputTokenLimit",  # Google camelCase
         ],
     }
 

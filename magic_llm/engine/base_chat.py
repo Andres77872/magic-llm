@@ -48,14 +48,14 @@ def is_running_in_jupyter():
 
 class BaseChat(abc.ABC):
     def __init__(
-            self,
-            model: str | None = None,
-            headers: Optional[dict] = None,
-            callback: Optional[Callable] = None,
-            fallback: Optional[Callable] = None,
-            retries: int = 3,
-            executor: Optional[ThreadPoolExecutor] = None,
-            **kwargs
+        self,
+        model: str | None = None,
+        headers: Optional[dict] = None,
+        callback: Optional[Callable] = None,
+        fallback: Optional[Callable] = None,
+        retries: int = 3,
+        executor: Optional[ThreadPoolExecutor] = None,
+        **kwargs
     ):
         self.model = model
         self.headers = headers or {}
@@ -76,12 +76,12 @@ class BaseChat(abc.ABC):
             return ChatMetaModel(TTFB=ttfb, TTF=ttf, TPS=0)
 
     async def _execute_callback(
-            self,
-            chat: ModelChat,
-            response_content: str,
-            usage: Optional[UsageModel],
-            model: str,
-            meta: Optional[ChatMetaModel]
+        self,
+        chat: ModelChat,
+        response_content: str,
+        usage: Optional[UsageModel],
+        model: str,
+        meta: Optional[ChatMetaModel]
     ) -> None:
         """Execute callback with proper async/sync handling."""
         if not self.callback:
@@ -104,12 +104,12 @@ class BaseChat(abc.ABC):
             logger.error(f"Callback execution failed: {e}")
 
     def _execute_callback_sync(
-            self,
-            chat: ModelChat,
-            response_content: str,
-            usage: Optional[UsageModel],
-            model: str,
-            meta: Optional[ChatMetaModel]
+        self,
+        chat: ModelChat,
+        response_content: str,
+        usage: Optional[UsageModel],
+        model: str,
+        meta: Optional[ChatMetaModel]
     ) -> None:
         """Execute callback from synchronous context without asyncio.run().
 
@@ -305,14 +305,14 @@ class BaseChat(abc.ABC):
                     er = f"Sync stream generation attempt {attempt + 1} failed: {e!r}"
                     logger.exception("Sync stream generation attempt %d failed: %r", attempt + 1, e)
                     self._execute_callback_sync(chat,
-                                                       response_content,
-                                                       usage,
-                                                       model,
-                                                       ChatMetaModel(
-                                                           TTFB=time.time() - metrics.start_time,
-                                                           TTF=0,
-                                                           TPS=0,
-                                                           status='ERROR: ' + er))
+                                                response_content,
+                                                usage,
+                                                model,
+                                                ChatMetaModel(
+                                                    TTFB=time.time() - metrics.start_time,
+                                                    TTF=0,
+                                                    TPS=0,
+                                                    status='ERROR: ' + er))
 
                     if attempt == self.retry_config.attempts - 1:
                         fallback = self._handle_fallback(is_async=False)
@@ -402,14 +402,14 @@ class BaseChat(abc.ABC):
                     er = f"Sync generation attempt {attempt + 1} failed: {e!r}"
                     logger.exception("Sync generation attempt %d failed: %r", attempt + 1, e)
                     self._execute_callback_sync(chat,
-                                                       None,
-                                                       usage,
-                                                       model,
-                                                       ChatMetaModel(
-                                                           TTFB=time.time() - start_time,
-                                                           TTF=0,
-                                                           TPS=0,
-                                                           status='ERROR: ' + er))
+                                                None,
+                                                usage,
+                                                model,
+                                                ChatMetaModel(
+                                                    TTFB=time.time() - start_time,
+                                                    TTF=0,
+                                                    TPS=0,
+                                                    status='ERROR: ' + er))
 
                     if attempt == self.retry_config.attempts - 1:
                         if self.fallback:

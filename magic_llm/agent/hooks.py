@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from magic_llm.model import ModelChatResponse
 from magic_llm.agent.types import AgentState, ToolResult
+from magic_llm.model import ModelChatResponse
 
 
 @runtime_checkable

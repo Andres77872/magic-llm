@@ -11,8 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Dict, Any, List, Optional
 
-from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
 from magic_llm.engine.discovery import register_adapter
+from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
 from magic_llm.engine.discovery.capabilities import (
     CompositeCapabilityInference,
     ProviderFieldStrategy,

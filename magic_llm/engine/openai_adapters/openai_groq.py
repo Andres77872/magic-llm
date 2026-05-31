@@ -12,9 +12,9 @@ class ProviderGroq(OpenAiBaseProvider):
         )
 
     def process_chunk(
-            self, chunk: str,
-            id_generation: str = '',
-            last_chunk: ChatCompletionModel = None
+        self, chunk: str,
+        id_generation: str = '',
+        last_chunk: ChatCompletionModel = None
     ) -> ChatCompletionModel:
         if chunk.startswith('data: '):
             if '[DONE]' in chunk:

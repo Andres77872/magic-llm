@@ -11,9 +11,8 @@ No central URL table, no base_url normalization.
 
 from __future__ import annotations
 
-from typing import Dict, Type, Optional, List, Any
+from typing import Dict, Type, Optional, List
 
-from magic_llm.model.discovery import NormalizedDiscoveredModel
 from magic_llm.engine.discovery.base_discovery import (
     BaseDiscoveryAdapter,
     DiscoveryError,
@@ -21,7 +20,7 @@ from magic_llm.engine.discovery.base_discovery import (
     DiscoveryAuthError,
     DiscoveryNotFoundError,
 )
-
+from magic_llm.model.discovery import NormalizedDiscoveredModel
 
 # Adapter registry: maps engine types to discovery adapters
 # Populated by adapters on import
@@ -113,7 +112,6 @@ DISCOVERY_UNSUPPORTED_ENGINES: List[str] = [
     "azure-speech",
 ]
 
-
 __all__ = [
     # Base classes
     "BaseDiscoveryAdapter",
@@ -132,7 +130,6 @@ __all__ = [
     # Model
     "NormalizedDiscoveredModel",
 ]
-
 
 # Import the openai_compatible subpackage so all concrete adapters self-register
 from magic_llm.engine.discovery import openai_compatible  # noqa: F401, E402

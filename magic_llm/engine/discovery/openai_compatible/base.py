@@ -30,7 +30,7 @@ class OpenAICompatibleAdapter(BaseDiscoveryAdapter):
         DEFAULT_BASE_URL — full discovery endpoint URL
     """
 
-    PROVIDER: str = ""          # set by subclass
+    PROVIDER: str = ""  # set by subclass
     DEFAULT_BASE_URL: str = ""  # set by subclass
 
     # Capability inference: regex-on-name (Tier 2) + provider defaults (Tier 3)

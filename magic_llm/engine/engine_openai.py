@@ -295,7 +295,8 @@ class EngineOpenAI(BaseChat):
         """
         if hasattr(self.base, 'audio_speech'):
             return self.base.audio_speech(data, **kwargs)
-        raise NotImplementedError("Synchronous audio_speech is not implemented for this provider. Use async_audio_speech instead.")
+        raise NotImplementedError(
+            "Synchronous audio_speech is not implemented for this provider. Use async_audio_speech instead.")
 
     async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
         """

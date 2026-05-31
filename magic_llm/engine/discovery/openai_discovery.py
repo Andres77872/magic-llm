@@ -12,10 +12,10 @@ by per-provider concrete subclasses in ``openai_compatible/``. Only
 
 from __future__ import annotations
 
+from magic_llm.engine.discovery import register_adapter
 from magic_llm.engine.discovery.openai_compatible.base import (
     OpenAICompatibleAdapter,
 )
-from magic_llm.engine.discovery import register_adapter
 
 
 class OpenAIDiscoveryAdapter(OpenAICompatibleAdapter):

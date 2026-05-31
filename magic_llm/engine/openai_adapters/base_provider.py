@@ -7,12 +7,12 @@ from typing import Dict, Tuple, Optional, Any
 
 import aiohttp
 
+from magic_llm.engine.tooling import map_request_tools
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse, ModelEmbeddingResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
-from magic_llm.engine.tooling import map_request_tools
 
 logger = logging.getLogger(__name__)
 

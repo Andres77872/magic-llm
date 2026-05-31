@@ -6,7 +6,6 @@ from typing import Dict, Any, Tuple, Optional
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatResponse import Message, Choice
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 from magic_llm.util.response_mapping import (

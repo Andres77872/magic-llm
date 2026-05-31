@@ -15,11 +15,8 @@ from magic_llm.engine.base_chat import BaseChat
 from magic_llm.engine.tooling import map_request_tools
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
-from magic_llm.model.ModelChatResponse import ToolCall, FunctionCall, Choice, Message
 from magic_llm.model.ModelChatStream import (ChatCompletionModel,
-                                             UsageModel,
-                                             ChoiceModel,
-                                             DeltaModel)
+                                             UsageModel)
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 from magic_llm.util.response_mapping import (
     GOOGLE_FINISH_REASON_MAP,
@@ -205,7 +202,8 @@ class EngineGoogle(BaseChat):
         # ----------------------- Final payload ---------------------------- #
         # Extract tools/tool_choice BEFORE building generationConfig (they are not JSON serializable)
         openai_tools = kwargs.pop('tools') if 'tools' in kwargs else self.kwargs.get('tools', None)
-        openai_tool_choice = kwargs.pop('tool_choice') if 'tool_choice' in kwargs else self.kwargs.get('tool_choice', None)
+        openai_tool_choice = kwargs.pop('tool_choice') if 'tool_choice' in kwargs else self.kwargs.get('tool_choice',
+                                                                                                       None)
 
         engine_kwargs = {k: v for k, v in self.kwargs.items() if k not in {'tools', 'tool_choice'}}
         data: dict = {
@@ -338,7 +336,8 @@ class EngineGoogle(BaseChat):
         # ----------------------- Final payload ---------------------------- #
         # Extract tools/tool_choice BEFORE building generationConfig (they are not JSON serializable)
         openai_tools = kwargs.pop('tools') if 'tools' in kwargs else self.kwargs.get('tools', None)
-        openai_tool_choice = kwargs.pop('tool_choice') if 'tool_choice' in kwargs else self.kwargs.get('tool_choice', None)
+        openai_tool_choice = kwargs.pop('tool_choice') if 'tool_choice' in kwargs else self.kwargs.get('tool_choice',
+                                                                                                       None)
 
         engine_kwargs = {k: v for k, v in self.kwargs.items() if k not in {'tools', 'tool_choice'}}
         data: dict = {
@@ -362,9 +361,6 @@ class EngineGoogle(BaseChat):
 
         json_bytes = json.dumps(data).encode("utf-8")
         return json_bytes, headers, data
-
-
-
 
     # ═══════════════════════════════════════════════════════════════════
     # TRANSFORMATION METHODS

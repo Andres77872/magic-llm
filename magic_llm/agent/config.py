@@ -11,12 +11,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-
 # Feature flag: Enable subagents at repo-level
 # When False, load_subagents() returns empty results
 # Default: False for backward compatibility and safe rollout
 ENABLE_SUBAGENTS: bool = False
-
 
 # Feature flag: Enable nested LLM node execution
 # When True, tasks with nested_tools config instantiate child AsyncAgentLoop
@@ -24,22 +22,18 @@ ENABLE_SUBAGENTS: bool = False
 # Default: False for backward compatibility and safe rollout
 ENABLE_NESTED_LLM_NODES: bool = False
 
-
 # Feature flag: Enable run-local builtin todo tools in agent loops.
 # Default: True per SDD proposal; additive, in-memory only, and rollback-safe.
 ENABLE_BUILTIN_TODO_TOOLS: bool = True
-
 
 # Maximum global nesting depth (safety cap for unbounded nesting)
 # Prevents runaway nesting across different task IDs
 # Default: 10 (reasonable for most use cases)
 MAX_GLOBAL_DEPTH: int = 10
 
-
 # Maximum summary length for TaskResult
 # Prevents token blowup from long child outputs
 MAX_SUMMARY_LENGTH: int = 5000
-
 
 # Default values for SubagentManifest fields
 DEFAULT_TIMEOUT_SECONDS: int = 30

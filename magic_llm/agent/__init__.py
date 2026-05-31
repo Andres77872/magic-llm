@@ -10,20 +10,6 @@
 # Application-specific tools such as browsing are intentionally not exported
 # from magic-llm. Consumers compose those tools in their own app/package layer.
 
-# Task/Subagent Runtime Types (for MagicLLM.register_task API)
-from magic_llm.agent.types import (
-    TaskManifest,
-    TaskResult,
-    TaskError,
-    TaskBudget,
-    TaskState,
-    AgentBudget,
-    AgentState,
-)
-
-# Task/Subagent Runtime Components
-from magic_llm.agent.task_executor import TaskExecutor, reset_depths
-
 # Global Depth Helpers (for nested LLM node depth tracking)
 from magic_llm.agent._loop_shared import (
     GLOBAL_DEPTH,
@@ -36,42 +22,10 @@ from magic_llm.agent._loop_shared import (
     decrement_global_depth,
     reset_global_depth,
 )
-
-# Result Normalizer
-from magic_llm.agent.normalizer import ResultNormalizer
-
-# ─── Subagent Architecture (magic-llm owns ALL) ──────────────────────────────
-
-# Definitions (YAML manifest model)
-from magic_llm.agent.definitions import (
-    SubagentManifest,
-    BoundSubagent,
-)
-
-# Loader (YAML discovery)
-from magic_llm.agent.loader import (
-    ManifestLoader,
-    ManifestLoadError,
-)
-
-# Registry (instance-scoped, NO global state)
-from magic_llm.agent.registry import (
-    SubagentRegistry,
-    RegistryBackend,
-)
-
 # Binder (manifest + callable joiner)
 from magic_llm.agent.binder import Binder
-
 # Bundle (schema/callable container)
 from magic_llm.agent.bundle import SubagentBundle
-
-# Decorator (explicit registry dict, NO global state)
-from magic_llm.agent.decorator import (
-    subagent,
-    register_callable,
-)
-
 # Config (repo-level flags and defaults)
 from magic_llm.agent.config import (
     is_subagents_enabled,
@@ -89,7 +43,16 @@ from magic_llm.agent.config import (
     ENABLE_NESTED_LLM_NODES,
     MAX_GLOBAL_DEPTH,
 )
-
+# Decorator (explicit registry dict, NO global state)
+from magic_llm.agent.decorator import (
+    subagent,
+    register_callable,
+)
+# Definitions (YAML manifest model)
+from magic_llm.agent.definitions import (
+    SubagentManifest,
+    BoundSubagent,
+)
 # Errors (registration/validation/lookup errors)
 from magic_llm.agent.errors import (
     DuplicateSubagentError,
@@ -97,6 +60,32 @@ from magic_llm.agent.errors import (
     BinderValidationError,
     UnknownSubagentError,
 )
+# Loader (YAML discovery)
+from magic_llm.agent.loader import (
+    ManifestLoader,
+    ManifestLoadError,
+)
+# Result Normalizer
+from magic_llm.agent.normalizer import ResultNormalizer
+# Registry (instance-scoped, NO global state)
+from magic_llm.agent.registry import (
+    SubagentRegistry,
+    RegistryBackend,
+)
+# Task/Subagent Runtime Components
+from magic_llm.agent.task_executor import TaskExecutor, reset_depths
+# Task/Subagent Runtime Types (for MagicLLM.register_task API)
+from magic_llm.agent.types import (
+    TaskManifest,
+    TaskResult,
+    TaskError,
+    TaskBudget,
+    TaskState,
+    AgentBudget,
+    AgentState,
+)
+
+# ─── Subagent Architecture (magic-llm owns ALL) ──────────────────────────────
 
 __all__ = [
     # Task/Subagent Runtime Types

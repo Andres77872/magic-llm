@@ -12,9 +12,9 @@ class ProviderOpenRouter(OpenAiBaseProvider):
         )
 
     def process_chunk(
-            self, chunk: str,
-            id_generation: str = '',
-            last_chunk: ChatCompletionModel = None
+        self, chunk: str,
+        id_generation: str = '',
+        last_chunk: ChatCompletionModel = None
     ) -> ChatCompletionModel | None:
         """Pure SSE-to-model transformation — no HTTP calls, no side effects.
 

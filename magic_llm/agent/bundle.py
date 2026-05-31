@@ -12,9 +12,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict
 
+from magic_llm.agent.binder import Binder
 from magic_llm.agent.definitions import SubagentManifest
 from magic_llm.agent.registry import SubagentRegistry
-from magic_llm.agent.binder import Binder
 
 logger = logging.getLogger(__name__)
 

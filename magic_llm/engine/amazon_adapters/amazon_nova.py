@@ -4,7 +4,6 @@ import time
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
 from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatResponse import Choice, Message
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 from magic_llm.util.response_mapping import (
     AMAZON_FINISH_REASON_MAP,

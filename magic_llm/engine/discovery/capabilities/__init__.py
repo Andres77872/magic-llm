@@ -9,18 +9,18 @@ Tiers (in priority order):
     3. ProviderDefaultsStrategy — per-provider baseline defaults
 """
 
+from magic_llm.engine.discovery.capabilities.models import (
+    VISION_PATTERNS,
+    EMBEDDING_PATTERNS,
+    FUNCTION_CALLING_PATTERNS,
+    CONTEXT_WINDOW_MAP,
+)
 from magic_llm.engine.discovery.capabilities.strategies import (
     CapabilityInferenceStrategy,
     ModelNameRegexStrategy,
     ProviderDefaultsStrategy,
     ProviderFieldStrategy,
     CompositeCapabilityInference,
-)
-from magic_llm.engine.discovery.capabilities.models import (
-    VISION_PATTERNS,
-    EMBEDDING_PATTERNS,
-    FUNCTION_CALLING_PATTERNS,
-    CONTEXT_WINDOW_MAP,
 )
 
 __all__ = [

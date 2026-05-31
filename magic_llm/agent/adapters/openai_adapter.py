@@ -8,15 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.agent.types import CanonicalToolCall, ToolResult
 from magic_llm.agent.tool_adapters import ToolAdapter
+from magic_llm.agent.types import CanonicalToolCall, ToolResult
 from magic_llm.engine.tooling import (
     append_tool_results,
     extract_tool_calls,
     map_request_tools,
     validate_tool_result_integrity,
 )
+from magic_llm.model import ModelChat, ModelChatResponse
 
 
 class OpenAIToolAdapter(ToolAdapter):

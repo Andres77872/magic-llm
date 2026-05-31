@@ -10,20 +10,12 @@ from magic_llm.engine.tooling import AnthropicStreamState, map_request_tools
 from magic_llm.model import ModelChat, ModelChatResponse
 
 logger = logging.getLogger(__name__)
-from magic_llm.model.ModelChatResponse import (
-    ToolCall as RespToolCall,
-    FunctionCall as RespFunctionCall,
-    Message,
-    Choice,
-)
 from magic_llm.model.ModelChatStream import (
     ChatCompletionModel,
     UsageModel,
     ChoiceModel,
     DeltaModel,
     PromptTokensDetailsModel,
-    ToolCall as StreamToolCall,
-    FunctionCall as StreamFunctionCall,
 )
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 from magic_llm.util.response_mapping import (
@@ -108,16 +100,16 @@ class EngineAnthropic(BaseChat):
             meta = event['message']['usage']
             usage = UsageModel(
                 prompt_tokens=(
-                        meta['input_tokens']
-                        + meta.get('cache_read_input_tokens', 0)
-                        + meta.get('cache_creation_input_tokens', 0)
+                    meta['input_tokens']
+                    + meta.get('cache_read_input_tokens', 0)
+                    + meta.get('cache_creation_input_tokens', 0)
                 ),
                 completion_tokens=meta['output_tokens'],
                 total_tokens=(
-                        meta['input_tokens']
-                        + meta['output_tokens']
-                        + meta.get('cache_read_input_tokens', 0)
-                        + meta.get('cache_creation_input_tokens', 0)
+                    meta['input_tokens']
+                    + meta['output_tokens']
+                    + meta.get('cache_read_input_tokens', 0)
+                    + meta.get('cache_creation_input_tokens', 0)
                 ),
                 prompt_tokens_details=PromptTokensDetailsModel(cached_tokens=meta.get('cache_read_input_tokens', 0)),
             )

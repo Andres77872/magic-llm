@@ -6,8 +6,7 @@ from typing import Dict, Any, Tuple, Optional
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatResponse import Message, Choice
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 from magic_llm.util.response_mapping import (
     build_response,
@@ -17,6 +16,7 @@ from magic_llm.util.response_mapping import (
 
 class EngineCloudFlare(BaseChat):
     engine = 'cloudflare'
+
     def __init__(self,
                  api_key: str,
                  account_id: str,
@@ -161,10 +161,10 @@ class EngineCloudFlare(BaseChat):
 
         async with AsyncHttpClient() as client:
             async for event in client.post_stream(
-                    self.url,
-                    data=json_data,
-                    headers=headers,
-                    timeout=kwargs.get('timeout', 30)
+                self.url,
+                data=json_data,
+                headers=headers,
+                timeout=kwargs.get('timeout', 30)
             ):
                 event = event.decode('utf-8').strip()
                 if event != '\n' and event and event != 'data: [DONE]':

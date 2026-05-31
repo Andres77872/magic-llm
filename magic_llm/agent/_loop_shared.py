@@ -37,23 +37,20 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
-from magic_llm.model import ModelChat, ModelChatResponse
+from magic_llm.agent.builtin_tools import TODO_TOOL_NAMES
+from magic_llm.agent.tool_executor import ToolExecutor
 from magic_llm.agent.types import (
     AgentBudget,
     AgentBudgetExceeded,
     AgentState,
-    CanonicalToolCall,
     TaskManifest,
 )
-from magic_llm.agent.tool_executor import ToolExecutor
-from magic_llm.agent.builtin_tools import TODO_TOOL_NAMES
+from magic_llm.model import ModelChat, ModelChatResponse
 
 if TYPE_CHECKING:
-    from magic_llm.agent.hooks import AgentHooks
-
+    pass
 
 logger = logging.getLogger(__name__)
-
 
 # ─── Global Depth ContextVar ───────────────────────────────────────────────────
 # Tracks total nesting depth across all task IDs (safety cap for unbounded nesting).
@@ -63,7 +60,6 @@ GLOBAL_DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar(
     'global_depth',
     default=0
 )
-
 
 # ─── Parent Context ContextVars ─────────────────────────────────────────────────
 # For budget cascade computation: child needs to know parent's remaining budget.

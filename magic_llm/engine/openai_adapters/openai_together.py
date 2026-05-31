@@ -1,5 +1,3 @@
-import json
-
 from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
 from magic_llm.model.ModelAudio import AudioSpeechRequest
 from magic_llm.util.http import AsyncHttpClient, HttpClient

@@ -2,7 +2,6 @@ import json
 import logging
 import subprocess
 import sys
-import textwrap
 
 logger = logging.getLogger(__name__)
 

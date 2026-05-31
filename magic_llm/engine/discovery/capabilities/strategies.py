@@ -13,13 +13,12 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from magic_llm.engine.discovery.capabilities.models import (
     VISION_PATTERNS,
     EMBEDDING_PATTERNS,
     FUNCTION_CALLING_PATTERNS,
-    CONTEXT_WINDOW_MAP,
 )
 from magic_llm.model.discovery import ModelCapabilities
 
@@ -177,19 +176,19 @@ class ProviderFieldStrategy(CapabilityInferenceStrategy):
         },
         "google": {
             "chat": lambda d: "generateContent"
-            in d.get("supportedGenerationMethods", []),
+                              in d.get("supportedGenerationMethods", []),
             "embedding": lambda d: "embedContent"
-            in d.get("supportedGenerationMethods", []),
+                                   in d.get("supportedGenerationMethods", []),
         },
         "openrouter": {
             "vision": lambda d: "image"
-            in d.get("architecture", {})
-            .get("modality", {})
-            .get("input", []),
+                                in d.get("architecture", {})
+                                .get("modality", {})
+                                .get("input", []),
             "audio_input": lambda d: "audio"
-            in d.get("architecture", {})
-            .get("modality", {})
-            .get("input", []),
+                                     in d.get("architecture", {})
+                                     .get("modality", {})
+                                     .get("input", []),
         },
     }
 
