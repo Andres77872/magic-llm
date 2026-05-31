@@ -21,7 +21,7 @@ def _has_image_content(messages: list[dict]) -> bool:
 
 class AmazonBaseProvider(ABC):
     supports_vision: bool = False
-    
+
     def __init__(self,
                  aws_access_key_id: Optional[str] = None,
                  aws_secret_access_key: Optional[str] = None,
@@ -64,7 +64,7 @@ class AmazonBaseProvider(ABC):
     def _validate_vision_support(self, chat: ModelChat) -> None:
         """
         Validate that provider supports images if the chat contains them.
-        
+
         Raises:
             ChatException: If request contains images but provider doesn't support vision
         """

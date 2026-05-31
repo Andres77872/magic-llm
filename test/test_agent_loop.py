@@ -393,10 +393,10 @@ class TestInvokeHookSafely:
     def test_invoke_hook_safely_logs_with_state_context(self):
         """Hook failures are logged with state context when provided."""
         from magic_llm.agent.types import AgentState
-        
+
         def hook():
             raise ValueError("boom")
-        
+
         state = AgentState(
             messages=[],
             step=5,
@@ -404,7 +404,7 @@ class TestInvokeHookSafely:
             total_input_tokens=100,
             total_output_tokens=50,
         )
-        
+
         # Exception should be logged with state context but NOT raised
         _invoke_hook_safely(hook, state=state)  # no crash
 

@@ -293,7 +293,7 @@ def test_non_openai_provider_keeps_max_tokens(chat_simple):
     body_bytes, _ = prov.transform_request(chat_simple, max_tokens=512)
     body = _decode_body(body_bytes)
     assert body.get("max_tokens") == 512
-    assert "max_completion_tokens" not in body 
+    assert "max_completion_tokens" not in body
 
 
 # ─── json_output/json_mode → response_format mapping ───────────────────

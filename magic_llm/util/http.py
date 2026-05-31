@@ -211,7 +211,7 @@ class HttpClient:
             if hasattr(e, 'response') and hasattr(e.response, 'content'):
                 error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
                 logger.error(f"Request to {url} failed: {error_message}")
-                raise HttpError(error_message, 
+                raise HttpError(error_message,
                                getattr(e.response, 'status_code', None),
                                getattr(e.response, 'content', None))
             logger.error(f"Request to {url} failed with requests error: {str(e)}")

@@ -46,9 +46,9 @@ class TestComputeChildBudget:
         )
         parent_budget = AgentBudget(max_iterations=20)
         parent_state = AgentState(step=5, start_time=time.monotonic())
-        
+
         result = _compute_child_budget(manifest, parent_budget, parent_state)
-        
+
         # Child uses own budget exclusively
         assert result.max_iterations == 10
 
@@ -60,9 +60,9 @@ class TestComputeChildBudget:
         )
         parent_budget = AgentBudget(max_iterations=20)
         parent_state = AgentState(step=5, start_time=time.monotonic())
-        
+
         result = _compute_child_budget(manifest, parent_budget, parent_state)
-        
+
         # Child uses default budget
         assert result.max_iterations == 150  # AgentBudget default
 
@@ -74,9 +74,9 @@ class TestComputeChildBudget:
         )
         parent_budget = AgentBudget(max_iterations=10)
         parent_state = AgentState(step=2, start_time=time.monotonic())  # 8 remaining
-        
+
         result = _compute_child_budget(manifest, parent_budget, parent_state)
-        
+
         # Intersection: min(3, 8) = 3
         assert result.max_iterations == 3
 
@@ -88,9 +88,9 @@ class TestComputeChildBudget:
         )
         parent_budget = AgentBudget(max_iterations=10)
         parent_state = AgentState(step=8, start_time=time.monotonic())  # 2 remaining
-        
+
         result = _compute_child_budget(manifest, parent_budget, parent_state)
-        
+
         # Intersection: min(5, 2) = 2 (parent remaining enforced)
         assert result.max_iterations == 2
 
@@ -102,9 +102,9 @@ class TestComputeChildBudget:
         )
         parent_budget = AgentBudget(max_iterations=10)
         parent_state = AgentState(step=3, start_time=time.monotonic())  # 7 remaining
-        
+
         result = _compute_child_budget(manifest, parent_budget, parent_state)
-        
+
         # Child inherits parent remaining budget
         assert result.max_iterations == 7
 
@@ -114,9 +114,9 @@ class TestComputeChildBudget:
             budget_cascade=False,
             nested_budget=None,
         )
-        
+
         result = _compute_child_budget(manifest, None, None)
-        
+
         # Standalone execution uses default budget
         assert result.max_iterations == 150  # AgentBudget default
 
@@ -126,9 +126,9 @@ class TestComputeChildBudget:
             budget_cascade=False,
             nested_budget=AgentBudget(max_iterations=15),
         )
-        
+
         result = _compute_child_budget(manifest, None, None)
-        
+
         # Uses provided nested_budget
         assert result.max_iterations == 15
 
@@ -148,9 +148,9 @@ class TestComputeChildBudget:
         # Elapsed 5 seconds, remaining ~10 seconds
         start_time = time.monotonic() - 5.0
         parent_state = AgentState(step=3, start_time=start_time)
-        
+
         result = _compute_child_budget(manifest, parent_budget, parent_state)
-        
+
         # Intersection: min(10.0, ~10.0) = ~10.0 (allow floating-point tolerance)
         assert result.wall_clock_timeout is not None
         assert abs(result.wall_clock_timeout - 10.0) < 0.1  # Tolerance for timing
@@ -176,9 +176,9 @@ class TestComputeChildBudget:
             total_output_tokens=400,  # 600 remaining
             start_time=time.monotonic(),
         )
-        
+
         result = _compute_child_budget(manifest, parent_budget, parent_state)
-        
+
         # Intersection: min(1000, 500) = 500 for input tokens
         # Intersection: min(500, 600) = 500 for output tokens
         assert result.max_input_tokens == 500
@@ -192,8 +192,8 @@ class TestComputeChildBudget:
         )
         parent_budget = AgentBudget(max_iterations=10)
         parent_state = AgentState(step=10, start_time=time.monotonic())  # 0 remaining
-        
+
         result = _compute_child_budget(manifest, parent_budget, parent_state)
-        
+
         # Child gets 0 iterations (parent exhausted)
         assert result.max_iterations == 0

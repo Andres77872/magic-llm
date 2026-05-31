@@ -398,9 +398,9 @@ def _invoke_hook_safely(
     """
     if hook_method is None:
         return
-    
+
     hook_name = getattr(hook_method, "__name__", "unknown_hook")
-    
+
     try:
         hook_method(*args)
     except Exception as e:
@@ -408,7 +408,7 @@ def _invoke_hook_safely(
         timestamp = datetime.now(timezone.utc).isoformat()
         error_type = type(e).__name__
         error_message = str(e)
-        
+
         # Build state context for logging
         state_context = {}
         if state is not None:
@@ -418,7 +418,7 @@ def _invoke_hook_safely(
                 "total_input_tokens": state.total_input_tokens,
                 "total_output_tokens": state.total_output_tokens,
             }
-        
+
         logger.warning(
             "Hook '%s' raised exception: %s: %s",
             hook_name,

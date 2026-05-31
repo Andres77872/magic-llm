@@ -30,7 +30,7 @@ _ADAPTER_REGISTRY: Dict[str, Type[BaseDiscoveryAdapter]] = {}
 
 def register_adapter(engine: str, adapter_class: Type[BaseDiscoveryAdapter]) -> None:
     """Register a discovery adapter for an engine type.
-    
+
     Args:
         engine: Engine identifier (openai, anthropic, etc.)
         adapter_class: Discovery adapter class
@@ -40,10 +40,10 @@ def register_adapter(engine: str, adapter_class: Type[BaseDiscoveryAdapter]) -> 
 
 def get_adapter(engine: str) -> Optional[Type[BaseDiscoveryAdapter]]:
     """Get the discovery adapter for an engine type.
-    
+
     Args:
         engine: Engine identifier
-        
+
     Returns:
         Adapter class if registered, None otherwise
     """
@@ -52,10 +52,10 @@ def get_adapter(engine: str) -> Optional[Type[BaseDiscoveryAdapter]]:
 
 def supports_discovery(engine: str) -> bool:
     """Check if an engine supports model discovery.
-    
+
     Args:
         engine: Engine identifier
-        
+
     Returns:
         True if adapter registered, False otherwise
     """
@@ -64,11 +64,11 @@ def supports_discovery(engine: str) -> bool:
 
 def list_supported_engines() -> List[str]:
     """Return the list of engine names that have a registered discovery adapter.
-    
+
     This is the public surface for downstream consumers (e.g. ``api.magic_llm``)
     to enumerate supported discovery engines without reaching into the private
     ``_ADAPTER_REGISTRY``.
-    
+
     Returns:
         Sorted list of engine names with registered discovery adapters.
     """

@@ -86,7 +86,7 @@ def _has_image_content(messages: list[dict]) -> bool:
 
 class OpenAiBaseProvider(ABC):
     supports_vision: bool = True
-    
+
     def __init__(self,
                  base_url: str,
                  api_key: str,
@@ -147,7 +147,7 @@ class OpenAiBaseProvider(ABC):
         images can override this method to filter or transform image content.
         """
         messages = chat.get_messages()
-        
+
         # Strip non-standard is_error field from tool messages.
         # is_error is stored in ModelChat for internal debugging/tracing but is NOT
         # part of the OpenAI-compatible spec — strict providers may reject it.
@@ -163,7 +163,7 @@ class OpenAiBaseProvider(ABC):
                         f"Model '{self.model}' cannot process images. Remove images or use a vision-capable provider.",
                 error_code='VISION_NOT_SUPPORTED'
             )
-        
+
         for message in messages:
             if message['role'] == 'user' and isinstance(message['content'], list):
                 for item in message['content']:

@@ -4,7 +4,7 @@ import pytest
 from magic_llm.model import ModelChat
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.engine.openai_adapters.base_provider import (
-    OpenAiBaseProvider, 
+    OpenAiBaseProvider,
     _has_image_content
 )
 from magic_llm.engine.amazon_adapters.base_provider import (
@@ -101,7 +101,7 @@ class TestVisionCapabilityCheck:
 
 class VisionUnsupportedProvider(OpenAiBaseProvider):
     supports_vision = False
-    
+
     def __init__(self, **kwargs):
         super().__init__(base_url="https://test.example.com/v1", api_key="test", **kwargs)
 
@@ -112,11 +112,11 @@ class TestVisionValidation:
             supports_vision = True
             def __init__(self, **kwargs):
                 super().__init__(base_url="https://test.example.com/v1", api_key="test", **kwargs)
-        
+
         provider = VisionProvider(model="test-model")
         chat = ModelChat()
         chat.add_user_message("Describe", image=f"data:image/png;base64,{PNG_1x1_BASE64}")
-        
+
         data, headers = provider.transform_request(chat)
         assert data is not None
 
@@ -124,10 +124,10 @@ class TestVisionValidation:
         provider = VisionUnsupportedProvider(model="test-model")
         chat = ModelChat()
         chat.add_user_message("Describe", image=f"data:image/png;base64,{PNG_1x1_BASE64}")
-        
+
         with pytest.raises(ChatException) as exc_info:
             provider.transform_request(chat)
-        
+
         assert exc_info.value.error_code == 'VISION_NOT_SUPPORTED'
         assert 'does not support image' in exc_info.value.message.lower()
 
@@ -135,21 +135,21 @@ class TestVisionValidation:
         provider = VisionUnsupportedProvider(model="test-model")
         chat = ModelChat()
         chat.add_user_message("Just text")
-        
+
         data, headers = provider.transform_request(chat)
         assert data is not None
 
 
 class MockAmazonProviderNoVision(AmazonBaseProvider):
     supports_vision = False
-    
+
     def transform_request(self, chat, **kwargs):
         self._validate_vision_support(chat)
         return '{"prompt": "test"}'
-    
+
     def transform_response(self, response):
         pass
-    
+
     def transform_stream_chunk(self, event):
         pass
 
@@ -159,16 +159,16 @@ class TestAmazonVisionValidation:
         provider = MockAmazonProviderNoVision(model="meta.llama")
         chat = ModelChat()
         chat.add_user_message("Describe", image=f"data:image/png;base64,{PNG_1x1_BASE64}")
-        
+
         with pytest.raises(ChatException) as exc_info:
             provider.transform_request(chat)
-        
+
         assert exc_info.value.error_code == 'VISION_NOT_SUPPORTED'
 
     def test_amazon_validate_vision_passes_without_images(self):
         provider = MockAmazonProviderNoVision(model="meta.llama")
         chat = ModelChat()
         chat.add_user_message("Just text")
-        
+
         result = provider.transform_request(chat)
         assert result is not None

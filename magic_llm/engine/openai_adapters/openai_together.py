@@ -31,7 +31,7 @@ class ProviderTogether(OpenAiBaseProvider):
 
         if 'language' in kwargs:
             payload['language'] = kwargs['language']
-            
+
         async with AsyncHttpClient() as client:
             response = await client.post_raw_binary(
                 url=self.base_url + '/audio/generations',
@@ -53,7 +53,7 @@ class ProviderTogether(OpenAiBaseProvider):
 
         if 'language' in kwargs:
             payload['language'] = kwargs['language']
-                    
+
         with HttpClient() as client:
             response = client.post_raw_binary(
                 url=self.base_url + '/audio/generations',

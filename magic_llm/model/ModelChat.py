@@ -206,10 +206,10 @@ class ModelChat:
     def _estimate_image_tokens(self, image_url: str) -> int:
         """
         Estimate token count for an image based on base64 payload size.
-        
+
         For data URIs: extracts base64 payload and estimates tokens.
         For HTTP URLs: uses a fixed low estimate (provider fetches separately).
-        
+
         Base64 token estimation: ~4 characters per token (tiktoken approximation).
         """
         if image_url.startswith('data:'):
@@ -223,10 +223,10 @@ class ModelChat:
     def _count_content_tokens(self, content) -> int:
         """
         Count tokens for message content, handling both string and multimodal (list) formats.
-        
+
         Args:
             content: Either a string or a list of content parts (multimodal)
-            
+
         Returns:
             Estimated token count
         """
@@ -249,7 +249,7 @@ class ModelChat:
     def num_tokens_from_messages(self, messages: list[dict] = None) -> int:
         """
         Calculate the total number of tokens in messages.
-        
+
         Handles both string content and multimodal content (lists with text/image parts).
         Image tokens are estimated based on base64 payload size.
 

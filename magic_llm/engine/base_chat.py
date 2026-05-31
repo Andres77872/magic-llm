@@ -591,15 +591,15 @@ class BaseChat(abc.ABC):
 
     def list_models(self) -> List["NormalizedDiscoveredModel"]:
         """Discover available models from the provider's listing API.
-        
+
         Delegates to :meth:`MagicLlmBase._resolve_discovery_adapter` using
         the chat instance's engine name and credentials. The chat ``base_url``
         is deliberately NOT reused — each discovery adapter owns its own
         endpoint URL.
-        
+
         Returns:
             List of NormalizedDiscoveredModel objects
-            
+
         Raises:
             NotImplementedError: Engine has no registered discovery adapter.
             DiscoveryError: Provider API unreachable or returned an error.
@@ -608,7 +608,7 @@ class BaseChat(abc.ABC):
         """
         from magic_llm.base import MagicLlmBase
         from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
-        
+
         creds = BaseDiscoveryAdapter.resolve_credentials(self)
         adapter = MagicLlmBase._resolve_discovery_adapter(
             engine=self.engine,
@@ -616,15 +616,15 @@ class BaseChat(abc.ABC):
             base_url=None,  # adapter default — not chat base_url
         )
         return adapter.discover()
-    
+
     async def async_list_models(self) -> List["NormalizedDiscoveredModel"]:
         """Async variant of :meth:`list_models`.
-        
+
         Delegates to the async discovery adapter path.
-        
+
         Returns:
             List of NormalizedDiscoveredModel objects
-            
+
         Raises:
             NotImplementedError: Engine has no registered discovery adapter.
             DiscoveryError: Provider API unreachable or returned an error.
@@ -633,7 +633,7 @@ class BaseChat(abc.ABC):
         """
         from magic_llm.base import MagicLlmBase
         from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
-        
+
         creds = BaseDiscoveryAdapter.resolve_credentials(self)
         adapter = MagicLlmBase._resolve_discovery_adapter(
             engine=self.engine,

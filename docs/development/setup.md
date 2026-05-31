@@ -12,6 +12,21 @@ pip install -e .
 
 The project uses setuptools through `setup.cfg` and `pyproject.toml`.
 
+## Pre-commit hooks
+
+Install hook tooling into the active virtual environment, then register the repository hooks:
+
+```bash
+python -m pip install pre-commit
+python -m pre_commit install
+```
+
+Before opening a PR, run:
+
+```bash
+python -m pre_commit run --all-files
+```
+
 ## Python version
 
 Use Python 3.10+. The codebase uses `str | None` syntax and other modern typing forms.
