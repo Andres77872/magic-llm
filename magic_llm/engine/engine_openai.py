@@ -15,9 +15,10 @@ from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               ProviderDeepInfra,
                                               ProviderTogether,
                                               OpenAiBaseProvider)
+from magic_llm.engine._usage_factory import build_usage_model
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,7 @@ class EngineOpenAI(BaseChat):
                 'completion_tokens': u['native_tokens_completion'],
                 'prompt_tokens': u['native_tokens_prompt'],
                 'total_tokens': u['native_tokens_prompt'] + u['native_tokens_completion'],
+                'provider_request_id': id_generation,
             }
 
     def _poll_openrouter_usage_sync(
@@ -165,6 +167,7 @@ class EngineOpenAI(BaseChat):
                 'completion_tokens': u['native_tokens_completion'],
                 'prompt_tokens': u['native_tokens_prompt'],
                 'total_tokens': u['native_tokens_prompt'] + u['native_tokens_completion'],
+                'provider_request_id': id_generation,
             }
 
     @BaseChat.async_intercept_generate
@@ -212,7 +215,7 @@ class EngineOpenAI(BaseChat):
                         id_generation, self.base.headers, kwargs.get('timeout', 30)
                     )
                     if last_chunk and usage:
-                        last_chunk.usage = UsageModel(**usage)
+                        last_chunk.usage = build_usage_model(**usage, provider_extra={'id_generation': id_generation})
                 except Exception as e:
                     logger.warning(f"OpenRouter usage polling failed: {e}")
 
@@ -240,7 +243,7 @@ class EngineOpenAI(BaseChat):
                         id_generation, self.base.headers, kwargs.get('timeout', 30)
                     )
                     if last_chunk and usage:
-                        last_chunk.usage = UsageModel(**usage)
+                        last_chunk.usage = build_usage_model(**usage, provider_extra={'id_generation': id_generation})
                 except Exception as e:
                     logger.warning(f"OpenRouter usage polling failed: {e}")
 
@@ -280,7 +283,10 @@ class EngineOpenAI(BaseChat):
         Returns:
             The audio speech response
         """
-        return await self.base.async_audio_speech(data, **kwargs)
+        return await self._retry_async_media(
+            lambda: self.base.async_audio_speech(data, **kwargs),
+            method='async_audio_speech',
+        )
 
     def audio_speech(self, data: AudioSpeechRequest, **kwargs):
         """
@@ -293,10 +299,10 @@ class EngineOpenAI(BaseChat):
         Returns:
             The audio speech response
         """
-        if hasattr(self.base, 'audio_speech'):
-            return self.base.audio_speech(data, **kwargs)
-        raise NotImplementedError(
-            "Synchronous audio_speech is not implemented for this provider. Use async_audio_speech instead.")
+        return self._retry_sync_media(
+            lambda: self.base.audio_speech(data, **kwargs),
+            method='audio_speech',
+        )
 
     async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
         """
@@ -309,7 +315,10 @@ class EngineOpenAI(BaseChat):
         Returns:
             The audio transcriptions response
         """
-        return await self.base.async_audio_transcriptions(data, **kwargs)
+        return await self._retry_async_media(
+            lambda: self.base.async_audio_transcriptions(data, **kwargs),
+            method='async_audio_transcriptions',
+        )
 
     def sync_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
         """
@@ -322,4 +331,7 @@ class EngineOpenAI(BaseChat):
         Returns:
             The audio transcriptions response
         """
-        return self.base.sync_audio_transcriptions(data, **kwargs)
+        return self._retry_sync_media(
+            lambda: self.base.sync_audio_transcriptions(data, **kwargs),
+            method='sync_audio_transcriptions',
+        )

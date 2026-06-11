@@ -5,6 +5,7 @@ from typing import Dict, Any, Tuple, Optional
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.engine.tooling import guard_tools_supported
+from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
@@ -25,7 +26,25 @@ class EngineCloudFlare(BaseChat):
         self.url = f'https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{self.model}'
         self.api_key = api_key
 
+    @staticmethod
+    def _has_image_content(chat: ModelChat) -> bool:
+        for msg in chat.get_messages():
+            content = msg.get('content')
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get('type') == 'image_url':
+                        return True
+        return False
+
     def prepare_data(self, chat: ModelChat, **kwargs):
+        if self._has_image_content(chat):
+            raise ChatException(
+                message=(
+                    f"Provider 'Cloudflare' does not support image/vision inputs for model '{self.model}'. "
+                    "Remove images or use a vision-capable provider."
+                ),
+                error_code='VISION_NOT_SUPPORTED',
+            )
         guard_tools_supported(
             'Cloudflare',
             kwargs.get('tools', self.kwargs.get('tools')),

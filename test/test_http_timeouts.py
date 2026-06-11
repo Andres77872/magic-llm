@@ -68,7 +68,7 @@ class TestAsyncHttpClientTimeouts:
 
     @pytest.mark.asyncio
     async def test_stream_request_default_timeout(self):
-        """AsyncHttpClient.stream_request() uses total=30 default."""
+        """AsyncHttpClient.stream_request() uses per-read timeout=30 default."""
         client = AsyncHttpClient()
         client.session = MagicMock()
 
@@ -89,11 +89,12 @@ class TestAsyncHttpClientTimeouts:
 
         call_kwargs = client.session.request.call_args[1]
         timeout = call_kwargs["timeout"]
-        assert timeout.total == 30
+        assert timeout.total is None
+        assert timeout.sock_read == 30
 
     @pytest.mark.asyncio
     async def test_stream_request_explicit_timeout(self):
-        """AsyncHttpClient.stream_request() respects explicit timeout."""
+        """AsyncHttpClient.stream_request() respects explicit per-read timeout."""
         client = AsyncHttpClient()
         client.session = MagicMock()
 
@@ -112,7 +113,8 @@ class TestAsyncHttpClientTimeouts:
 
         call_kwargs = client.session.request.call_args[1]
         timeout = call_kwargs["timeout"]
-        assert timeout.total == 60
+        assert timeout.total is None
+        assert timeout.sock_read == 60
 
 
 class TestSyncHttpClientTimeouts:

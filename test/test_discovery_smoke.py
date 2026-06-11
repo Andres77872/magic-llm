@@ -1,8 +1,9 @@
 """Real-API smoke tests for model discovery.
 
-Calls discovery endpoints against real provider endpoints.  Marked with
-``pytest.mark.provider_health`` (not ``provider_functional``) to distinguish
-from generation/streaming provider tests.
+Calls discovery endpoints against real provider endpoints. Marked with both
+``pytest.mark.provider_health`` and ``pytest.mark.provider_functional`` so
+default offline gates and legacy ``not provider_functional`` commands never
+select it accidentally.
 
 Coverage (Tier 1 + Tier 2)::
 
@@ -27,11 +28,10 @@ Coverage (Tier 1 + Tier 2)::
 
 Key semantics
 -------------
-Every provider declared in the test list is ALWAYS parametrised.  If a
-key-required provider lacks credentials in the keys file, its test case
-*FAILS* with a clear error — there is no silent filtering or skipping.
-This is intentional: the user's rule is "missing key = real error", not
-"missing key = skip and pretend it's fine".
+Every provider declared in the test list is ALWAYS parametrised. Credential
+files are loaded lazily through fixtures only when these live tests are
+explicitly selected. Missing credentials skip selected provider cases without
+aborting offline collection.
 
 Two test paths
 --------------
@@ -55,22 +55,14 @@ Therefore:
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from conftest import resolve_keys_file
+from conftest import get_provider_key
 from magic_llm import MagicLLM
 from magic_llm.base import MagicLlmBase
 from magic_llm.engine.discovery import supports_discovery
 
-pytestmark = pytest.mark.provider_health
-
-# ── Key resolution ──────────────────────────────────────────────────────────
-
-_KEYS_FILE = resolve_keys_file()
-with open(_KEYS_FILE) as _f:
-    _ALL_KEYS = json.load(_f)
+pytestmark = [pytest.mark.provider_health, pytest.mark.provider_functional]
 
 # ── Provider matrix ─────────────────────────────────────────────────────────
 # Fields: (engine_name, key_name_in_json, min_models, is_core_engine, requires_key)
@@ -116,28 +108,19 @@ _ENGINE_IDS = [e[0] for e in _ALL_PROVIDERS]
 # ── Discovery helpers ───────────────────────────────────────────────────────
 
 
-def _resolve_key(engine: str, key_name: str, requires_key: bool) -> str | None:
+def _resolve_key(provider_keys: dict, engine: str, key_name: str, requires_key: bool) -> str | None:
     """Resolve ``api_key`` for *engine*.
-
-    If the provider requires a key and it is not in the keys file, this calls
-    ``pytest.fail()`` with a clear error — no silent skipping.
 
     If the provider does NOT require a key (OpenRouter), returns ``None``.
     """
     if not requires_key:
         return None
 
-    entry = _ALL_KEYS.get(key_name)
-    if entry is None:
-        pytest.fail(
-            f"Provider '{engine}' requires key '{key_name}' but it is "
-            f"not present in the keys file ({_KEYS_FILE}).  "
-            "Set the missing key or remove this provider from the test list.",
-        )
+    entry = get_provider_key(provider_keys, engine, key_name)
     return entry.get("private_key")
 
 
-def _discover_models(engine: str) -> list:
+def _discover_models(provider_keys: dict, engine: str) -> list:
     """Call the real discovery endpoint for *engine* and return model list.
 
     Two code paths:
@@ -154,11 +137,11 @@ def _discover_models(engine: str) -> list:
     _is_core = entry[3]
     _requires_key = entry[4]
 
-    api_key = _resolve_key(engine, _key_name, _requires_key)
+    api_key = _resolve_key(provider_keys, engine, _key_name, _requires_key)
 
     if _is_core:
         # ── Outside-in path (public API) ────────────────────────────────────
-        key_data = dict(_ALL_KEYS[_key_name])
+        key_data = get_provider_key(provider_keys, engine, _key_name)
         key_data.pop("engine", None)  # would conflict with explicit engine=
         client = MagicLLM(engine=engine, **key_data)
         return client.list_models()
@@ -176,17 +159,17 @@ def _discover_models(engine: str) -> list:
 
 
 @pytest.mark.asyncio
-async def _async_discover_models(engine: str) -> list:
+async def _async_discover_models(provider_keys: dict, engine: str) -> list:
     """Async variant of :func:`_discover_models`."""
     entry = next(e for e in _ALL_PROVIDERS if e[0] == engine)
     _key_name = entry[1]
     _is_core = entry[3]
     _requires_key = entry[4]
 
-    api_key = _resolve_key(engine, _key_name, _requires_key)
+    api_key = _resolve_key(provider_keys, engine, _key_name, _requires_key)
 
     if _is_core:
-        key_data = dict(_ALL_KEYS[_key_name])
+        key_data = get_provider_key(provider_keys, engine, _key_name)
         key_data.pop("engine", None)
         client = MagicLLM(engine=engine, **key_data)
         return await client.async_list_models()
@@ -227,7 +210,7 @@ def _assert_valid_models(engine: str, models: list) -> None:
 
 
 @pytest.mark.parametrize("engine", _ENGINE_IDS, ids=_ENGINE_IDS)
-def test_discovery_smoke(engine: str) -> None:
+def test_discovery_smoke(provider_keys: dict, engine: str) -> None:
     """Verify real discovery endpoint returns valid model list via sync path.
 
     Asserts:
@@ -235,10 +218,10 @@ def test_discovery_smoke(engine: str) -> None:
     - ``all(m.external_id)``          — no null or empty external IDs
     - ``all(m.provider == engine)``   — correct provider attribution
 
-    Key semantics: if the provider requires a key and it is missing from the
-    keys file, this test FAILS with a clear error.  No silent skipping.
+    This is an explicit live smoke. Missing credentials skip selected cases;
+    offline collection never opens the credential file.
     """
-    models = _discover_models(engine)
+    models = _discover_models(provider_keys, engine)
     _assert_valid_models(engine, models)
 
 
@@ -247,11 +230,11 @@ def test_discovery_smoke(engine: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", _ENGINE_IDS, ids=_ENGINE_IDS)
-async def test_async_discovery_smoke(engine: str) -> None:
+async def test_async_discovery_smoke(provider_keys: dict, engine: str) -> None:
     """Same as :func:`test_discovery_smoke` but via the async discovery path.
 
     Asserts the same invariants (non-empty list, no null IDs, correct
     provider attribution) on the async code path.
     """
-    models = await _async_discover_models(engine)
+    models = await _async_discover_models(provider_keys, engine)
     _assert_valid_models(engine, models)

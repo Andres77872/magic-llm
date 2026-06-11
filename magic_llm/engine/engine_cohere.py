@@ -4,7 +4,9 @@ import time
 from typing import Dict, Any, Tuple, Optional
 
 from magic_llm.engine.base_chat import BaseChat
+from magic_llm.engine._usage_factory import usage_from_cohere_meta
 from magic_llm.engine.tooling import guard_tools_supported
+from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChoiceModel, DeltaModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
@@ -26,7 +28,25 @@ class EngineCohere(BaseChat):
         self.base_url = 'https://api.cohere.ai/v1/chat'
         self.api_key = api_key
 
+    @staticmethod
+    def _has_image_content(chat: ModelChat) -> bool:
+        for msg in chat.get_messages():
+            content = msg.get('content')
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get('type') == 'image_url':
+                        return True
+        return False
+
     def prepare_data(self, chat: ModelChat, **kwargs):
+        if self._has_image_content(chat):
+            raise ChatException(
+                message=(
+                    f"Provider 'Cohere' does not support image/vision inputs for model '{self.model}'. "
+                    "Remove images or use a vision-capable provider."
+                ),
+                error_code='VISION_NOT_SUPPORTED',
+            )
         guard_tools_supported(
             'Cohere',
             kwargs.get('tools', self.kwargs.get('tools')),
@@ -117,16 +137,15 @@ class EngineCohere(BaseChat):
         )
 
         # Create usage model
-        tokens = r['meta']['tokens']
-        usage = UsageModel(
-            prompt_tokens=tokens['input_tokens'],
-            completion_tokens=tokens['output_tokens'],
-            total_tokens=tokens['input_tokens'] + tokens['output_tokens']
+        provider_request_id = r.get('response_id', r.get('generation_id', f"cohere_{int(time.time() * 1000)}"))
+        usage = usage_from_cohere_meta(
+            r['meta'],
+            provider_request_id=provider_request_id,
         )
 
         # Build standardized response
         return build_response(
-            id=r.get('response_id', r.get('generation_id', f"cohere_{int(time.time() * 1000)}")),
+            id=provider_request_id,
             model='cohere',  # Cohere doesn't provide model name in response
             content=r.get('text', ''),
             finish_reason=finish_reason,
@@ -220,11 +239,9 @@ class EngineCohere(BaseChat):
             idx = event['generation_id']
             return None, idx, usage
         if event['event_type'] == 'stream-end':
-            meta = event['response']['meta']['billed_units']
-            usage = UsageModel(
-                prompt_tokens=meta['input_tokens'],
-                completion_tokens=meta['output_tokens'],
-                total_tokens=meta['input_tokens'] + meta['output_tokens'],
+            usage = usage_from_cohere_meta(
+                event['response']['meta'],
+                provider_request_id=idx or event.get('generation_id'),
             )
             return None, idx, usage
 

@@ -10,7 +10,7 @@ Amazon and Cloudflare do not support model discovery. Avoid `client.list_models(
 
 ## Tool-calling error on Amazon Bedrock, Cohere, or Cloudflare
 
-Amazon Bedrock, Cohere, and Cloudflare do not support tool calling in Magic LLM v0.1.36. Use direct chat or choose OpenAI, Anthropic, Google, or a tool-capable OpenAI-compatible endpoint.
+Amazon Bedrock, Cohere, and Cloudflare do not support tool calling in Magic LLM v0.1.37. Use direct chat or choose OpenAI, Anthropic, Google, or a tool-capable OpenAI-compatible endpoint.
 
 ## OpenAI-compatible provider rejects `max_completion_tokens`
 

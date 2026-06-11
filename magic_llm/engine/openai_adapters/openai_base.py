@@ -17,6 +17,11 @@ def _is_official_openai_url(url: str) -> bool:
 
 
 class ProviderOpenAI(OpenAiBaseProvider):
+    supports_vision = True
+    supports_tts_async = True
+    supports_stt_sync = True
+    supports_stt_async = True
+
     def __init__(self,
                  base_url: str = "https://api.openai.com/v1",
                  **kwargs):
@@ -24,6 +29,13 @@ class ProviderOpenAI(OpenAiBaseProvider):
             base_url=base_url,
             **kwargs
         )
+        if not _is_official_openai_url(self.base_url):
+            # Unknown OpenAI-compatible endpoints must not inherit official
+            # OpenAI media/vision support accidentally.
+            self.supports_vision = False
+            self.supports_tts_async = False
+            self.supports_stt_sync = False
+            self.supports_stt_async = False
 
     def transform_request(self, chat: ModelChat, **kwargs):
         json_data, headers = super().transform_request(chat, **kwargs)

@@ -4,6 +4,9 @@ from tokenizers import Encoding
 from magic_llm.util import tokenizer
 
 
+pytestmark = pytest.mark.provider_functional
+
+
 def test_sync_hf_tokenizer_returns_tokens():
     """Verify tokenizer.from_hf returns a valid Encoding with non-empty tokens."""
     res: Encoding = tokenizer.from_hf(

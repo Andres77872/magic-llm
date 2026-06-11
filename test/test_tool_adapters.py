@@ -742,6 +742,7 @@ class TestToolResultErrorSerialization:
         chat = ModelChat()
         timeout_result = ToolResult(
             tool_call_id="call_timeout",
+            # Generic caller-owned tool name; not a core image-generation API.
             name="generate_image",
             content="",
             is_error=True,

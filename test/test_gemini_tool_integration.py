@@ -27,6 +27,7 @@ from magic_llm.model.ModelChatResponse import (
 from magic_llm.model.ModelChatStream import (
     ChatCompletionModel, ChoiceModel, DeltaModel, UsageModel as StreamUsage,
 )
+from magic_llm.agent import config as agent_config
 from magic_llm.agent.agent_loop import AgentLoop
 from magic_llm.agent.types import AgentBudget
 from magic_llm.engine.engine_google import EngineGoogle
@@ -339,8 +340,10 @@ class TestGeminiParallelToolCalls:
 class TestGeminiNonToolRegression:
     """Non-tool Gemini calls must work identically to pre-change behavior."""
 
-    def test_non_tool_call_works(self):
+    def test_non_tool_call_works(self, monkeypatch):
         """Simple chat without tools → single generate call, returns content."""
+
+        monkeypatch.setattr(agent_config, "ENABLE_BUILTIN_TODO_TOOLS", False)
 
         engine = EngineGoogle(api_key="test-key", model="gemini-2.5-flash")
         client = _make_mock_client_with_engine(engine)

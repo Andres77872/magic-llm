@@ -65,6 +65,21 @@ class MagicLlmBase:
         if engine == EngineAmazon.engine and private_key:
             engine_params['aws_access_key_id'] = private_key
 
+        # For Azure Speech, expose the public facade contract explicitly.
+        # ``private_key`` is accepted as an unambiguous alias for ``speech_key``
+        # only when ``speech_key`` was not supplied.
+        if engine == EngineAzure.engine:
+            if private_key and not engine_params.get('speech_key'):
+                engine_params['speech_key'] = private_key
+            missing = [
+                name for name in ('speech_key', 'speech_region')
+                if not engine_params.get(name)
+            ]
+            if missing:
+                raise ValueError(
+                    f"Azure Speech requires {', '.join(missing)} for engine='azure'"
+                )
+
         self.llm: BaseChat = engine_class(**engine_params)
 
     @classmethod

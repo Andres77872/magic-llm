@@ -5,6 +5,12 @@ from magic_llm.model.ModelChatStream import ChatCompletionModel
 
 
 class ProviderGroq(OpenAiBaseProvider):
+    supports_vision = False
+    supports_tts_sync = False
+    supports_tts_async = False
+    supports_stt_sync = False
+    supports_stt_async = False
+
     def __init__(self, **kwargs):
         super().__init__(
             base_url="https://api.groq.com/openai/v1",

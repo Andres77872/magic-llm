@@ -2,6 +2,7 @@
 import ast
 import inspect
 import json
+import textwrap
 
 import pytest
 
@@ -64,7 +65,7 @@ class TestOpenRouterPureProcessChunk:
         """openai_openrouter module does not import urllib."""
         import magic_llm.engine.openai_adapters.openai_openrouter as mod
         source = inspect.getsource(mod)
-        tree = ast.parse(source)
+        tree = ast.parse(textwrap.dedent(source))
         imports = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -79,7 +80,7 @@ class TestOpenRouterPureProcessChunk:
         """openai_openrouter module does not import time."""
         import magic_llm.engine.openai_adapters.openai_openrouter as mod
         source = inspect.getsource(mod)
-        tree = ast.parse(source)
+        tree = ast.parse(textwrap.dedent(source))
         imports = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -91,9 +92,26 @@ class TestOpenRouterPureProcessChunk:
         assert "time" not in imports
 
     def test_no_sleep_call_in_process_chunk(self):
-        """process_chunk method does not call time.sleep."""
+        """process_chunk has no blocking/network calls; it is a pure transform."""
         provider = ProviderOpenRouter(api_key="test")
         source = inspect.getsource(provider.process_chunk)
-        assert "sleep" not in source
-        assert "urllib" not in source
-        assert "request" not in source.lower() or "http" not in source.lower()
+        tree = ast.parse(textwrap.dedent(source))
+        forbidden_calls = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in {"sleep", "request"}:
+                forbidden_calls.append(func.id)
+            elif isinstance(func, ast.Attribute) and func.attr in {
+                "sleep",
+                "request",
+                "post_json",
+                "post_raw_binary",
+                "post_multipart",
+                "post_stream",
+                "stream_request",
+            }:
+                forbidden_calls.append(func.attr)
+
+        assert forbidden_calls == []

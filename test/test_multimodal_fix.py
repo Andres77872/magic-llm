@@ -7,6 +7,7 @@ from magic_llm.engine.openai_adapters.base_provider import (
     OpenAiBaseProvider,
     _has_image_content
 )
+from magic_llm.engine.openai_adapters.openai_base import ProviderOpenAI
 from magic_llm.engine.amazon_adapters.base_provider import (
     AmazonBaseProvider,
 )
@@ -89,11 +90,14 @@ class TestVisionCapabilityCheck:
         ]
         assert _has_image_content(messages) is False
 
-    def test_provider_supports_vision_default_true(self):
-        assert OpenAiBaseProvider.supports_vision is True
+    def test_openai_compatible_base_supports_vision_default_false(self):
+        assert OpenAiBaseProvider.supports_vision is False
 
-    def test_nova_supports_vision(self):
-        assert ProviderAmazonNova.supports_vision is True
+    def test_official_openai_supports_vision(self):
+        assert ProviderOpenAI.supports_vision is True
+
+    def test_nova_does_not_advertise_broken_vision_support(self):
+        assert ProviderAmazonNova.supports_vision is False
 
     def test_meta_does_not_support_vision(self):
         assert ProviderAmazonMeta.supports_vision is False
@@ -172,3 +176,13 @@ class TestAmazonVisionValidation:
 
         result = provider.transform_request(chat)
         assert result is not None
+
+    def test_nova_rejects_image_input_before_provider_payload(self):
+        provider = ProviderAmazonNova(model="amazon.nova-lite-v1:0")
+        chat = ModelChat()
+        chat.add_user_message("Describe", image=f"data:image/png;base64,{PNG_1x1_BASE64}")
+
+        with pytest.raises(ChatException) as exc_info:
+            provider.transform_request(chat)
+
+        assert exc_info.value.error_code == 'VISION_NOT_SUPPORTED'

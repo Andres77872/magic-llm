@@ -56,16 +56,14 @@ class TestMaxContentSize:
         assert len(result.content) == 20 + len("[TRUNCATED]")
 
     def test_max_content_size_per_tool_override(self):
-        """Per-tool override takes precedence over global limit.
-
-        generate_image has per-tool max of 2000, so 3000-char string gets truncated to 2000.
-        """
+        """Per-tool override takes precedence for a caller-owned generate_image tool."""
         executor = ToolExecutor(
             max_content_size=50000,
             max_content_sizes={"generate_image": 20},  # Small for test
         )
 
         def image_tool():
+            # Generic caller-registered tool; not a Magic LLM image-generation API.
             return {"url": "/images/img.webp", "data": "x" * 100}
 
         executor.register("generate_image", image_tool)
@@ -83,6 +81,7 @@ class TestMaxContentSize:
         )
 
         def image_tool():
+            # Generic caller-registered tool; not a Magic LLM image-generation API.
             return {"url": "/images/img.webp", "width": 1024, "height": 1024}
             # JSON: ~65 chars — under 500 per-tool limit
 

@@ -1,13 +1,10 @@
-import json
-import os
-
 import pytest
 
 from magic_llm import MagicLLM
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat
 
-from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+from conftest import get_provider_key
 
 # All tests in this file require live provider access
 pytestmark = pytest.mark.provider_functional
@@ -19,24 +16,23 @@ def _get_chat_builder():
     return chat
 
 
-# Resolve keys file with fallback — raises RuntimeError if missing
-_KEYS_FILE = resolve_keys_file()
-OPENAI_KEY = json.load(open(_KEYS_FILE))['openai']
+def _openai_key(provider_keys):
+    return get_provider_key(provider_keys, 'openai', 'openai')
 
 
-def _get_fallback_client():
+def _get_fallback_client(provider_keys):
     client = MagicLLM(
         model='gpt-4o',
-        **OPENAI_KEY
+        **_openai_key(provider_keys),
     )
     return client
 
 
-def test_sync_error_1():
+def test_sync_error_1(provider_keys):
     chat = _get_chat_builder()
     client = MagicLLM(
         model='gpt-4o1',
-        **OPENAI_KEY
+        **_openai_key(provider_keys),
     )
     with pytest.raises(ChatException):
         content = ''
@@ -45,11 +41,11 @@ def test_sync_error_1():
 
 
 @pytest.mark.asyncio
-async def test_async_openai_base_stream_generate_1():
+async def test_async_openai_base_stream_generate_1(provider_keys):
     chat = _get_chat_builder()
     client = MagicLLM(
         model='gpt-4o1',
-        **OPENAI_KEY
+        **_openai_key(provider_keys),
     )
     with pytest.raises(ChatException):
         content = ''
@@ -57,22 +53,22 @@ async def test_async_openai_base_stream_generate_1():
             content += i.choices[0].delta.content or ''
 
 
-def test_sync_openai_base_stream_generate_2():
+def test_sync_openai_base_stream_generate_2(provider_keys):
     chat = _get_chat_builder()
     client = MagicLLM(
         model='gpt-4o-model-fail',
-        **OPENAI_KEY
+        **_openai_key(provider_keys),
     )
     with pytest.raises(ChatException):
         content = client.llm.generate(chat)
 
 
 @pytest.mark.asyncio
-async def test_async_openai_base_stream_generate_2():
+async def test_async_openai_base_stream_generate_2(provider_keys):
     chat = _get_chat_builder()
     client = MagicLLM(
         model='gpt-4o-model-fail',
-        **OPENAI_KEY
+        **_openai_key(provider_keys),
     )
     with pytest.raises(ChatException):
         content = await client.llm.async_generate(chat)

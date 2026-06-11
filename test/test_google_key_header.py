@@ -1,4 +1,6 @@
 """Tests for Google API key header auth migration."""
+import asyncio
+
 import pytest
 
 from magic_llm.engine.engine_google import EngineGoogle
@@ -39,13 +41,12 @@ class TestGoogleKeyInHeaders:
         assert "x-goog-api-key" in headers
         assert headers["x-goog-api-key"] == "my-secret-key"
 
-    @pytest.mark.asyncio
-    async def test_prepare_data_async_has_header(self):
+    def test_prepare_data_async_has_header(self):
         """prepare_data() headers include x-goog-api-key."""
         engine = EngineGoogle(api_key="my-secret-key", model="gemini-pro")
         chat = ModelChat()
         chat.add_message("user", "hello")
-        _, headers, _ = await engine.prepare_data(chat)
+        _, headers, _ = asyncio.run(engine.prepare_data(chat))
         assert "x-goog-api-key" in headers
         assert headers["x-goog-api-key"] == "my-secret-key"
 

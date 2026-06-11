@@ -19,7 +19,10 @@ client = MagicLLM(
 ## Notes
 
 - Chat, streaming, async chat, and async streaming are supported.
+- Amazon Polly sync TTS is supported through `client.llm.audio_speech(...)`.
+- Async TTS and all STT methods are unsupported; Amazon Transcribe is not implemented in core.
 - Model routing is based on the Bedrock model prefix, for example Nova, Titan, Anthropic, or Meta model IDs.
+- Amazon Nova vision input is disabled until a native Bedrock image payload transform is implemented and tested.
 - Tool calling is not wired for the Amazon engine.
 - Model discovery is unsupported and raises `NotImplementedError`.
 - Requests use AWS Signature Version 4 through `botocore`-compatible signing utilities.

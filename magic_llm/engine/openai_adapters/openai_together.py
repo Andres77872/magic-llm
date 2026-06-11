@@ -4,6 +4,9 @@ from magic_llm.util.http import AsyncHttpClient, HttpClient
 
 
 class ProviderTogether(OpenAiBaseProvider):
+    supports_tts_sync = True
+    supports_tts_async = True
+
     def __init__(self,
                  base_url: str = "https://api.together.xyz/v1",
                  **kwargs):

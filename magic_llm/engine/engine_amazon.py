@@ -12,10 +12,11 @@ from magic_llm.engine.amazon_adapters import (
 )
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
 from magic_llm.engine.base_chat import BaseChat
+from magic_llm.engine._usage_factory import usage_from_bedrock_invocation_metrics
 from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChatResponse, ModelChat
-from magic_llm.model.ModelAudio import AudioSpeechRequest
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
+from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.util.eventstream import AWSEventStreamParser
 from magic_llm.util.http import AsyncHttpClient, HttpClient, HttpError
 from magic_llm.util.sigv4 import (
@@ -279,12 +280,9 @@ class EngineAmazon(BaseChat):
                         provider_event = self._decode_bedrock_chunk(payload)
                         chunk = self.provider.transform_stream_chunk(provider_event)
                         metrics = payload.get('amazon-bedrock-invocationMetrics', {})
-                        prompt_tokens = metrics.get('inputTokenCount', 0)
-                        completion_tokens = metrics.get('outputTokenCount', 0)
-                        chunk.usage = UsageModel(
-                            prompt_tokens=prompt_tokens,
-                            completion_tokens=completion_tokens,
-                            total_tokens=prompt_tokens + completion_tokens,
+                        chunk.usage = usage_from_bedrock_invocation_metrics(
+                            metrics,
+                            provider_request_id=payload.get('x-amzn-requestid') or payload.get('requestId'),
                         )
                         yield chunk
                     elif event_type == 'exception':
@@ -349,12 +347,9 @@ class EngineAmazon(BaseChat):
                         provider_event = self._decode_bedrock_chunk(payload)
                         chunk = self.provider.transform_stream_chunk(provider_event)
                         metrics = payload.get('amazon-bedrock-invocationMetrics', {})
-                        prompt_tokens = metrics.get('inputTokenCount', 0)
-                        completion_tokens = metrics.get('outputTokenCount', 0)
-                        chunk.usage = UsageModel(
-                            prompt_tokens=prompt_tokens,
-                            completion_tokens=completion_tokens,
-                            total_tokens=prompt_tokens + completion_tokens,
+                        chunk.usage = usage_from_bedrock_invocation_metrics(
+                            metrics,
+                            provider_request_id=payload.get('x-amzn-requestid') or payload.get('requestId'),
                         )
                         yield chunk
                     elif event_type == 'exception':
@@ -369,39 +364,51 @@ class EngineAmazon(BaseChat):
 
         Returns raw audio bytes (not an SDK AudioStream object).
         """
-        # Resolve credentials (explicit or ambient)
-        access_key, secret_key, region, session_token = resolve_credentials(
-            self.provider.aws_access_key_id,
-            self.provider.aws_secret_access_key,
-            self.provider.region_name,
-        )
-
-        # Build Polly request body and SigV4-signed URL/headers
-        polly_body = json.dumps({
-            'VoiceId': data.voice,
-            'OutputFormat': data.response_format,
-            'Text': data.input,
-            'Engine': data.model,
-        })
-        url = build_polly_url(region)
-        sigv4_headers = build_sigv4_headers(
-            method='POST',
-            url=url,
-            body=polly_body,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            region=region,
-            service='polly',
-            session_token=session_token,
-        )
-        sigv4_headers['Content-Type'] = 'application/json'
-
-        # Execute raw HTTP request — returns raw audio bytes
-        timeout = kwargs.get('timeout', 30)
-        with HttpClient() as client:
-            return client.post_raw_binary(
-                url=url,
-                data=polly_body,
-                headers=sigv4_headers,
-                timeout=timeout,
+        def _request() -> bytes:
+            # Resolve credentials (explicit or ambient)
+            access_key, secret_key, region, session_token = resolve_credentials(
+                self.provider.aws_access_key_id,
+                self.provider.aws_secret_access_key,
+                self.provider.region_name,
             )
+
+            # Build Polly request body and SigV4-signed URL/headers
+            polly_body = json.dumps({
+                'VoiceId': data.voice,
+                'OutputFormat': data.response_format,
+                'Text': data.input,
+                'Engine': data.model,
+            })
+            url = build_polly_url(region)
+            sigv4_headers = build_sigv4_headers(
+                method='POST',
+                url=url,
+                body=polly_body,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                region=region,
+                service='polly',
+                session_token=session_token,
+            )
+            sigv4_headers['Content-Type'] = 'application/json'
+
+            # Execute raw HTTP request — returns raw audio bytes
+            timeout = kwargs.get('timeout', 30)
+            with HttpClient() as client:
+                return client.post_raw_binary(
+                    url=url,
+                    data=polly_body,
+                    headers=sigv4_headers,
+                    timeout=timeout,
+                )
+
+        return self._retry_sync_media(_request, method='audio_speech')
+
+    async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
+        self._unsupported_media_operation('async_audio_speech', 'audio_speech for Amazon Polly sync TTS')
+
+    def sync_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
+        self._unsupported_media_operation('sync_audio_transcriptions', 'use a provider with STT support; Amazon Transcribe is out of scope')
+
+    async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
+        self._unsupported_media_operation('async_audio_transcriptions', 'use a provider with STT support; Amazon Transcribe is out of scope')

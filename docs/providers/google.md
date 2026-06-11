@@ -18,6 +18,8 @@ client = MagicLLM(
 - Tool schemas are mapped into Gemini's expected format.
 - Model discovery is supported.
 - Vision inputs are supported through `ModelChat.add_user_message(..., image=...)` where the model supports images.
+- Gemini TTS is supported through both `audio_speech(...)` and `async_audio_speech(...)`; returned audio is WAV bytes.
+- STT/transcription is unsupported for the Google engine in core.
 
 ## Example
 

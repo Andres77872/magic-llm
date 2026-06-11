@@ -1,9 +1,10 @@
 import json
 import time
 
+from magic_llm.engine._usage_factory import build_usage_model
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.util.response_mapping import (
     AMAZON_FINISH_REASON_MAP,
     map_finish_reason,
@@ -57,7 +58,7 @@ class ProviderAmazonTitan(AmazonBaseProvider):
             A ModelChatResponse object
         """
         # Create usage model
-        usage = UsageModel(
+        usage = build_usage_model(
             prompt_tokens=response['inputTextTokenCount'],
             completion_tokens=response['results'][0]['tokenCount'],
             total_tokens=response['inputTextTokenCount'] + response['results'][0]['tokenCount'],

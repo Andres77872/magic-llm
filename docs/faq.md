@@ -26,7 +26,7 @@ Use `engine="openai"` plus the provider's OpenAI-compatible `base_url`.
 
 ## Why does Azure chat fail?
 
-Azure is speech-only in v0.1.36. Chat methods raise `NotImplementedError`.
+Azure is speech-only in v0.1.37. Chat methods raise `NotImplementedError`.
 
 ## Why does model discovery fail for Amazon or Cloudflare?
 

@@ -1,6 +1,7 @@
 """Tests for EngineAmazon with mocked HTTP clients."""
 import base64
 import binascii
+import asyncio
 import json
 import struct
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,7 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from magic_llm.engine.engine_amazon import EngineAmazon
+from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat
+from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatResponse import ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel
 
@@ -114,10 +117,9 @@ class TestEngineAmazonGenerate:
 class TestEngineAmazonAsyncGenerate:
     """Test EngineAmazon.async_generate() with mocked HTTP."""
 
-    @pytest.mark.asyncio
     @patch("magic_llm.engine.engine_amazon.AsyncHttpClient")
     @patch("magic_llm.engine.engine_amazon.build_sigv4_prepared_request")
-    async def test_async_generate_returns_model_chat_response(self, mock_prepared, mock_client_class):
+    def test_async_generate_returns_model_chat_response(self, mock_prepared, mock_client_class):
         """EngineAmazon.async_generate() returns ModelChatResponse with mocked HTTP."""
         mock_prepared.return_value = _make_mock_prepared()
 
@@ -138,7 +140,7 @@ class TestEngineAmazonAsyncGenerate:
             model="amazon.nova-lite-v1:0",
         )
 
-        result = await engine.async_generate(ModelChat(system="test"))
+        result = asyncio.run(engine.async_generate(ModelChat(system="test")))
 
         assert isinstance(result, ModelChatResponse)
 
@@ -223,10 +225,9 @@ class TestEngineAmazonStreamGenerate:
 class TestEngineAmazonAsyncStreamGenerate:
     """Test EngineAmazon.async_stream_generate() with mocked HTTP."""
 
-    @pytest.mark.asyncio
     @patch("magic_llm.engine.engine_amazon.AsyncHttpClient")
     @patch("magic_llm.engine.engine_amazon.build_sigv4_prepared_request")
-    async def test_async_stream_generate_yields_chunks(self, mock_prepared, mock_client_class):
+    def test_async_stream_generate_yields_chunks(self, mock_prepared, mock_client_class):
         """EngineAmazon.async_stream_generate() yields ChatCompletionModel chunks."""
         stream_url = "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-lite-v1%3A0/invoke-with-response-stream"
         mock_prepared.return_value = _make_mock_prepared(url=stream_url)
@@ -268,11 +269,13 @@ class TestEngineAmazonAsyncStreamGenerate:
             model="amazon.nova-lite-v1:0",
         )
 
-        chunks = []
-        async for chunk in engine.async_stream_generate(
-            ModelChat(system="test")
-        ):
-            chunks.append(chunk)
+        async def _collect():
+            chunks = []
+            async for chunk in engine.async_stream_generate(ModelChat(system="test")):
+                chunks.append(chunk)
+            return chunks
+
+        chunks = asyncio.run(_collect())
 
         assert len(chunks) >= 1
         assert isinstance(chunks[0], ChatCompletionModel)
@@ -311,6 +314,20 @@ class TestEngineAmazonAudioSpeech:
 
         assert isinstance(result, bytes)
         assert result == b"RIFF....WAVE audio data"
+        sigv4_kwargs = mock_sigv4.call_args.kwargs
+        assert sigv4_kwargs["service"] == "polly"
+        assert sigv4_kwargs["region"] == "us-east-1"
+        body = json.loads(sigv4_kwargs["body"])
+        assert body == {
+            "VoiceId": "Joanna",
+            "OutputFormat": "mp3",
+            "Text": "Hello world",
+            "Engine": "standard",
+        }
+        call_kwargs = mock_client.post_raw_binary.call_args.kwargs
+        assert call_kwargs["url"] == "https://polly.us-east-1.amazonaws.com/v1/speech"
+        assert json.loads(call_kwargs["data"]) == body
+        assert call_kwargs["headers"]["Content-Type"] == "application/json"
 
     @patch("magic_llm.engine.engine_amazon.HttpClient")
     @patch("magic_llm.engine.engine_amazon.build_sigv4_headers")
@@ -337,6 +354,95 @@ class TestEngineAmazonAudioSpeech:
 
         call_kwargs = mock_client.post_raw_binary.call_args[1]
         assert "polly.us-east-1.amazonaws.com" in call_kwargs["url"]
+
+    @patch("magic_llm.engine.engine_amazon.HttpClient")
+    @patch("magic_llm.engine.engine_amazon.build_sigv4_headers")
+    def test_audio_speech_proves_polly_body_and_signing_service(self, mock_sigv4, mock_client_class):
+        """Polly proof asserts body and SigV4 metadata, not just canned bytes."""
+        mock_sigv4.return_value = {"Authorization": "AWS4-HMAC-SHA256 signed"}
+
+        mock_client = MagicMock()
+        mock_client.post_raw_binary.return_value = b"audio"
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=None)
+        mock_client_class.return_value = mock_client
+
+        engine = EngineAmazon(
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret",
+            region_name="us-east-1",
+            model="amazon.nova-lite-v1:0",
+        )
+
+        data = AudioSpeechRequest(
+            voice="Matthew",
+            response_format="ogg_vorbis",
+            input="Boundary proof",
+            model="neural",
+        )
+
+        assert engine.audio_speech(data) == b"audio"
+
+        sigv4_kwargs = mock_sigv4.call_args.kwargs
+        assert sigv4_kwargs["method"] == "POST"
+        assert sigv4_kwargs["service"] == "polly"
+        assert sigv4_kwargs["aws_access_key_id"] == "test-key"
+        assert sigv4_kwargs["aws_secret_access_key"] == "test-secret"
+        assert json.loads(sigv4_kwargs["body"]) == {
+            "VoiceId": "Matthew",
+            "OutputFormat": "ogg_vorbis",
+            "Text": "Boundary proof",
+            "Engine": "neural",
+        }
+        call_kwargs = mock_client.post_raw_binary.call_args.kwargs
+        assert call_kwargs["url"] == sigv4_kwargs["url"]
+        assert call_kwargs["data"] == sigv4_kwargs["body"]
+        assert call_kwargs["headers"]["Authorization"].startswith("AWS4-HMAC")
+        assert call_kwargs["headers"]["Content-Type"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_unsupported_async_tts_fails_fast(self):
+        engine = EngineAmazon(
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret",
+            region_name="us-east-1",
+            model="amazon.nova-lite-v1:0",
+        )
+        with pytest.raises(ChatException) as exc_info:
+            await engine.async_audio_speech(AudioSpeechRequest(voice="Joanna", response_format="mp3", input="Hi", model="standard"))
+        assert exc_info.value.error_code == "UNSUPPORTED_MEDIA_OPERATION"
+        assert "audio_speech for Amazon Polly sync TTS" in exc_info.value.message
+
+    @pytest.mark.parametrize("method", ["sync_audio_transcriptions", "async_audio_transcriptions"])
+    def test_unsupported_amazon_stt_modes_fail_fast(self, method):
+        engine = EngineAmazon(
+            aws_access_key_id="test-key",
+            aws_secret_access_key="test-secret",
+            region_name="us-east-1",
+            model="amazon.nova-lite-v1:0",
+        )
+        request = AudioTranscriptionsRequest(
+            file=b"RIFF\x10\x00\x00\x00WAVEfmt ",
+            model="whisper-1",
+            filename="sample.wav",
+            content_type="audio/wav",
+        )
+
+        if method == "sync_audio_transcriptions":
+            with pytest.raises(ChatException) as exc_info:
+                engine.sync_audio_transcriptions(request)
+        else:
+            async def _call():
+                with pytest.raises(ChatException) as exc_info:
+                    await engine.async_audio_transcriptions(request)
+                return exc_info.value
+
+            exc = asyncio.run(_call())
+            assert exc.error_code == "UNSUPPORTED_MEDIA_OPERATION"
+            return
+
+        assert exc_info.value.error_code == "UNSUPPORTED_MEDIA_OPERATION"
+        assert "Amazon Transcribe is out of scope" in exc_info.value.message
 
 
 class TestEngineAmazonBackwardCompatibility:

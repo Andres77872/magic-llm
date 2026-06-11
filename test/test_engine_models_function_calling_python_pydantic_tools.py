@@ -1,5 +1,4 @@
 import json
-import os
 
 from magic_llm import MagicLLM
 from magic_llm.engine.tooling import normalize_openai_tools
@@ -8,7 +7,7 @@ import pytest
 
 from magic_llm.model import ModelChat
 
-from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+from conftest import get_provider_key
 
 try:
     from pydantic import BaseModel  # v2
@@ -25,22 +24,14 @@ TEST_PROVIDERS = [
     ("deepinfra", "deepinfra", "meta-llama/Meta-Llama-3.1-70B-Instruct", "microsoft/WizardLM-2-8x22B-model-fail"),
 ]
 
-# Resolve keys file with fallback — raises RuntimeError if missing
-_KEYS_FILE = resolve_keys_file()
-with open(_KEYS_FILE) as f:
-    ALL_KEYS = json.load(f)
-
-PROVIDERS = [
-    (provider, key_name, success_model, fail_model)
-    for provider, key_name, success_model, fail_model in TEST_PROVIDERS
-    if key_name in ALL_KEYS
-]
-
-
 def _build_chat():
     c = ModelChat()
     c.add_user_message("Please check the weather for Bogotá and maybe use the tools if needed.")
     return c
+
+
+def _keys_for(provider_keys, provider, key_name):
+    return get_provider_key(provider_keys, provider, key_name)
 
 
 def _python_tool_definitions():
@@ -118,15 +109,15 @@ def _assert_tool_call_response(res, expected_function_name: str, allow_no_tool_c
 
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "_fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_python_and_pydantic_tools_at_init(provider, key_name, model, _fail_model):
+def test_python_and_pydantic_tools_at_init(provider_keys, provider, key_name, model, _fail_model):
     """Test that Python callable tools work at init time with unified output."""
     tools, primary_name = _python_tool_definitions()
     tool_entry = {"type": "function", "function": {"name": primary_name}}
 
-    keys = dict(ALL_KEYS[key_name])
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
 
     # Pass tools at initialization time
@@ -140,15 +131,15 @@ def test_python_and_pydantic_tools_at_init(provider, key_name, model, _fail_mode
 
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "_fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_python_and_pydantic_tools_call_time_override(provider, key_name, model, _fail_model):
+def test_python_and_pydantic_tools_call_time_override(provider_keys, provider, key_name, model, _fail_model):
     """Test that tools can be overridden at call time with unified output."""
     tools, primary_name = _python_tool_definitions()
     tool_entry = {"type": "function", "function": {"name": primary_name}}
 
-    keys = dict(ALL_KEYS[key_name])
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
 
     # Provide some defaults at init, override at call time
@@ -164,15 +155,15 @@ def test_python_and_pydantic_tools_call_time_override(provider, key_name, model,
 
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "_fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_python_and_pydantic_tools_at_init_stream(provider, key_name, model, _fail_model):
+def test_python_and_pydantic_tools_at_init_stream(provider_keys, provider, key_name, model, _fail_model):
     """Test that streaming with tools returns unified tool_calls in chunks."""
     tools, primary_name = _python_tool_definitions()
     tool_entry = {"type": "function", "function": {"name": primary_name}}
 
-    keys = dict(ALL_KEYS[key_name])
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
 
     # Pass tools at initialization time
@@ -462,19 +453,12 @@ CHAIN_TEST_PROVIDERS = [
     ("anthropic", "anthropic", "claude-3-haiku-20240307"),
 ]
 
-CHAIN_PROVIDERS = [
-    (provider, key_name, model)
-    for provider, key_name, model in CHAIN_TEST_PROVIDERS
-    if key_name in ALL_KEYS
-]
-
-
 @pytest.mark.parametrize(
     ("provider", "key_name", "model"),
-    CHAIN_PROVIDERS,
-    ids=[p[0] for p in CHAIN_PROVIDERS],
+    CHAIN_TEST_PROVIDERS,
+    ids=[p[0] for p in CHAIN_TEST_PROVIDERS],
 )
-def test_multi_turn_tool_chain_loop(provider, key_name, model):
+def test_multi_turn_tool_chain_loop(provider_keys, provider, key_name, model):
     """
     Test multi-turn tool calling loop (agentic pattern).
 
@@ -500,7 +484,7 @@ def test_multi_turn_tool_chain_loop(provider, key_name, model):
     tools = _define_chain_tools()
     tool_functions = {fn.__name__: fn for fn in tools}
 
-    keys = dict(ALL_KEYS[key_name])
+    keys = _keys_for(provider_keys, provider, key_name)
 
     # Create client with tools
     client = MagicLLM(model=model, tools=tools, tool_choice="auto", **keys)
@@ -602,10 +586,10 @@ def test_multi_turn_tool_chain_loop(provider, key_name, model):
 
 @pytest.mark.parametrize(
     ("provider", "key_name", "model"),
-    CHAIN_PROVIDERS,
-    ids=[p[0] for p in CHAIN_PROVIDERS],
+    CHAIN_TEST_PROVIDERS,
+    ids=[p[0] for p in CHAIN_TEST_PROVIDERS],
 )
-def test_sequential_tool_chain_with_dependency(provider, key_name, model):
+def test_sequential_tool_chain_with_dependency(provider_keys, provider, key_name, model):
     """
     Test tool chain where later tools depend on earlier tool results.
 
@@ -628,7 +612,7 @@ def test_sequential_tool_chain_with_dependency(provider, key_name, model):
     tools = _define_chain_tools()
     tool_functions = {fn.__name__: fn for fn in tools}
 
-    keys = dict(ALL_KEYS[key_name])
+    keys = _keys_for(provider_keys, provider, key_name)
 
     # Create client with tools
     client = MagicLLM(model=model, tools=tools, tool_choice="auto", **keys)
@@ -709,10 +693,10 @@ def test_sequential_tool_chain_with_dependency(provider, key_name, model):
 
 @pytest.mark.parametrize(
     ("provider", "key_name", "model"),
-    CHAIN_PROVIDERS,
-    ids=[p[0] for p in CHAIN_PROVIDERS],
+    CHAIN_TEST_PROVIDERS,
+    ids=[p[0] for p in CHAIN_TEST_PROVIDERS],
 )
-def test_tool_chain_max_iterations_safety(provider, key_name, model):
+def test_tool_chain_max_iterations_safety(provider_keys, provider, key_name, model):
     """
     Test that tool chain loop respects max_iterations safety limit.
 
@@ -722,7 +706,7 @@ def test_tool_chain_max_iterations_safety(provider, key_name, model):
     tools = _define_chain_tools()
     tool_functions = {fn.__name__: fn for fn in tools}
 
-    keys = dict(ALL_KEYS[key_name])
+    keys = _keys_for(provider_keys, provider, key_name)
     client = MagicLLM(model=model, tools=tools, tool_choice="auto", **keys)
 
     chat = ModelChat(system="You are a helpful assistant. Answer concisely after using a tool once.")

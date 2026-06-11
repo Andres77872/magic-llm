@@ -2,7 +2,7 @@
 
 import json
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Iterable, Sequence, TypeVar
 from unittest.mock import MagicMock, AsyncMock
 
 import pytest
@@ -13,37 +13,80 @@ import pytest
 DEFAULT_KEYS_FILE = "/home/andres/Documents/keys.json"
 
 
-def resolve_keys_file() -> str:
+ProviderCase = TypeVar("ProviderCase", bound=Sequence[Any])
+
+
+def resolve_keys_file(*, required: bool = False) -> str | None:
     """Resolve the keys file path with fallback logic.
 
     Priority:
     1. MAGIC_LLM_KEYS env var (if set AND file exists)
     2. DEFAULT_KEYS_FILE (if file exists)
 
-    Raises RuntimeError if no keys file can be found.
+    Returns ``None`` if no keys file can be found unless ``required=True``.
+    This function only resolves paths; JSON parsing is deliberately lazy so
+    provider-live modules can be imported/collected by offline runs safely.
     """
     env_path = os.getenv("MAGIC_LLM_KEYS")
     if env_path and os.path.exists(env_path):
         return env_path
     if os.path.exists(DEFAULT_KEYS_FILE):
         return DEFAULT_KEYS_FILE
+    if not required:
+        return None
     raise RuntimeError(
         f"No API keys file found. Set MAGIC_LLM_KEYS to a valid path, "
-        f"or ensure {DEFAULT_KEYS_FILE} exists."
+        "or use the optional local keys fixture path."
     )
 
 
 @pytest.fixture(scope="session")
 def keys_file_path() -> str:
-    """Return the path to the keys file. Raises if not set."""
-    return resolve_keys_file()
+    """Return the path to the keys file or skip selected live tests."""
+    path = resolve_keys_file(required=False)
+    if path is None:
+        pytest.skip("Provider tests require MAGIC_LLM_KEYS or the local keys fixture.")
+    return path
 
 
 @pytest.fixture(scope="session")
 def loaded_keys(keys_file_path: str) -> Dict[str, Any]:
-    """Load keys from the keys file. Raises if file is missing."""
-    with open(keys_file_path) as f:
+    """Load keys from the keys file lazily for selected live tests only."""
+    with open(keys_file_path, encoding="utf-8") as f:
         return json.load(f)
+
+
+@pytest.fixture(scope="session")
+def provider_keys(loaded_keys: Dict[str, Any]) -> Dict[str, Any]:
+    """Provider credentials for explicit live/provider tests.
+
+    Credential values must never be printed. Tests should only mention provider
+    names or key categories when skipping/failing selected live cases.
+    """
+    return loaded_keys
+
+
+def get_provider_key(provider_keys: Dict[str, Any], provider: str, key_name: str) -> Dict[str, Any]:
+    """Return one provider credential mapping or skip the selected live case."""
+    entry = provider_keys.get(key_name)
+    if entry is None:
+        pytest.skip(f"Provider '{provider}' requires key category '{key_name}'.")
+    if isinstance(entry, dict):
+        return dict(entry)
+    return {"private_key": entry}
+
+
+def available_provider_cases(
+    provider_keys: Dict[str, Any],
+    cases: Iterable[ProviderCase],
+    *,
+    key_index: int = 1,
+) -> list[ProviderCase]:
+    """Filter live provider cases after fixture-time credential loading."""
+    available = [case for case in cases if str(case[key_index]) in provider_keys]
+    if not available:
+        pytest.skip("No selected provider cases have credentials in provider_keys.")
+    return available
 
 
 @pytest.fixture
@@ -67,7 +110,7 @@ def sample_image_b64() -> str:
             f"No image b64 file found at '{path}'. "
             "Set MAGIC_LLM_IMAGE_B64_FILE env var to run image tests.",
         )
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
 

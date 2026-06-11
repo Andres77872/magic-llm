@@ -4,15 +4,15 @@ Magic LLM has native engines and OpenAI-compatible provider adapters.
 
 ## Engine names
 
-| Engine | Provider family | Chat | Tools | Model discovery | Notes |
-| --- | --- | --- | --- | --- | --- |
-| `openai` | OpenAI and compatible APIs | Yes | Yes for most adapters | Yes for many adapters | Provider selected by `base_url` regex. |
-| `anthropic` | Anthropic Claude | Yes | Yes | Yes | Defaults `max_tokens` to 4096 when not supplied. |
-| `google` | Google AI Studio / Gemini | Yes | Yes | Yes | Uses Gemini-specific message format. |
-| `amazon` | AWS Bedrock | Yes | No | No | Routes by model prefix. |
-| `cloudflare` | Cloudflare Workers AI | Yes | No | No | Requires `account_id`. |
-| `cohere` | Cohere | Yes | No | Yes | Uses Cohere role/message format. |
-| `azure` | Azure Speech runtime audio features | No | No | Not advertised for Azure speech | `engine="azure"` is speech-only; chat methods raise `NotImplementedError`. |
+| Engine | Provider family | Chat | Tools | Discovery | TTS | STT | Vision input | Image output |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `openai` | OpenAI and compatible APIs | Yes | Yes for most adapters | Yes for many adapters | Provider-specific | Provider-specific | Official OpenAI only by default | No |
+| `anthropic` | Anthropic Claude | Yes | Yes | Yes | No | No | Yes for vision-capable Claude models | No |
+| `google` | Google AI Studio / Gemini | Yes | Yes | Yes | Sync + async | No | Yes where model supports images | No |
+| `amazon` | AWS Bedrock / Polly | Yes | No | No | Polly sync only | No | Nova disabled until native transform exists | No |
+| `cloudflare` | Cloudflare Workers AI | Yes | No | No | No | No | No | No |
+| `cohere` | Cohere | Yes | No | Yes | No | No | No | No |
+| `azure` | Azure Speech runtime audio features | No | No | Not advertised for Azure speech | Async only | Async only | N/A | No |
 
 ## Common constructor shape
 
@@ -42,3 +42,5 @@ client = MagicLLM(
 ```
 
 See [openai.md](openai.md) for the important `max_tokens` behavior.
+
+First-class image generation/image output is not part of the current core API. `vision` means image input only.

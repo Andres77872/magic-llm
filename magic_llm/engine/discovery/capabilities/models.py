@@ -32,6 +32,20 @@ FUNCTION_CALLING_PATTERNS = [
     r"claude",
 ]
 
+# ── Verified media capability patterns ─────────────────────────────────
+# Conservative by design: these patterns only mark media flags when the
+# runtime has a supported path in the media matrix. No image-output patterns
+# are added in this change.
+AUDIO_INPUT_PATTERNS = [
+    r"whisper",
+]
+
+AUDIO_OUTPUT_PATTERNS = [
+    r"tts",
+    r"sonic",
+    r"text-to-speech",
+]
+
 # ── Context window lookups (model → max context tokens) ───────────────
 CONTEXT_WINDOW_MAP = {
     "gpt-4": 8192,

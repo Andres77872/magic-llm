@@ -34,7 +34,7 @@ print(response.content)
 
 ## Tool support by provider
 
-Tool calling is supported for OpenAI, Anthropic, Google, and many OpenAI-compatible adapters. Amazon Bedrock, Cohere, and Cloudflare do not support tool calling in Magic LLM v0.1.36.
+Tool calling is supported for OpenAI, Anthropic, Google, and many OpenAI-compatible adapters. Amazon Bedrock, Cohere, and Cloudflare do not support tool calling in Magic LLM v0.1.37.
 
 ## Agent loop behavior
 

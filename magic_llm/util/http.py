@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from typing import Any, Generator, AsyncGenerator, Optional, TypeVar
+from typing import Any, Generator, AsyncGenerator, Optional, TypeVar, Literal
 
 import aiohttp
 import requests
@@ -10,6 +10,26 @@ from requests import RequestException
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
+
+
+ResponseDecodeFormat = Literal['json', 'text', 'srt', 'vtt', 'bytes']
+
+
+def _decode_response(content: bytes, response_format: ResponseDecodeFormat) -> Any:
+    if response_format == 'bytes':
+        return content
+    text = content.decode('utf-8')
+    if response_format in {'text', 'srt', 'vtt'}:
+        return text
+    return json.loads(text)
+
+
+def _headers_without_multipart_content_type(headers: Optional[dict[str, str]]) -> dict[str, str]:
+    sanitized = dict(headers or {})
+    for key in list(sanitized.keys()):
+        if key.lower() == 'content-type':
+            sanitized.pop(key)
+    return sanitized
 
 
 class HttpError(Exception):
@@ -102,6 +122,47 @@ class AsyncHttpClient:
         :raises: HttpError
         """
         return await self.request("POST", url, **kwargs)
+
+    async def post_multipart(
+        self,
+        url: str,
+        *,
+        fields: dict[str, Any],
+        file_field: str,
+        file_bytes: bytes,
+        filename: str,
+        content_type: str,
+        headers: Optional[dict[str, str]] = None,
+        response_format: ResponseDecodeFormat = 'json',
+        timeout: int = 30,
+        **kwargs,
+    ) -> Any:
+        """POST multipart/form-data with explicit file metadata and decoding.
+
+        Let aiohttp generate the multipart boundary; callers must not provide a
+        manual ``Content-Type: multipart/form-data`` header.
+        """
+        form = aiohttp.FormData()
+        for name, value in fields.items():
+            if value is not None:
+                form.add_field(name, str(value))
+        form.add_field(
+            file_field,
+            file_bytes,
+            filename=filename,
+            content_type=content_type,
+        )
+        kwargs.pop('json', None)
+        kwargs.pop('data', None)
+        content = await self.request(
+            "POST",
+            url,
+            data=form,
+            headers=_headers_without_multipart_content_type(headers),
+            timeout=timeout,
+            **kwargs,
+        )
+        return _decode_response(content, response_format)
 
     async def stream_request(
         self,
@@ -244,6 +305,39 @@ class HttpClient:
         :raises: HttpError
         """
         return self.request("POST", url, **kwargs)
+
+    def post_multipart(
+        self,
+        url: str,
+        *,
+        fields: dict[str, Any],
+        file_field: str,
+        file_bytes: bytes,
+        filename: str,
+        content_type: str,
+        headers: Optional[dict[str, str]] = None,
+        response_format: ResponseDecodeFormat = 'json',
+        timeout: int = 30,
+        **kwargs,
+    ) -> Any:
+        """POST multipart/form-data with explicit file metadata and decoding.
+
+        ``requests`` receives non-file fields through ``data`` and the file part
+        through ``files``. Do not set a manual multipart Content-Type header;
+        requests creates the boundary when ``files`` is present.
+        """
+        kwargs.pop('json', None)
+        kwargs.pop('data', None)
+        content = self.request(
+            "POST",
+            url,
+            data={k: str(v) for k, v in fields.items() if v is not None},
+            files={file_field: (filename, file_bytes, content_type)},
+            headers=_headers_without_multipart_content_type(headers),
+            timeout=timeout,
+            **kwargs,
+        )
+        return _decode_response(content, response_format)
 
     def stream_request(
         self,

@@ -48,5 +48,7 @@ On official OpenAI this is sent as `max_completion_tokens=512`; on Groq, Mistral
 - Async chat and streaming: supported.
 - Tool calling: supported for most adapters, but provider behavior depends on the endpoint.
 - Embeddings: supported by OpenAI and selected compatible providers such as DeepInfra, Together, Mistral, and Fireworks.
-- Audio: supported by OpenAI and selected compatible providers such as DeepInfra and Fireworks.
+- Audio: official OpenAI supports async TTS and sync+async STT; Together supports sync+async TTS; DeepInfra keeps async TTS only; Fireworks supports async STT only for `whisper-v3` and `whisper-v3-turbo`; other compatible adapters fail fast for media unless explicitly verified.
 - Model discovery: supported by many adapters; availability depends on the provider.
+
+Unknown OpenAI-compatible endpoints no longer inherit official OpenAI media or vision claims. Provide accurate STT `filename` and `content_type`; multipart uploads use a real `file` part plus form fields.

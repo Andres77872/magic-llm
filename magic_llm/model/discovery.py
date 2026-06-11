@@ -21,7 +21,7 @@ class ModelCapabilities(BaseModel):
     Per spec.md Section "Capabilities (normalized boolean flags)":
     - All capabilities default to appropriate values
     - Chat defaults True (most models support chat)
-    - Embedding/completion/vision/audio default False
+    - Embedding/completion/vision/audio/image-output default False
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -29,8 +29,10 @@ class ModelCapabilities(BaseModel):
     chat: bool = Field(default=True, description="Supports chat/completion API")
     completion: bool = Field(default=False, description="Supports raw completion (legacy)")
     embedding: bool = Field(default=False, description="Supports embedding generation")
-    vision: bool = Field(default=False, description="Supports image/vision inputs")
-    audio_input: bool = Field(default=False, description="Supports audio input")
+    vision: bool = Field(default=False, description="Supports image/vision inputs (image input only)")
+    audio_input: bool = Field(default=False, description="Supports audio input or transcription/STT")
+    audio_output: bool = Field(default=False, description="Supports TTS/audio generation output")
+    image_output: bool = Field(default=False, description="Supports first-class image generation output")
     function_calling: bool = Field(default=False, description="Supports tool/function calling")
     streaming: bool = Field(default=True, description="Supports streaming responses")
     reasoning: bool = Field(default=False, description="Supports extended reasoning/thinking")

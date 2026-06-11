@@ -8,11 +8,10 @@ Skipped when no Google API key is available.
 """
 
 import json
-import os
 
 import pytest
 
-from conftest import resolve_keys_file
+from conftest import get_provider_key
 
 from magic_llm import MagicLLM
 from magic_llm.model import ModelChat
@@ -22,23 +21,13 @@ from magic_llm.agent.types import AgentBudget
 # All tests in this file require live provider access
 pytestmark = pytest.mark.provider_functional
 
-# Resolve keys file
-_KEYS_FILE = resolve_keys_file()
-with open(_KEYS_FILE) as f:
-    ALL_KEYS = json.load(f)
-
-# Skip entirely if no Google key
-if "google" not in ALL_KEYS:
-    pytest.skip("No Google API key in keys file", allow_module_level=True)
-
-GOOGLE_KEYS = dict(ALL_KEYS["google"])
 MODEL = "gemini-3.1-pro-preview"
 
 
 class TestGeminiNativeToolCallingE2E:
     """Real E2E validation of native Gemini tool calling round-trip."""
 
-    def test_single_tool_call_round_trip(self):
+    def test_single_tool_call_round_trip(self, provider_keys):
         """Full round-trip: user prompt -> tool call -> tool exec -> final text.
 
         Manually orchestrates the two-turn flow to prove the complete E2E:
@@ -52,7 +41,7 @@ class TestGeminiNativeToolCallingE2E:
             """Return the favorite color of a person."""
             return "blue"
 
-        google_keys = dict(GOOGLE_KEYS)
+        google_keys = get_provider_key(provider_keys, "google", "google")
         google_keys.pop("engine", None)
         client = MagicLLM(engine="google", model=MODEL, **google_keys)
 
@@ -124,12 +113,12 @@ class TestGeminiNativeToolCallingE2E:
             f"Expected tool result 'blue' in final response, got: {response2.content}"
         )
 
-    def test_tool_call_emits_function_call(self):
+    def test_tool_call_emits_function_call(self, provider_keys):
         """Validate that the first generate call returns a tool call (not just text).
 
         This proves the model actually used function calling, not just answered directly.
         """
-        google_keys = dict(GOOGLE_KEYS)
+        google_keys = get_provider_key(provider_keys, "google", "google")
         google_keys.pop("engine", None)
 
         def get_favorite_color(person: str) -> str:

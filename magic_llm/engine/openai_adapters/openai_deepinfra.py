@@ -13,6 +13,8 @@ from magic_llm.util.http import AsyncHttpClient
 
 
 class ProviderDeepInfra(OpenAiBaseProvider):
+    supports_tts_async = True
+
     def __init__(self,
                  base_url: str = "https://api.deepinfra.com/v1/openai",
                  **kwargs):

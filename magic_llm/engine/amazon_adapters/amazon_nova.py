@@ -1,10 +1,11 @@
 import json
 import time
 
+from magic_llm.engine._usage_factory import build_usage_model
 from magic_llm.engine.amazon_adapters.base_provider import AmazonBaseProvider
 from magic_llm.engine.tooling import guard_tools_supported
 from magic_llm.model import ModelChat, ModelChatResponse
-from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
+from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.util.response_mapping import (
     AMAZON_FINISH_REASON_MAP,
     map_finish_reason,
@@ -17,7 +18,7 @@ class ProviderAmazonNova(AmazonBaseProvider):
     """
     Provider for Amazon Bedrock Nova models.
     """
-    supports_vision: bool = True
+    supports_vision: bool = False
 
     def transform_request(self, chat: ModelChat, **kwargs) -> str:
         """
@@ -30,10 +31,11 @@ class ProviderAmazonNova(AmazonBaseProvider):
         Returns:
             A JSON string containing the request body
 
-        Note: Nova models support images via the content array format.
-        Image support can be added by including image parts in messages.
+        Note: Nova vision input is disabled until OpenAI-style image_url parts
+        are transformed into the native Bedrock Nova image schema and tested.
         """
         guard_tools_supported('Amazon Bedrock Nova', kwargs.get('tools'), kwargs.get('tool_choice'))
+        self._validate_vision_support(chat)
         m = chat.get_messages()
         for i in m:
             if (c := i.get('content')) and type(c) == str:
@@ -83,7 +85,7 @@ class ProviderAmazonNova(AmazonBaseProvider):
 
         # Create usage model
         usage_data = r.get('usage', {})
-        usage = UsageModel(
+        usage = build_usage_model(
             prompt_tokens=usage_data.get('inputTokens', 0),
             completion_tokens=usage_data.get('outputTokens', 0),
             total_tokens=usage_data.get('totalTokens', 0)
@@ -116,7 +118,7 @@ class ProviderAmazonNova(AmazonBaseProvider):
 
         usage = None
         if c := event.get('metadata', {}).get('usage'):
-            usage = UsageModel(
+            usage = build_usage_model(
                 prompt_tokens=c['inputTokens'],
                 completion_tokens=c['outputTokens'],
                 total_tokens=c['inputTokens'] + c['outputTokens']

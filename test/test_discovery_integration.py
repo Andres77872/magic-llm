@@ -209,6 +209,141 @@ class TestRegistryCompleteness:
             )
 
 
+DISCOVERY_OPENAI_COMPATIBLE_QUIRKS = [
+    # provider, expected endpoint URL, response shape
+    ("cerebras", "https://api.cerebras.ai/v1/models", "data"),
+    ("hyperbolic", "https://api.hyperbolic.xyz/v1/models", "data"),
+    ("mistral", "https://api.mistral.ai/v1/models", "data"),
+    ("xai", "https://api.x.ai/v1/models", "data"),
+    ("deepseek", "https://api.deepseek.com/v1/models", "data"),
+    ("novita", "https://api.novita.ai/v3/openai/models", "data"),
+    ("parasail", "https://api.parasail.io/v1/models", "data"),
+    ("nebius", "https://api.studio.nebius.ai/v1/models", "data"),
+    ("perplexity", "https://api.perplexity.ai/v1/models", "data"),
+    ("groq", "https://api.groq.com/openai/v1/models", "data"),
+    ("deepinfra", "https://api.deepinfra.com/v1/models", "data"),
+    ("together", "https://api.together.xyz/v1/models", "bare_array"),
+]
+
+
+def _quirk_payload(provider: str, response_shape: str):
+    raw = [{"id": f"{provider}-model", "object": "model"}]
+    return raw if response_shape == "bare_array" else {"data": raw}
+
+
+class TestOpenAICompatibleDiscoveryQuirkTable:
+    """Consolidated replacement proof for duplicated per-provider discovery shells."""
+
+    @pytest.mark.parametrize(
+        ("provider", "expected_url", "response_shape"),
+        DISCOVERY_OPENAI_COMPATIBLE_QUIRKS,
+        ids=[row[0] for row in DISCOVERY_OPENAI_COMPATIBLE_QUIRKS],
+    )
+    def test_default_url_auth_and_provider_attribution(self, provider, expected_url, response_shape):
+        cls = get_adapter(provider)
+        adapter = cls(api_key="test-key")
+
+        assert adapter._get_endpoint_url() == expected_url
+        headers = adapter._get_headers()
+        assert headers["Authorization"] == "Bearer test-key"
+        assert headers["Accept"] == "application/json"
+        assert headers["Content-Type"] == "application/json"
+
+        models = adapter._normalize_response(_quirk_payload(provider, response_shape))
+        assert len(models) == 1
+        assert models[0].provider == provider
+        assert models[0].external_id == f"{provider}-model"
+
+    @pytest.mark.parametrize(
+        ("provider", "expected_url", "response_shape"),
+        DISCOVERY_OPENAI_COMPATIBLE_QUIRKS,
+        ids=[row[0] for row in DISCOVERY_OPENAI_COMPATIBLE_QUIRKS],
+    )
+    def test_sync_discover_hits_exact_provider_url(self, provider, expected_url, response_shape):
+        payload = json.dumps(_quirk_payload(provider, response_shape)).encode("utf-8")
+        with patch("magic_llm.engine.discovery.base_discovery.HttpClient") as mock_cls:
+            instance = MagicMock()
+            instance.request.return_value = payload
+            instance.__enter__.return_value = instance
+            mock_cls.return_value = instance
+
+            adapter = get_adapter(provider)(api_key="test-key")
+            models = adapter.discover()
+
+        assert [m.provider for m in models] == [provider]
+        mock_cls.return_value.request.assert_called_once_with(
+            "GET",
+            expected_url,
+            headers={
+                "Authorization": "Bearer test-key",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("provider", "expected_url", "response_shape"),
+        DISCOVERY_OPENAI_COMPATIBLE_QUIRKS,
+        ids=[row[0] for row in DISCOVERY_OPENAI_COMPATIBLE_QUIRKS],
+    )
+    async def test_async_discover_hits_exact_provider_url(self, provider, expected_url, response_shape):
+        payload = json.dumps(_quirk_payload(provider, response_shape)).encode("utf-8")
+        with patch("magic_llm.engine.discovery.base_discovery.AsyncHttpClient") as mock_cls:
+            instance = MagicMock()
+            instance.request = AsyncMock(return_value=payload)
+            instance.__aenter__.return_value = instance
+            mock_cls.return_value = instance
+
+            adapter = get_adapter(provider)(api_key="test-key")
+            models = await adapter.async_discover()
+
+        assert [m.provider for m in models] == [provider]
+        mock_cls.return_value.request.assert_awaited_once_with(
+            "GET",
+            expected_url,
+            headers={
+                "Authorization": "Bearer test-key",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+        )
+
+
+class TestOfflineDiscoveryFacadeReplacement:
+    """Offline facade-chain proof that keeps live discovery smoke optional."""
+
+    def test_magicllm_facade_core_provider_list_models_with_mocked_http(self):
+        with patch("magic_llm.engine.discovery.base_discovery.HttpClient") as mock_cls:
+            instance = MagicMock()
+            instance.request.return_value = json.dumps(OPENAI_PAYLOAD).encode("utf-8")
+            instance.__enter__.return_value = instance
+            mock_cls.return_value = instance
+
+            models = MagicLLM(engine="openai", private_key="sk-test", model="gpt-4o").list_models()
+
+        assert [m.provider for m in models] == ["openai", "openai"]
+        mock_cls.return_value.request.assert_called_once()
+
+    def test_resolver_facade_proxy_provider_list_models_with_mocked_http(self):
+        with patch("magic_llm.engine.discovery.base_discovery.HttpClient") as mock_cls:
+            instance = MagicMock()
+            instance.request.return_value = json.dumps({"data": [{"id": "groq-model"}]}).encode("utf-8")
+            instance.__enter__.return_value = instance
+            mock_cls.return_value = instance
+
+            from magic_llm.base import MagicLlmBase
+            adapter = MagicLlmBase._resolve_discovery_adapter(engine="groq", api_key="gk-test", base_url=None)
+            models = adapter.discover()
+
+        assert len(models) == 1
+        assert models[0].provider == "groq"
+        assert mock_cls.return_value.request.call_args.args[:2] == (
+            "GET",
+            "https://api.groq.com/openai/v1/models",
+        )
+
+
 # ── Negative / Edge Cases ────────────────────────────────────────────────
 
 class TestNegativeCases:

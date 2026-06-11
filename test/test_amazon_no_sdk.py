@@ -86,16 +86,48 @@ class TestAmazonNoSdkClientAttributes:
     """Verify AmazonBaseProvider does not create SDK client attributes."""
 
     def test_base_provider_no_client_attribute(self):
-        """AmazonBaseProvider __init__ does not set self.client."""
+        """AmazonBaseProvider has no runtime SDK client assignment."""
         import magic_llm.engine.amazon_adapters.base_provider as mod
         source = inspect.getsource(mod)
-        assert "self.client" not in source or "self.client" in source.split("# No boto3")[1]
+        tree = ast.parse(source)
+        assignments = []
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+            for target in targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "self"
+                    and target.attr == "client"
+                ):
+                    assignments.append(target.attr)
+        assert assignments == []
 
     def test_base_provider_no_aclient_attribute(self):
-        """AmazonBaseProvider __init__ does not set self.aclient."""
+        """AmazonBaseProvider has no runtime async SDK client assignment."""
         import magic_llm.engine.amazon_adapters.base_provider as mod
         source = inspect.getsource(mod)
-        assert "self.aclient" not in source
+        tree = ast.parse(source)
+        assignments = []
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+            for target in targets:
+                if (
+                    isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "self"
+                    and target.attr == "aclient"
+                ):
+                    assignments.append(target.attr)
+        assert assignments == []
 
     def test_base_provider_subclass_no_client(self):
         """AmazonBaseProvider subclass instances have no self.client."""

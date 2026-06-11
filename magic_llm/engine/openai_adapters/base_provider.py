@@ -1,13 +1,11 @@
 import json
 import logging
-import mimetypes
 import os
 from abc import ABC
 from typing import Dict, Tuple, Optional, Any
 
-import aiohttp
-
 from magic_llm.engine.tooling import map_request_tools
+from magic_llm.engine._usage_factory import usage_from_openai_payload
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse, ModelEmbeddingResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
@@ -85,7 +83,11 @@ def _has_image_content(messages: list[dict]) -> bool:
 
 
 class OpenAiBaseProvider(ABC):
-    supports_vision: bool = True
+    supports_vision: bool = False
+    supports_tts_sync: bool = False
+    supports_tts_async: bool = False
+    supports_stt_sync: bool = False
+    supports_stt_async: bool = False
 
     def __init__(self,
                  base_url: str,
@@ -218,7 +220,10 @@ class OpenAiBaseProvider(ABC):
         Returns:
             Normalized ModelChatResponse
         """
-        return ModelChatResponse(**raw)
+        normalized = dict(raw)
+        if normalized.get('usage'):
+            normalized['usage'] = usage_from_openai_payload(normalized)
+        return ModelChatResponse(**normalized)
 
     def transform_embedding_response(self, raw: Dict[str, Any]) -> ModelEmbeddingResponse:
         """
@@ -273,7 +278,7 @@ class OpenAiBaseProvider(ABC):
             # TODO improve server side error per provider
             if 'choices' not in chunk:
                 raise Exception(f'no choices, {chunk}')
-            chunk['usage'] = c if (c := chunk.get('usage', {})) else {}
+            chunk['usage'] = usage_from_openai_payload(chunk) if chunk.get('usage') else {}
             if len(chunk['choices']) == 0:
                 return None
             chunk = ChatCompletionModel(**chunk)
@@ -293,62 +298,105 @@ class OpenAiBaseProvider(ABC):
                         ]
                     })
 
+    def _unsupported_media(self, method: str, supported_alternative: Optional[str] = None) -> None:
+        alternative = (
+            f" Supported alternative: {supported_alternative}."
+            if supported_alternative else
+            " Use a provider/model with verified support for this media operation."
+        )
+        raise ChatException(
+            message=(
+                f"Provider '{self.__class__.__name__}' does not support media operation '{method}' "
+                f"for model '{self.model}'.{alternative}"
+            ),
+            error_code='UNSUPPORTED_MEDIA_OPERATION',
+        )
+
+    def _transcription_response_decode_format(self, data: AudioTranscriptionsRequest) -> str:
+        return 'json' if data.is_json_response_format else 'text'
+
+    def _normalize_transcription_response(self, response: Any, response_format: str) -> Any:
+        if response_format in {'text', 'srt', 'vtt'}:
+            return response.decode('utf-8') if isinstance(response, bytes) else response
+
+        if not isinstance(response, dict):
+            return {'text': str(response)}
+
+        normalized = dict(response)
+        if 'text' not in normalized:
+            for key in ('DisplayText', 'display_text', 'transcript', 'transcription'):
+                if key in normalized:
+                    normalized['text'] = normalized[key]
+                    break
+        return normalized
+
     def prepare_async_transcriptions(self, data: AudioTranscriptionsRequest):
+        """Backward-compatible helper that now honors validated metadata."""
+        import aiohttp
+
+        metadata = data.resolve_upload_metadata(require_metadata=True)
         form_data = aiohttp.FormData()
+        for name, value in data.transcription_fields(model=self.model).items():
+            form_data.add_field(name, value)
         form_data.add_field(
             'file',
             data.file,
-            filename="audio.mp3",
-            content_type=mimetypes.guess_type("audio.mp3")[0] or "application/octet-stream"
+            filename=metadata.filename,
+            content_type=metadata.content_type,
         )
-        form_data.add_field('model', data.model)
-        if data.language:
-            form_data.add_field('language', data.language)
-        if data.prompt:
-            form_data.add_field('prompt', data.prompt)
-        if data.response_format:
-            form_data.add_field('response_format', data.response_format)
-        if data.temperature is not None:
-            form_data.add_field('temperature', str(data.temperature))
         return form_data
 
     def prepare_json_transcriptions(self, data: AudioTranscriptionsRequest):
-        json_body = {
-            "model": data.model,
-        }
+        return data.transcription_fields(model=self.model)
 
-        # Add optional fields only if they exist
-        if data.language:
-            json_body["language"] = data.language
-        if data.prompt:
-            json_body["prompt"] = data.prompt
-        if data.response_format:
-            json_body["response_format"] = data.response_format
-        if data.temperature is not None:
-            json_body["temperature"] = data.temperature  # No need for str() conversion in JSON
-
-        return json_body
+    def audio_speech(self, data: AudioSpeechRequest, **kwargs):
+        if not self.supports_tts_sync:
+            self._unsupported_media('audio_speech', 'async_audio_speech if this provider supports async TTS')
+        self._unsupported_media('audio_speech')
 
     async def async_audio_speech(self, data: AudioSpeechRequest, **kwargs):
-        raise NotImplementedError
+        if not self.supports_tts_async:
+            self._unsupported_media('async_audio_speech', 'audio_speech if this provider supports sync TTS')
+        self._unsupported_media('async_audio_speech')
 
     async def async_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
+        if not self.supports_stt_async:
+            self._unsupported_media('async_audio_transcriptions', 'use a provider with verified async STT support')
+        metadata = data.resolve_upload_metadata(require_metadata=True)
         headers = {
             "Authorization": self.headers.get("Authorization")
         }
         async with AsyncHttpClient() as client:
-            response = await client.post_json(url=self.base_url + '/audio/transcriptions',
-                                              data=self.prepare_async_transcriptions(data),
-                                              headers=headers)
-            return response
+            response = await client.post_multipart(
+                url=self.base_url + '/audio/transcriptions',
+                fields=data.transcription_fields(model=self.model),
+                file_field='file',
+                file_bytes=data.file,
+                filename=metadata.filename,
+                content_type=metadata.content_type,
+                headers=headers,
+                response_format=self._transcription_response_decode_format(data),
+                timeout=kwargs.get('timeout', 30),
+            )
+            return self._normalize_transcription_response(response, data.response_format)
 
     def sync_audio_transcriptions(self, data: AudioTranscriptionsRequest, **kwargs):
+        if not self.supports_stt_sync:
+            self._unsupported_media('sync_audio_transcriptions', 'async_audio_transcriptions if this provider supports async STT')
+        metadata = data.resolve_upload_metadata(require_metadata=True)
         headers = {
             "Authorization": self.headers.get("Authorization")
         }
         with HttpClient() as client:
-            response = client.post_json(url=self.base_url + '/audio/transcriptions',
-                                        data=self.prepare_json_transcriptions(data),
-                                        files={'file': ('audio.mp3', data.file, 'audio/mpeg')},
-                                        headers=headers)
-            return response
+            response = client.post_multipart(
+                url=self.base_url + '/audio/transcriptions',
+                fields=data.transcription_fields(model=self.model),
+                file_field='file',
+                file_bytes=data.file,
+                filename=metadata.filename,
+                content_type=metadata.content_type,
+                headers=headers,
+                response_format=self._transcription_response_decode_format(data),
+                timeout=kwargs.get('timeout', 30),
+            )
+            return self._normalize_transcription_response(response, data.response_format)

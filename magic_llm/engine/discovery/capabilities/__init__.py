@@ -13,6 +13,8 @@ from magic_llm.engine.discovery.capabilities.models import (
     VISION_PATTERNS,
     EMBEDDING_PATTERNS,
     FUNCTION_CALLING_PATTERNS,
+    AUDIO_INPUT_PATTERNS,
+    AUDIO_OUTPUT_PATTERNS,
     CONTEXT_WINDOW_MAP,
 )
 from magic_llm.engine.discovery.capabilities.strategies import (
@@ -32,5 +34,7 @@ __all__ = [
     "VISION_PATTERNS",
     "EMBEDDING_PATTERNS",
     "FUNCTION_CALLING_PATTERNS",
+    "AUDIO_INPUT_PATTERNS",
+    "AUDIO_OUTPUT_PATTERNS",
     "CONTEXT_WINDOW_MAP",
 ]

@@ -28,6 +28,8 @@ def _make_call(name: str, args: dict | None = None, id: str = "call_1") -> Canon
 class TestPerToolTimeout:
     """Task 1.2: Per-tool timeout overrides in ToolExecutor."""
 
+    pytestmark = pytest.mark.asyncio
+
     async def _async_slow_tool(self, duration: float = 30.0) -> str:
         """Async tool that sleeps for the given duration."""
         await asyncio.sleep(duration)
@@ -46,13 +48,14 @@ class TestPerToolTimeout:
         assert "1.0" in result.error
 
     async def test_per_tool_name_override_applies(self):
-        """Per-tool timeout override applies: generate_image uses 120.0, not global 1.0."""
+        """Caller-owned generate_image tool timeout uses 120.0, not global 1.0."""
         executor = ToolExecutor(
             per_tool_timeout=1.0,
             tool_timeouts={"generate_image": 120.0},
         )
 
         async def fast_image_tool() -> str:
+            # This is a generic caller-registered tool name, not a core image-generation API.
             return '{"url": "/images/img-abc.webp"}'
 
         executor.register("generate_image", fast_image_tool)
@@ -131,6 +134,8 @@ class TestPerToolTimeout:
 
 class TestHeartbeatCallback:
     """Task 1.3: Heartbeat callback in AsyncAgentLoop."""
+
+    pytestmark = pytest.mark.asyncio
 
     async def test_heartbeat_invoked_during_long_execution(self):
         """Heartbeat callback invoked at least once for tools taking >0.5s.
@@ -300,6 +305,8 @@ class TestCustomToolExecutorThroughLoop:
 class TestPhase1Integration:
     """Integration tests combining all Phase 1 changes."""
 
+    pytestmark = pytest.mark.asyncio
+
     async def test_tool_timeout_and_content_size_together(self):
         """Both per-tool timeout override and max_content_size work together."""
         executor = ToolExecutor(
@@ -309,6 +316,7 @@ class TestPhase1Integration:
         )
 
         async def image_tool() -> dict:
+            # Caller-owned test tool; Magic LLM does not provide first-class image generation.
             await asyncio.sleep(0.1)  # Fast enough for both timeouts
             return {"url": "/images/img.webp", "data": "x" * 100}
 

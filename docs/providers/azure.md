@@ -1,6 +1,6 @@
 # Azure
 
-The `azure` engine is speech-only in Magic LLM v0.1.36.
+The `azure` engine is speech-only in Magic LLM v0.1.37.
 
 ```python
 from magic_llm import MagicLLM
@@ -23,6 +23,8 @@ These chat methods raise `NotImplementedError` for `engine="azure"`:
 
 Use the Azure engine only for speech APIs.
 
+Azure Speech media methods are async-only. `audio_speech()` and `sync_audio_transcriptions()` raise clear unsupported-operation errors with async method hints.
+
 ## Text-to-speech example
 
 ```python
@@ -38,6 +40,8 @@ request = AudioSpeechRequest(
 audio_bytes = await client.llm.async_audio_speech(request)
 ```
 
+Supported `response_format` values are `mp3`, `wav`, `pcm`, and `ogg`; they are mapped to Azure `X-Microsoft-OutputFormat` headers. Text is escaped before insertion into SSML.
+
 ## Speech-to-text
 
-Azure exposes async transcription support through `async_audio_transcriptions`. Check provider behavior in your region and model setup.
+Azure exposes async transcription support through `async_audio_transcriptions`. Provide `language`, `filename`, and `content_type`; WAV (`audio/wav`) is required and non-WAV input is rejected before upload.

@@ -11,4 +11,4 @@ This legacy guide has been replaced by the structured documentation set:
 - [Model discovery](usage/model-discovery.md)
 - [Agents and tool calling](agents/index.md)
 
-The old examples were consolidated into those pages and updated with the current v0.1.36 provider caveats.
+The old examples were consolidated into those pages and updated with the current v0.1.37 provider caveats.

@@ -2,7 +2,7 @@
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Andres77872/magic-llm)
 
-Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface across native and OpenAI-compatible LLM providers. Version `0.1.36` supports chat, streaming, async calls, embeddings, audio, model discovery, tool calling, ReAct-style agents, and YAML-backed subagents.
+Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface across native and OpenAI-compatible LLM providers. Version `0.1.37` supports chat, streaming, async calls, embeddings, provider-specific audio, model discovery, tool calling, ReAct-style agents, and YAML-backed subagents.
 
 > Magic LLM is a client library. It does **not** ship a CLI, REST server, or `.env` loader. Pass credentials explicitly to `MagicLLM(...)` from your own application configuration.
 
@@ -27,6 +27,7 @@ Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface
 - Streaming and async support across the core chat surface.
 - Unified response models with usage and latency metadata where providers expose it.
 - Embeddings, speech-to-text, text-to-speech, model discovery, fallback clients, callbacks, tool calling, ReAct agents, and subagents.
+- Vision means image input for chat. First-class image generation/image output is not part of the current core API; user tools named `generate_image` are caller-owned tools.
 
 ## Install
 
@@ -113,6 +114,8 @@ Magic LLM detects known provider URLs and applies provider-specific adapters whe
 
 - **Official OpenAI token argument:** for `api.openai.com` only, `max_tokens` is transformed into `max_completion_tokens`. If both are supplied, `max_completion_tokens` wins and `max_tokens` is removed. Other OpenAI-compatible endpoints keep `max_tokens` unchanged.
 - **Azure is speech-only:** `generate`, `stream_generate`, `async_generate`, and `async_stream_generate` raise `NotImplementedError` for `engine='azure'`.
+- **Audio support is provider/method-specific:** unsupported TTS/STT paths fail fast instead of returning `None`; see `docs/usage/audio.md` for the sync/async matrix and STT upload metadata requirements.
+- **No core image generation:** Magic LLM supports vision/image input for compatible chat models, not text-to-image output generation.
 - **Model discovery gaps:** Amazon and Cloudflare do not support model discovery.
 - **Tool-calling gaps:** Amazon Bedrock, Cohere, and Cloudflare do not support tool calling.
 - **Subagents are disabled by default:** call `enable_subagents()` before `load_subagents()` or you will get an empty bundle.

@@ -7,9 +7,11 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["test"]
 markers = [
-    "timeout: set test timeout in seconds",
-    "provider_health: provider health check tests",
-    "provider_functional: provider functional tests",
+    "integration: offline multi-module seam tests with provider/network boundaries mocked",
+    "slow: deterministic but slow tests excluded from quick local gates",
+    "timeout: timeout behavior tests or pytest-timeout-controlled tests",
+    "provider_health: explicit live provider discovery/health smoke; excluded from offline gates",
+    "provider_functional: explicit live/billable provider tests requiring credentials",
 ]
 filterwarnings = [
     "ignore:datetime.datetime.utcnow():DeprecationWarning",

@@ -1,5 +1,4 @@
 import json
-import os
 
 from magic_llm import MagicLLM
 
@@ -7,7 +6,7 @@ import pytest
 
 from magic_llm.model import ModelChat, ModelChatResponse
 
-from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+from conftest import get_provider_key
 
 # All tests in this file require live provider access
 pytestmark = pytest.mark.provider_functional
@@ -58,17 +57,6 @@ TEST_PROVIDERS = [
 ]
 CALL_DEF = {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}
 
-# Resolve keys file with fallback — raises RuntimeError if missing
-_KEYS_FILE = resolve_keys_file()
-with open(_KEYS_FILE) as f:
-    ALL_KEYS = json.load(f)
-PROVIDERS = [
-    (provider, key_name, success_model, fail_model)
-    for provider, key_name, success_model, fail_model in TEST_PROVIDERS
-    if key_name in ALL_KEYS
-]
-
-
 def extract_body(engine, chat, **kwargs):
     # choose canonical transform_request method when available
     if hasattr(engine, 'base'):
@@ -86,19 +74,23 @@ def _build_chat():
     return c
 
 
+def _keys_for(provider_keys, provider, key_name):
+    return get_provider_key(provider_keys, provider, key_name)
+
+
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_function_and_tool_mapping(provider, key_name, model, fail_model):
+def test_function_and_tool_mapping(provider_keys, provider, key_name, model, fail_model):
     """
     Test REAL LLM API calls with function calling.
     This is an integration test - NO mocks, real API requests.
     """
     # Unified OpenAI style: tools + tool_choice
     tool_entry = {"type": "function", "function": {"name": FUNCTION_DEF['function']['name']}}
-    keys = dict(ALL_KEYS[key_name])
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
 
     # REAL API call - creates actual HTTP request to provider
@@ -129,7 +121,7 @@ def test_function_and_tool_mapping(provider, key_name, model, fail_model):
     print(f"✓ {provider}: Real API call completed successfully")
 
 
-def test_function_and_tool_fallback():
+def test_function_and_tool_fallback(provider_keys):
     """
     Test REAL fallback mechanism with function calling.
     Primary model fails → fallback to secondary model.
@@ -139,11 +131,11 @@ def test_function_and_tool_fallback():
     tool_entry = {"type": "function", "function": {"name": FUNCTION_DEF['function']['name']}}
 
     # Create fallback client (Anthropic) - REAL
-    keys_anthropic = dict(ALL_KEYS['anthropic'])
+    keys_anthropic = _keys_for(provider_keys, 'anthropic', 'anthropic')
     client_fallback = MagicLLM(model='claude-3-haiku-20240307', **keys_anthropic)
 
     # Create primary client with invalid model to trigger fallback - REAL
-    keys_openai = dict(ALL_KEYS['openai'])
+    keys_openai = _keys_for(provider_keys, 'openai', 'openai')
     client = MagicLLM(model='gpt-4o1', fallback=client_fallback, **keys_openai)
 
     chat = _build_chat()
@@ -168,17 +160,17 @@ def test_function_and_tool_fallback():
 
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_function_and_tool_mapping_stream(provider, key_name, model, fail_model):
+def test_function_and_tool_mapping_stream(provider_keys, provider, key_name, model, fail_model):
     """
     Test REAL streaming LLM API calls with function calling.
     This is an integration test - NO mocks, real streaming HTTP requests.
     """
     # Unified OpenAI style: tools + tool_choice
     tool_entry = {"type": "function", "function": {"name": FUNCTION_DEF['function']['name']}}
-    keys = dict(ALL_KEYS[key_name])
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
 
     # REAL API call - creates actual streaming HTTP request

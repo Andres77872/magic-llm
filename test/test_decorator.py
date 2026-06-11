@@ -125,7 +125,7 @@ class TestDecoratorNoneRegistry:
         # Should be able to call the function directly
         # (async, so we need to run it in a test)
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(my_func("test"))
+        result = asyncio.run(my_func("test"))
         assert result == "test"
 
 

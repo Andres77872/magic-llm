@@ -1,21 +1,13 @@
-import json
-import os
-
 import pytest
 
 from magic_llm import MagicLLM
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat
 
-from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+from conftest import get_provider_key
 
 # All tests in this file require live provider access
 pytestmark = pytest.mark.provider_functional
-
-# Resolve keys file with fallback — raises RuntimeError if missing
-_KEYS_FILE = resolve_keys_file()
-with open(_KEYS_FILE) as f:
-    ALL_KEYS = json.load(f)
 
 # Provider configurations: (provider_name, key_name_in_json, success_model, fail_model)
 TEST_PROVIDERS = [
@@ -42,16 +34,6 @@ TEST_PROVIDERS = [
     ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507", "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
 ]
 
-# Filter providers for which keys are provided
-PROVIDERS = [
-    (provider, key_name, success_model, fail_model)
-    for provider, key_name, success_model, fail_model in TEST_PROVIDERS
-    if key_name in ALL_KEYS
-]
-if not PROVIDERS:
-    pytest.skip("No matching providers found in keys file", allow_module_level=True)
-
-
 def _build_chat():
     """Construct a simple chat with a single user message."""
     chat = ModelChat()
@@ -59,14 +41,18 @@ def _build_chat():
     return chat
 
 
+def _keys_for(provider_keys, provider, key_name):
+    return get_provider_key(provider_keys, provider, key_name)
+
+
 # Streaming tests (sync & async)
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_sync_stream_generate(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+def test_sync_stream_generate(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
     client = MagicLLM(model=model, **keys)
     content = ""
@@ -78,11 +64,11 @@ def test_sync_stream_generate(provider, key_name, model, fail_model):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-async def test_async_stream_generate(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+async def test_async_stream_generate(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
     client = MagicLLM(model=model, **keys)
     content = ""
@@ -93,11 +79,11 @@ async def test_async_stream_generate(provider, key_name, model, fail_model):
 
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_sync_stream_generate_fail(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+def test_sync_stream_generate_fail(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
     client = MagicLLM(model=fail_model, **keys)
     with pytest.raises(ChatException):
@@ -108,11 +94,11 @@ def test_sync_stream_generate_fail(provider, key_name, model, fail_model):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-async def test_async_stream_generate_fail(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+async def test_async_stream_generate_fail(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
     client = MagicLLM(model=fail_model, **keys)
     with pytest.raises(ChatException):
@@ -123,11 +109,11 @@ async def test_async_stream_generate_fail(provider, key_name, model, fail_model)
 # Non-streaming tests
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_sync_non_stream_generate(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+def test_sync_non_stream_generate(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
 
     # valid model → succeeds
@@ -144,11 +130,11 @@ def test_sync_non_stream_generate(provider, key_name, model, fail_model):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-async def test_async_non_stream_generate(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+async def test_async_non_stream_generate(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
 
     good = MagicLLM(model=model, **keys)
@@ -161,22 +147,22 @@ async def test_async_non_stream_generate(provider, key_name, model, fail_model):
 
 
 # Fallback tests
-def _make_fallback_client(key_name, success_model):
-    keys = dict(ALL_KEYS[key_name])
+def _make_fallback_client(provider_keys, provider, key_name, success_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     return MagicLLM(model=success_model, **keys)
 
 
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_sync_non_stream_fallback(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+def test_sync_non_stream_fallback(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
     client = MagicLLM(
         model=fail_model,
-        fallback=_make_fallback_client(key_name, model),
+        fallback=_make_fallback_client(provider_keys, provider, key_name, model),
         **keys,
     )
     resp = client.llm.generate(chat)
@@ -186,15 +172,15 @@ def test_sync_non_stream_fallback(provider, key_name, model, fail_model):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-async def test_async_non_stream_fallback(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+async def test_async_non_stream_fallback(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
     client = MagicLLM(
         model=fail_model,
-        fallback=_make_fallback_client(key_name, model),
+        fallback=_make_fallback_client(provider_keys, provider, key_name, model),
         **keys,
     )
     resp = await client.llm.async_generate(chat)
@@ -204,11 +190,11 @@ async def test_async_non_stream_fallback(provider, key_name, model, fail_model):
 # Usage & callback tests (streaming)
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_sync_generate_usage_and_callback(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+def test_sync_generate_usage_and_callback(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
     calls = []
 
@@ -217,7 +203,7 @@ def test_sync_generate_usage_and_callback(provider, key_name, model, fail_model)
 
     client = MagicLLM(
         model=fail_model,
-        fallback=_make_fallback_client(key_name, model),
+        fallback=_make_fallback_client(provider_keys, provider, key_name, model),
         callback=cb,
         **keys,
     )
@@ -235,11 +221,11 @@ def test_sync_generate_usage_and_callback(provider, key_name, model, fail_model)
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-async def test_async_generate_usage_and_callback(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+async def test_async_generate_usage_and_callback(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
     calls = []
 
@@ -248,7 +234,7 @@ async def test_async_generate_usage_and_callback(provider, key_name, model, fail
 
     client = MagicLLM(
         model=fail_model,
-        fallback=_make_fallback_client(key_name, model),
+        fallback=_make_fallback_client(provider_keys, provider, key_name, model),
         callback=cb,
         **keys,
     )
@@ -266,11 +252,11 @@ async def test_async_generate_usage_and_callback(provider, key_name, model, fail
 # Usage tests (non-streaming)
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-def test_sync_non_stream_usage(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+def test_sync_non_stream_usage(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
     client = MagicLLM(model=model, **keys)
     resp = client.llm.generate(chat)
@@ -284,11 +270,11 @@ def test_sync_non_stream_usage(provider, key_name, model, fail_model):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("provider", "key_name", "model", "fail_model"),
-    PROVIDERS,
-    ids=[p[0] for p in PROVIDERS],
+    TEST_PROVIDERS,
+    ids=[p[0] for p in TEST_PROVIDERS],
 )
-async def test_async_non_stream_usage(provider, key_name, model, fail_model):
-    keys = dict(ALL_KEYS[key_name])
+async def test_async_non_stream_usage(provider_keys, provider, key_name, model, fail_model):
+    keys = _keys_for(provider_keys, provider, key_name)
     chat = _build_chat()
     client = MagicLLM(model=model, **keys)
     resp = await client.llm.async_generate(chat)

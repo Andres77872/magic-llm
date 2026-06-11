@@ -62,3 +62,9 @@ chat.add_user_message(
 - Data URIs must include a MIME type and `;base64`.
 
 Vision support depends on the selected provider and model. If uncertain, test with the provider's known vision-capable model.
+
+## Vision input is not image generation
+
+This page documents **image input** for chat/vision models. Magic LLM does not currently provide a first-class image generation/text-to-image API, `ModelImage`, or `/images/generations` proxy. A user-defined tool named `generate_image` is just a caller-owned tool name, not a core media feature.
+
+Providers that cannot accept image input now fail fast with `VISION_NOT_SUPPORTED` before a provider request where possible. Amazon Nova vision is disabled until its native Bedrock image payload transform is implemented and tested.

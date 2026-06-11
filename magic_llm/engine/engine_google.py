@@ -12,11 +12,11 @@ from typing import Dict, Any, Tuple, Optional
 from urllib.parse import urlparse
 
 from magic_llm.engine.base_chat import BaseChat
+from magic_llm.engine._usage_factory import usage_from_google_usage
 from magic_llm.engine.tooling import map_request_tools
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest
-from magic_llm.model.ModelChatStream import (ChatCompletionModel,
-                                             UsageModel)
+from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 from magic_llm.util.response_mapping import (
     GOOGLE_FINISH_REASON_MAP,
@@ -472,15 +472,15 @@ class EngineGoogle(BaseChat):
 
         # Create usage model
         usage_metadata = gemini_response['usageMetadata']
-        usage = UsageModel(
-            prompt_tokens=usage_metadata['promptTokenCount'],
-            completion_tokens=usage_metadata.get('candidatesTokenCount', 0),
-            total_tokens=usage_metadata['totalTokenCount']
+        response_id = gemini_response.get('responseId', f"gemini_{int(time.time() * 1000)}")
+        usage = usage_from_google_usage(
+            usage_metadata,
+            provider_request_id=response_id,
         )
 
         # Build standardized response
         return build_response(
-            id=gemini_response.get('responseId', f"gemini_{int(time.time() * 1000)}"),
+            id=response_id,
             model=gemini_response.get('modelVersion', 'gemini'),
             content=content,
             finish_reason=finish_reason,
@@ -511,10 +511,9 @@ class EngineGoogle(BaseChat):
 
     def prepare_stream_response(self, chunk):
         payload = json.loads(chunk.strip()[5:].strip())
-        usage = UsageModel(
-            prompt_tokens=payload['usageMetadata']['promptTokenCount'],
-            completion_tokens=payload['usageMetadata'].get('candidatesTokenCount', 0),
-            total_tokens=payload['usageMetadata']['totalTokenCount'],
+        usage = usage_from_google_usage(
+            payload['usageMetadata'],
+            provider_request_id=payload.get('responseId'),
         )
 
         candidate = payload['candidates'][0]
@@ -613,50 +612,56 @@ class EngineGoogle(BaseChat):
 
     def audio_speech(self, speech_request: AudioSpeechRequest, **kwargs) -> bytes:
         """Generate audio speech synchronously using Gemini TTS."""
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": self.api_key,
-            **self.headers
-        }
+        def _request() -> bytes:
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+                **self.headers
+            }
 
-        data = self._prepare_tts_data(speech_request)
-        json_data = json.dumps(data).encode("utf-8")
+            data = self._prepare_tts_data(speech_request)
+            json_data = json.dumps(data).encode("utf-8")
 
-        with HttpClient() as client:
-            response = client.post_json(
-                url=self.url_tts,
-                data=json_data,
-                headers=headers,
-                timeout=kwargs.get('timeout', 30)
-            )
+            with HttpClient() as client:
+                response = client.post_json(
+                    url=self.url_tts,
+                    data=json_data,
+                    headers=headers,
+                    timeout=kwargs.get('timeout', 30)
+                )
 
-            # Extract PCM audio data from response
-            pcm_data = base64.b64decode(response['candidates'][0]['content']['parts'][0]['inlineData']['data'])
+                # Extract PCM audio data from response
+                pcm_data = base64.b64decode(response['candidates'][0]['content']['parts'][0]['inlineData']['data'])
 
-            # Convert PCM to WAV bytes and return
-            return self._pcm_to_wav_bytes(pcm_data)
+                # Convert PCM to WAV bytes and return
+                return self._pcm_to_wav_bytes(pcm_data)
+
+        return self._retry_sync_media(_request, method='audio_speech')
 
     async def async_audio_speech(self, speech_request: AudioSpeechRequest, **kwargs) -> bytes:
         """Generate audio speech asynchronously using Gemini TTS."""
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": self.api_key,
-            **self.headers
-        }
+        async def _request() -> bytes:
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+                **self.headers
+            }
 
-        data = self._prepare_tts_data(speech_request)
-        json_data = json.dumps(data).encode("utf-8")
+            data = self._prepare_tts_data(speech_request)
+            json_data = json.dumps(data).encode("utf-8")
 
-        async with AsyncHttpClient() as client:
-            response = await client.post_json(
-                url=self.url_tts,
-                data=json_data,
-                headers=headers,
-                timeout=kwargs.get('timeout', 30)
-            )
+            async with AsyncHttpClient() as client:
+                response = await client.post_json(
+                    url=self.url_tts,
+                    data=json_data,
+                    headers=headers,
+                    timeout=kwargs.get('timeout', 30)
+                )
 
-            # Extract PCM audio data from response
-            pcm_data = base64.b64decode(response['candidates'][0]['content']['parts'][0]['inlineData']['data'])
+                # Extract PCM audio data from response
+                pcm_data = base64.b64decode(response['candidates'][0]['content']['parts'][0]['inlineData']['data'])
 
-            # Convert PCM to WAV bytes and return
-            return self._pcm_to_wav_bytes(pcm_data)
+                # Convert PCM to WAV bytes and return
+                return self._pcm_to_wav_bytes(pcm_data)
+
+        return await self._retry_async_media(_request, method='async_audio_speech')

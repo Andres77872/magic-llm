@@ -19,6 +19,8 @@ from magic_llm.engine.discovery.capabilities.models import (
     VISION_PATTERNS,
     EMBEDDING_PATTERNS,
     FUNCTION_CALLING_PATTERNS,
+    AUDIO_INPUT_PATTERNS,
+    AUDIO_OUTPUT_PATTERNS,
 )
 from magic_llm.model.discovery import ModelCapabilities
 
@@ -139,6 +141,23 @@ class ModelNameRegexStrategy(CapabilityInferenceStrategy):
                 result["function_calling"] = True
                 break
 
+        # Audio input / STT — narrow verified patterns only
+        for pattern in AUDIO_INPUT_PATTERNS:
+            if re.search(pattern, model_id, re.IGNORECASE):
+                result["audio_input"] = True
+                break
+
+        # Audio output / TTS — narrow verified patterns only
+        for pattern in AUDIO_OUTPUT_PATTERNS:
+            if re.search(pattern, model_id, re.IGNORECASE):
+                result["audio_output"] = True
+                break
+
+        if result.get("audio_output") and re.search(r"(tts|text-to-speech|sonic)", model_id, re.IGNORECASE):
+            # TTS/audio-output model names such as gpt-4o-mini-tts should not
+            # inherit broad chat-vision regex claims from gpt-4o.
+            result.pop("vision", None)
+
         return result
 
 
@@ -189,6 +208,10 @@ class ProviderFieldStrategy(CapabilityInferenceStrategy):
                                      in d.get("architecture", {})
                                      .get("modality", {})
                                      .get("input", []),
+            "audio_output": lambda d: "audio"
+                                      in d.get("architecture", {})
+                                      .get("modality", {})
+                                      .get("output", []),
         },
     }
 

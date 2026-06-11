@@ -318,3 +318,53 @@ class ToolExecutionError(AgentLoopError):
 # _loop_shared.py (GLOBAL_DEPTH, helpers) and config.py (MAX_GLOBAL_DEPTH).
 # This ensures consumers of types.py observe the same state as TaskExecutor.
 
+
+_GLOBAL_DEPTH_EXPORTS = {
+    "GLOBAL_DEPTH",
+    "get_global_depth",
+    "increment_global_depth",
+    "decrement_global_depth",
+    "reset_global_depth",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily expose global-depth API without importing `_loop_shared` eagerly.
+
+    `_loop_shared` imports core models from this module, so direct imports here
+    would create a circular import during `magic_llm.agent` package loading.  The
+    public contract still needs `from magic_llm.agent.types import GLOBAL_DEPTH`
+    to return the runtime object owned by `_loop_shared`, not a copy.
+    """
+    if name in _GLOBAL_DEPTH_EXPORTS:
+        from magic_llm.agent import _loop_shared
+
+        return getattr(_loop_shared, name)
+    if name == "MAX_GLOBAL_DEPTH":
+        from magic_llm.agent.config import MAX_GLOBAL_DEPTH
+
+        return MAX_GLOBAL_DEPTH
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = [
+    "ToolSpec",
+    "ToolResult",
+    "CanonicalToolCall",
+    "AgentBudget",
+    "AgentState",
+    "TaskManifest",
+    "TaskError",
+    "TaskResult",
+    "TaskBudget",
+    "TaskState",
+    "AgentLoopError",
+    "AgentBudgetExceeded",
+    "ToolExecutionError",
+    "GLOBAL_DEPTH",
+    "MAX_GLOBAL_DEPTH",
+    "get_global_depth",
+    "increment_global_depth",
+    "decrement_global_depth",
+    "reset_global_depth",
+]

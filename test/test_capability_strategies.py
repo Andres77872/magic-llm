@@ -25,6 +25,8 @@ from magic_llm.engine.discovery.capabilities.strategies import (
     VISION_PATTERNS,
     EMBEDDING_PATTERNS,
     FUNCTION_CALLING_PATTERNS,
+    AUDIO_INPUT_PATTERNS,
+    AUDIO_OUTPUT_PATTERNS,
 )
 from magic_llm.model.discovery import ModelCapabilities
 
@@ -108,6 +110,11 @@ class TestModelNameRegexStrategy:
         # Grok
         "grok-2": {},
         "grok-2-mini": {},
+        # Verified media models
+        "whisper-1": {"audio_input": True},
+        "gpt-4o-mini-tts": {"function_calling": True, "audio_output": True},
+        "cartesia/sonic-2": {"audio_output": True},
+        "vendor/text-to-speech-model": {"audio_output": True},
     }
 
     def test_known_model_ids_match_snapshot(self):
@@ -135,6 +142,8 @@ class TestModelNameRegexStrategy:
             ("VISION", VISION_PATTERNS),
             ("EMBEDDING", EMBEDDING_PATTERNS),
             ("FUNCTION_CALLING", FUNCTION_CALLING_PATTERNS),
+            ("AUDIO_INPUT", AUDIO_INPUT_PATTERNS),
+            ("AUDIO_OUTPUT", AUDIO_OUTPUT_PATTERNS),
         ]:
             for pattern in patterns:
                 matches = any(re.search(pattern, mid, re.IGNORECASE) for mid in self.SNAPSHOT)
@@ -268,6 +277,16 @@ class TestProviderFieldStrategy:
         })
         assert result["audio_input"] is True
 
+    def test_openrouter_audio_output_modality(self):
+        st = ProviderFieldStrategy()
+        result = st.infer("openrouter", "audio-output-model", {
+            "architecture": {
+                "modality": {"input": ["text"], "output": ["text", "audio"]},
+            },
+        })
+        assert result["audio_output"] is True
+        assert "image_output" not in result
+
     def test_unknown_provider_returns_empty(self):
         st = ProviderFieldStrategy()
         result = st.infer("definitely-not-real", "", {})
@@ -374,9 +393,10 @@ class TestModelVerification:
 
     def test_capabilities_without_fine_tune_succeeds(self):
         from magic_llm.model.discovery import ModelCapabilities
-        c = ModelCapabilities(chat=True, vision=True)
+        c = ModelCapabilities(chat=True, vision=True, audio_output=True)
         assert c.chat is True
         assert c.vision is True
+        assert c.audio_output is True
 
     def test_capabilities_rejects_removed_fields(self):
         """Spec: removed capability fields MUST raise ValidationError."""
@@ -386,11 +406,17 @@ class TestModelVerification:
             ModelCapabilities(fine_tune=True)  # removed — MUST reject
         with pytest.raises(ValidationError):
             ModelCapabilities(code=True)  # removed — MUST reject
+        with pytest.raises(ValidationError):
+            # Magic LLM supports vision/image input and image_output discovery,
+            # but does not expose a first-class image_generation capability flag.
+            ModelCapabilities(image_generation=True)  # not a supported capability field
 
     def test_capabilities_fine_tune_not_in_fields(self):
         from magic_llm.model.discovery import ModelCapabilities
         assert "fine_tune" not in ModelCapabilities.model_fields
         assert "code" not in ModelCapabilities.model_fields
+        assert "audio_output" in ModelCapabilities.model_fields
+        assert "image_output" in ModelCapabilities.model_fields
 
     def test_normalized_model_dead_fields_not_in_fields(self):
         from magic_llm.model.discovery import NormalizedDiscoveredModel

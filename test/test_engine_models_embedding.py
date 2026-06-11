@@ -1,12 +1,8 @@
-import json
-import os
-import asyncio
-
 import pytest
 
 from magic_llm import MagicLLM
 
-from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+from conftest import get_provider_key
 
 # Providers with embedding cap
 EMBEDDING_PROVIDERS = [
@@ -16,11 +12,6 @@ EMBEDDING_PROVIDERS = [
     ("mistral", "openai", {"model": "mistral-embed"}),
     ("together.ai", "openai", {"model": "BAAI/bge-base-en-v1.5"}),
 ]
-
-# Resolve keys file with fallback — raises RuntimeError if missing
-_KEYS_FILE = resolve_keys_file()
-with open(_KEYS_FILE) as f:
-    ALL_KEYS = json.load(f)
 
 # All tests in this file require live provider access
 pytestmark = pytest.mark.provider_functional
@@ -37,8 +28,8 @@ EXPECTED_TEXT = (
     EMBEDDING_PROVIDERS,
     ids=[p[0] for p in EMBEDDING_PROVIDERS],
 )
-def test_sync_embedding_single(key_name, provider, kwargs):
-    keys = dict(ALL_KEYS[key_name])
+def test_sync_embedding_single(provider_keys, key_name, provider, kwargs):
+    keys = get_provider_key(provider_keys, provider, key_name)
     client = MagicLLM(**keys, **kwargs)
     resp = client.llm.embedding(text=EXPECTED_TEXT)
 
@@ -55,8 +46,8 @@ def test_sync_embedding_single(key_name, provider, kwargs):
     ids=[p[0] for p in EMBEDDING_PROVIDERS],
 )
 @pytest.mark.asyncio
-async def test_async_embedding_single(key_name, provider, kwargs):
-    keys = dict(ALL_KEYS[key_name])
+async def test_async_embedding_single(provider_keys, key_name, provider, kwargs):
+    keys = get_provider_key(provider_keys, provider, key_name)
     client = MagicLLM(**keys, **kwargs)
     resp = await client.llm.async_embedding(text=EXPECTED_TEXT)
 

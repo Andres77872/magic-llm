@@ -1,6 +1,6 @@
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class FunctionCall(BaseModel):
@@ -49,8 +49,15 @@ class UsageModel(BaseModel):
     prompt_tokens: Optional[int] = 0
     completion_tokens: Optional[int] = 0
     total_tokens: Optional[int] = 0
-    prompt_tokens_details: Optional[PromptTokensDetailsModel] = PromptTokensDetailsModel()
-    completion_tokens_details: Optional[CompletionsTokensDetailsModel] = CompletionsTokensDetailsModel()
+    prompt_tokens_details: Optional[PromptTokensDetailsModel] = Field(default_factory=PromptTokensDetailsModel)
+    completion_tokens_details: Optional[CompletionsTokensDetailsModel] = Field(default_factory=CompletionsTokensDetailsModel)
+    cached_tokens_write: Optional[int] = 0
+    provider_request_id: Optional[str] = None
+    service_tier: Optional[str] = None
+    usage_source: Optional[str] = 'provider'
+    provider_extra: Optional[Dict[str, Any]] = None
+    attempt_index: Optional[int] = None
+    attempt_status: Optional[str] = None
     ttft: Optional[float] = 0
     ttf: Optional[float] = 0
     tps: Optional[float] = 0
@@ -63,7 +70,7 @@ class ChatCompletionModel(BaseModel):
     model: str
     system_fingerprint: Optional[Any] = None
     choices: List[ChoiceModel]
-    usage: Optional[UsageModel] = UsageModel()
+    usage: Optional[UsageModel] = Field(default_factory=UsageModel)
     extras: Optional[Any] = None
 
 

@@ -1,6 +1,6 @@
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Dict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from magic_llm.model.ModelChatStream import UsageModel
 
@@ -37,6 +37,11 @@ class UsageDetails(BaseModel):
     reasoning_tokens: Optional[int] = 0
     accepted_prediction_tokens: Optional[int] = 0
     rejected_prediction_tokens: Optional[int] = 0
+    cached_tokens_write: Optional[int] = 0
+    provider_request_id: Optional[str] = None
+    service_tier: Optional[str] = None
+    usage_source: Optional[str] = 'provider'
+    provider_extra: Optional[Dict[str, Any]] = None
 
 
 class ModelChatResponse(BaseModel):
@@ -45,8 +50,10 @@ class ModelChatResponse(BaseModel):
     created: float
     model: str
     choices: List[Choice]
-    usage: Optional[UsageModel] = UsageModel()
+    usage: Optional[UsageModel] = Field(default_factory=UsageModel)
     service_tier: Optional[str] = None
+    provider_request_id: Optional[str] = None
+    provider_extra: Optional[Dict[str, Any]] = None
     system_fingerprint: Optional[str] = None
 
     # Convenience properties to maintain backwards compatibility

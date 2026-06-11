@@ -6,17 +6,20 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any, Dict, Tuple, TYPE_CHECKING
+from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any, Dict, Tuple, TYPE_CHECKING, TypeVar
 
+from magic_llm.engine._usage_factory import attach_attempt_metadata, usage_attempt_dict, usage_has_tokens
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
+from magic_llm.util.http import HttpError
 
 if TYPE_CHECKING:
     from magic_llm.model.discovery import NormalizedDiscoveredModel
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel, ChatMetaModel
 
 logger = logging.getLogger(__name__)
+T = TypeVar('T')
 
 
 @dataclass
@@ -177,6 +180,86 @@ class BaseChat(abc.ABC):
             else self.fallback.llm.stream_generate
         )
 
+    def _engine_label(self) -> str:
+        """Return a human-readable engine/provider label for errors."""
+        return getattr(self, 'engine', None) or self.__class__.__name__
+
+    def _unsupported_media_operation(
+        self,
+        method: str,
+        supported_alternative: Optional[str] = None,
+    ) -> None:
+        """Raise a clear, fail-fast error for unsupported media paths."""
+        label = self._engine_label()
+        alternative = (
+            f" Supported alternative: {supported_alternative}."
+            if supported_alternative else
+            " Use a provider and method whose media support matrix marks this operation as supported."
+        )
+        raise ChatException(
+            message=(
+                f"Engine/provider '{label}' does not support media operation '{method}'."
+                f"{alternative}"
+            ),
+            error_code='UNSUPPORTED_MEDIA_OPERATION',
+        )
+
+    @staticmethod
+    def _is_retryable_media_error(error: Exception) -> bool:
+        """Return True only for transient media failures safe to retry."""
+        if isinstance(error, ChatException):
+            return False
+        if isinstance(error, (ValueError, TypeError, NotImplementedError)):
+            return False
+        if isinstance(error, HttpError):
+            status = error.status_code
+            if status in (408, 429):
+                return True
+            if status is not None:
+                return 500 <= status <= 599
+            # Transport errors from requests/aiohttp are wrapped as HttpError
+            # without a status code by util.http.
+            return True
+        return False
+
+    def _retry_sync_media(self, operation: Callable[[], T], *, method: str) -> T:
+        """Retry a supported synchronous media operation on transient failures only."""
+        attempts = max(1, self.retry_config.attempts)
+        for attempt in range(attempts):
+            try:
+                return operation()
+            except Exception as error:
+                if not self._is_retryable_media_error(error) or attempt == attempts - 1:
+                    raise
+                logger.warning(
+                    "Media operation %s attempt %d/%d failed transiently: %r",
+                    method,
+                    attempt + 1,
+                    attempts,
+                    error,
+                )
+                time.sleep(self.retry_config.delay)
+        raise RuntimeError(f"Media operation {method} exhausted unexpectedly")
+
+    async def _retry_async_media(self, operation: Callable[[], Awaitable[T]], *, method: str) -> T:
+        """Retry a supported asynchronous media operation on transient failures only."""
+        attempts = max(1, self.retry_config.attempts)
+        for attempt in range(attempts):
+            try:
+                return await operation()
+            except Exception as error:
+                if not self._is_retryable_media_error(error) or attempt == attempts - 1:
+                    raise
+                logger.warning(
+                    "Async media operation %s attempt %d/%d failed transiently: %r",
+                    method,
+                    attempt + 1,
+                    attempts,
+                    error,
+                )
+                await asyncio.sleep(self.retry_config.delay)
+        raise RuntimeError(f"Async media operation {method} exhausted unexpectedly")
+
     @staticmethod
     def async_intercept_stream_generate(func: Callable[..., Awaitable[AsyncIterator[ChatCompletionModel]]]):
         @functools.wraps(func)
@@ -185,12 +268,14 @@ class BaseChat(abc.ABC):
             usage = None
             response_content = ''
             metrics = Metrics()
+            attempt_usages: list[dict[str, Any]] = []
 
             for attempt in range(self.retry_config.attempts):
                 try:
                     metrics.start_time = time.time()
                     first_token_received = False
                     current_item = None
+                    current_attempt_usage = None
 
                     async for item in func(self, chat, **kwargs):
                         current_item = item
@@ -199,13 +284,37 @@ class BaseChat(abc.ABC):
                             metrics.generation_time = time.time()
                             first_token_received = True
 
-                        if item.usage.total_tokens:
-                            usage = item.usage
+                        if usage_has_tokens(item.usage):
+                            reported_usage = item.usage
+                            reported_usage.attempt_index = reported_usage.attempt_index or attempt + 1
+                            reported_usage.attempt_status = reported_usage.attempt_status or 'streaming'
+                            current_attempt_usage = reported_usage
+                            usage = reported_usage
+                            reported_attempt = usage_attempt_dict(
+                                reported_usage,
+                                attempt_index=attempt + 1,
+                                status='reported',
+                            )
+                            item.usage = attach_attempt_metadata(
+                                reported_usage,
+                                attempt_usages + [reported_attempt],
+                            ) or reported_usage
                         if content := item.choices[0].delta.content:
                             response_content += content
                         yield item
 
                     if first_token_received and current_item:
+                        if usage_has_tokens(current_attempt_usage):
+                            attempt_usages.append(
+                                usage_attempt_dict(
+                                    current_attempt_usage,
+                                    attempt_index=attempt + 1,
+                                    status='completed',
+                                )
+                            )
+                            usage = attach_attempt_metadata(current_attempt_usage, attempt_usages)
+                            current_item.usage = usage
+
                         self._update_metrics(current_item, metrics, usage)
 
                         meta = self._create_chat_meta_model(
@@ -217,6 +326,15 @@ class BaseChat(abc.ABC):
                     break
 
                 except Exception as e:
+                    if usage_has_tokens(locals().get('current_attempt_usage')):
+                        attempt_usages.append(
+                            usage_attempt_dict(
+                                current_attempt_usage,
+                                attempt_index=attempt + 1,
+                                status='failed',
+                            )
+                        )
+                        usage = attach_attempt_metadata(current_attempt_usage, attempt_usages)
                     er = f"Stream generation attempt {attempt + 1} failed: {e!r}"
                     logger.exception("Stream generation attempt %d failed: %r", attempt + 1, e)
                     await self._execute_callback(chat,
@@ -233,11 +351,19 @@ class BaseChat(abc.ABC):
                         fallback = self._handle_fallback(is_async=True)
                         if fallback:
                             async for i in fallback(chat, **kwargs):
+                                if usage_has_tokens(i.usage):
+                                    fallback_attempt = usage_attempt_dict(
+                                        i.usage,
+                                        attempt_index=attempt + 2,
+                                        status='fallback',
+                                    )
+                                    i.usage = attach_attempt_metadata(i.usage, attempt_usages + [fallback_attempt])
                                 yield i
                         else:
                             yield ChatCompletionModel(**{
                                 'model': self.model or 'unknown',
                                 'id': 'id',
+                                'usage': attach_attempt_metadata(usage, attempt_usages) or UsageModel(),
                                 'choices': [
                                     {
                                         'delta': {
@@ -270,12 +396,14 @@ class BaseChat(abc.ABC):
             usage = None
             response_content = ''
             metrics = Metrics()
+            attempt_usages: list[dict[str, Any]] = []
 
             for attempt in range(self.retry_config.attempts):
                 try:
                     metrics.start_time = time.time()
                     first_token_received = False
                     current_item = None
+                    current_attempt_usage = None
 
                     for item in func(self, chat, **kwargs):
                         current_item = item
@@ -284,13 +412,37 @@ class BaseChat(abc.ABC):
                             metrics.generation_time = time.time()
                             first_token_received = True
 
-                        if item.usage.total_tokens:
-                            usage = item.usage
+                        if usage_has_tokens(item.usage):
+                            reported_usage = item.usage
+                            reported_usage.attempt_index = reported_usage.attempt_index or attempt + 1
+                            reported_usage.attempt_status = reported_usage.attempt_status or 'streaming'
+                            current_attempt_usage = reported_usage
+                            usage = reported_usage
+                            reported_attempt = usage_attempt_dict(
+                                reported_usage,
+                                attempt_index=attempt + 1,
+                                status='reported',
+                            )
+                            item.usage = attach_attempt_metadata(
+                                reported_usage,
+                                attempt_usages + [reported_attempt],
+                            ) or reported_usage
                         if content := item.choices[0].delta.content:
                             response_content += content
                         yield item
 
                     if first_token_received and current_item:
+                        if usage_has_tokens(current_attempt_usage):
+                            attempt_usages.append(
+                                usage_attempt_dict(
+                                    current_attempt_usage,
+                                    attempt_index=attempt + 1,
+                                    status='completed',
+                                )
+                            )
+                            usage = attach_attempt_metadata(current_attempt_usage, attempt_usages)
+                            current_item.usage = usage
+
                         self._update_metrics(current_item, metrics, usage)
 
                         meta = self._create_chat_meta_model(
@@ -302,6 +454,15 @@ class BaseChat(abc.ABC):
                     break
 
                 except Exception as e:
+                    if usage_has_tokens(locals().get('current_attempt_usage')):
+                        attempt_usages.append(
+                            usage_attempt_dict(
+                                current_attempt_usage,
+                                attempt_index=attempt + 1,
+                                status='failed',
+                            )
+                        )
+                        usage = attach_attempt_metadata(current_attempt_usage, attempt_usages)
                     er = f"Sync stream generation attempt {attempt + 1} failed: {e!r}"
                     logger.exception("Sync stream generation attempt %d failed: %r", attempt + 1, e)
                     self._execute_callback_sync(chat,
@@ -317,7 +478,15 @@ class BaseChat(abc.ABC):
                     if attempt == self.retry_config.attempts - 1:
                         fallback = self._handle_fallback(is_async=False)
                         if fallback:
-                            yield from fallback(chat, **kwargs)
+                            for i in fallback(chat, **kwargs):
+                                if usage_has_tokens(i.usage):
+                                    fallback_attempt = usage_attempt_dict(
+                                        i.usage,
+                                        attempt_index=attempt + 2,
+                                        status='fallback',
+                                    )
+                                    i.usage = attach_attempt_metadata(i.usage, attempt_usages + [fallback_attempt])
+                                yield i
                         else:
                             raise ChatException(
                                 message=f"Stream generation failed after {attempt + 1} attempts: {er}",
@@ -571,19 +740,31 @@ class BaseChat(abc.ABC):
 
     async def async_audio_speech(self, speech_request: AudioSpeechRequest, **kwargs) -> Any:
         """Generate audio speech asynchronously."""
-        pass
+        self._unsupported_media_operation(
+            'async_audio_speech',
+            'use audio_speech only if this engine supports sync TTS, or choose an async TTS-capable provider',
+        )
 
     def audio_speech(self, speech_request: AudioSpeechRequest, **kwargs) -> Any:
         """Generate audio speech synchronously."""
-        pass
+        self._unsupported_media_operation(
+            'audio_speech',
+            'use async_audio_speech only if this engine supports async TTS, or choose a sync TTS-capable provider',
+        )
 
     async def async_audio_transcriptions(self, speech_request: AudioTranscriptionsRequest, **kwargs) -> Any:
         """Generate audio transcriptions asynchronously."""
-        pass
+        self._unsupported_media_operation(
+            'async_audio_transcriptions',
+            'use sync_audio_transcriptions only if this engine supports sync STT, or choose an async STT-capable provider',
+        )
 
     def sync_audio_transcriptions(self, speech_request: AudioTranscriptionsRequest, **kwargs) -> Any:
         """Generate audio transcriptions synchronously."""
-        pass
+        self._unsupported_media_operation(
+            'sync_audio_transcriptions',
+            'use async_audio_transcriptions only if this engine supports async STT, or choose a sync STT-capable provider',
+        )
 
     # ═══════════════════════════════════════════════════════════════════
     # DISCOVERY METHODS (Optional — per spec.md Section "Optional Discovery Interface")

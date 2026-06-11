@@ -4,7 +4,7 @@ Proves all branches of the key-resolution helper:
 1. Env set, file exists → use env path
 2. Env set, file missing → use fallback
 3. Env unset, fallback exists → use fallback
-4. Env unset, fallback missing → raise RuntimeError
+4. Env unset, fallback missing → return None unless required=True
 5. Env empty string, fallback exists → use fallback
 """
 
@@ -52,12 +52,18 @@ class TestResolveKeysFile:
             result = resolve_keys_file()
         assert result == DEFAULT_KEYS_FILE
 
-    def test_env_unset_fallback_missing_raises_runtime_error(self):
-        """Scenario 4: MAGIC_LLM_KEYS is unset and fallback doesn't exist → RuntimeError."""
+    def test_env_unset_fallback_missing_returns_none_when_not_required(self):
+        """Scenario 4: missing credentials do not abort collection by default."""
+        with patch("os.getenv", return_value=None), \
+               patch("os.path.exists", return_value=False):
+            assert resolve_keys_file() is None
+
+    def test_env_unset_fallback_missing_raises_when_required(self):
+        """Explicit live setup can request a hard failure."""
         with patch("os.getenv", return_value=None), \
               patch("os.path.exists", return_value=False):
             with pytest.raises(RuntimeError, match="No API keys file found"):
-                resolve_keys_file()
+                resolve_keys_file(required=True)
 
     def test_env_empty_string_fallback_exists_returns_fallback(self):
         """Scenario 5: MAGIC_LLM_KEYS is empty string but fallback exists → use fallback."""
