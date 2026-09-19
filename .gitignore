@@ -19,3 +19,7 @@ htmlcov/
 .idea
 .jbeval
 .cadence
+
+# Build output (CI builds these; never commit them)
+/dist/
+/build/
