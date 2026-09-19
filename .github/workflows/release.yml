@@ -40,6 +40,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history + tags, so bump_version.py can skip taken tags
+          # The bump commit has to land on the protected branch, because pip reads
+          # __version__ out of the master tree when it builds a `@master` install --
+          # tagging alone would leave the version frozen and pip would never reinstall.
+          # GITHUB_TOKEN cannot push to a branch that requires a pull request (GH006),
+          # so RELEASE_TOKEN is a PAT whose owner is allowed to bypass that rule.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          persist-credentials: true
 
       - uses: actions/setup-python@v5
         with:
@@ -53,6 +60,18 @@ jobs:
             exit 1
           fi
           echo "No commit-hash pins."
+
+      # Fail loudly here rather than 60 lines later with a raw GH006, which is what
+      # this job used to die on when the secret was missing.
+      - name: Check release credentials
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -n "${RELEASE_TOKEN}" ]; then
+            echo "RELEASE_TOKEN is set; the bump commit will be pushed with it."
+          else
+            echo "::warning::No RELEASE_TOKEN secret -- the bump commit will be pushed with GITHUB_TOKEN. A branch protected by 'require a pull request' rejects that with GH006. Fix: create a PAT with contents:write on this repo and save it as the RELEASE_TOKEN secret."
+          fi
 
       - name: Bump patch version
         id: bump
