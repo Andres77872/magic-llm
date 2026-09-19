@@ -40,7 +40,7 @@ Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface
 Primary install path:
 
 ```bash
-pip install git+https://github.com/Andres77872/magic-llm.git
+pip install git+https://github.com/Andres77872/magic-llm.git@master
 ```
 
 If the package is published in your environment, this may also work:
