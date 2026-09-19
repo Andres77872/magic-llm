@@ -103,6 +103,8 @@ class TestProcessGenerate:
         assert result.usage.completion_tokens == 50
         assert result.usage.total_tokens == 230  # 180 + 50
         assert result.usage.prompt_tokens_details.cached_tokens == 80
+        assert result.usage.cached_tokens_write == 0
+        assert result.usage.provider_request_id == "msg_123"
 
     def test_usage_with_cache_creation_tokens(self):
         """Response with cache_creation_input_tokens → added to prompt and total."""
@@ -127,6 +129,7 @@ class TestProcessGenerate:
         assert result.usage.completion_tokens == 50
         assert result.usage.total_tokens == 175  # 125 + 50
         assert result.usage.prompt_tokens_details.cached_tokens == 0  # only cache_read counts
+        assert result.usage.cached_tokens_write == 25
 
     def test_usage_with_both_cache_tokens(self):
         """Response with both cache tokens → all added correctly."""

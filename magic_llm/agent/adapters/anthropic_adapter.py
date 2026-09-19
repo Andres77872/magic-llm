@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from magic_llm.agent.tool_adapters import ToolAdapter
 from magic_llm.agent.types import CanonicalToolCall, ToolResult
 from magic_llm.engine.tooling import (
     append_tool_results,
@@ -19,7 +18,7 @@ from magic_llm.engine.tooling import (
 from magic_llm.model import ModelChat, ModelChatResponse
 
 
-class AnthropicToolAdapter(ToolAdapter):
+class AnthropicToolAdapter:
     """ToolAdapter implementation for Anthropic Claude models.
 
     Serializes tool definitions to Anthropic's {"name", "description", "input_schema"} format,

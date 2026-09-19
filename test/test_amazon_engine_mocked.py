@@ -16,6 +16,10 @@ from magic_llm.model.ModelChatResponse import ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel
 
 
+TEST_ACCESS_KEY_ID = "test-access-key-id"
+TEST_SECRET_ACCESS_KEY = "test-secret-access-key"
+
+
 def _make_mock_prepared(url="https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-lite-v1%3A0/invoke"):
     """Create a mock AWSPreparedRequest for patching build_sigv4_prepared_request."""
     mock = MagicMock()
@@ -462,10 +466,10 @@ class TestEngineAmazonBackwardCompatibility:
     def test_accepts_explicit_credentials(self):
         """EngineAmazon still accepts explicit credentials."""
         engine = EngineAmazon(
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region_name="us-east-1",
             model="amazon.nova-lite-v1:0",
         )
-        assert engine.provider.aws_access_key_id == "AKIAIOSFODNN7EXAMPLE"
-        assert engine.provider.aws_secret_access_key == "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        assert engine.provider.aws_access_key_id == TEST_ACCESS_KEY_ID
+        assert engine.provider.aws_secret_access_key == TEST_SECRET_ACCESS_KEY

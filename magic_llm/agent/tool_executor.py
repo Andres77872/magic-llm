@@ -20,6 +20,7 @@ from typing import Any, Callable
 
 from magic_llm.agent.types import CanonicalToolCall, ToolResult
 from magic_llm.util import is_async_callable
+from magic_llm.util.async_bridge import await_thread_future, submit_in_daemon_thread
 
 
 class ToolExecutor:
@@ -100,6 +101,12 @@ class ToolExecutor:
         Returns:
             A ToolResult with the execution outcome (success or error).
         """
+        # Refuse calls whose arguments failed to parse upstream — running the
+        # tool with silently-emptied arguments executes it with wrong input.
+        malformed = self._malformed_arguments_result(tool_call)
+        if malformed is not None:
+            return malformed
+
         # Check dedup cache
         dedup_enabled = (
             self._enable_dedup and tool_call.name not in self._dedup_excluded_tools
@@ -118,64 +125,26 @@ class ToolExecutor:
         # Look up tool
         fn = self._registry.get(tool_call.name)
         if fn is None:
-            duration_ms = (time.monotonic() - start) * 1000
-            result = ToolResult(
-                tool_call_id=tool_call.id,
-                name=tool_call.name,
-                content="",
-                is_error=True,
-                error=f"Unknown tool: {tool_call.name}",
-                error_type="UnknownToolError",
-                duration_ms=duration_ms,
-            )
-            return result
+            return self._unknown_tool_result(tool_call, start)
 
         # Execute with timeout (per-tool override supported)
         effective_timeout = self._resolve_timeout(tool_call.name)
+        future = submit_in_daemon_thread(fn, **tool_call.arguments)
         try:
-            output = self._execute_with_timeout(
-                fn, tool_call.arguments, timeout=effective_timeout
-            )
-        except FuturesTimeoutError:
-            duration_ms = (time.monotonic() - start) * 1000
-            result = ToolResult(
-                tool_call_id=tool_call.id,
-                name=tool_call.name,
-                content="",
-                is_error=True,
-                error=f"Tool '{tool_call.name}' timed out after {effective_timeout}s",
-                error_type="TimeoutError",
-                duration_ms=duration_ms,
-            )
-            return result
+            output = future.result(timeout=effective_timeout)
+        except FuturesTimeoutError as exc:
+            # On 3.11+ concurrent.futures.TimeoutError is the builtin
+            # TimeoutError, so a TimeoutError raised *inside* the tool lands
+            # here too. The future tells the two apart: an expired deadline
+            # leaves it unfinished; a tool-raised TimeoutError completed it.
+            if future.done():
+                return self._error_result(tool_call, start, exc)
+            return self._deadline_result(tool_call, start, effective_timeout)
         except Exception as exc:
-            duration_ms = (time.monotonic() - start) * 1000
-            error_msg = str(exc)
-            error_type = type(exc).__name__
-            result = ToolResult(
-                tool_call_id=tool_call.id,
-                name=tool_call.name,
-                content=json.dumps({"error": error_msg, "type": error_type}),
-                is_error=True,
-                error=error_msg,
-                error_type=error_type,
-                duration_ms=duration_ms,
-            )
-            return result
+            return self._error_result(tool_call, start, exc)
 
         duration_ms = (time.monotonic() - start) * 1000
-
-        # Serialize output (with per-tool max_content_size enforcement)
-        content = self._serialize_output(output, tool_name=tool_call.name)
-        truncated = content.endswith("[TRUNCATED]")
-
-        result = ToolResult(
-            tool_call_id=tool_call.id,
-            name=tool_call.name,
-            content=content,
-            is_error=truncated,
-            duration_ms=duration_ms,
-        )
+        result = self._build_output_result(tool_call, output, duration_ms)
 
         # Cache for dedup
         if dedup_enabled:
@@ -207,7 +176,7 @@ class ToolExecutor:
         """Execute a single tool call, supporting both sync and async callables.
 
         If the callable is async, it is awaited directly. If sync, it runs
-        in a thread executor to avoid blocking the event loop.
+        in a worker thread to avoid blocking the event loop.
 
         Args:
             tool_call: The canonical tool call to execute.
@@ -215,6 +184,10 @@ class ToolExecutor:
         Returns:
             A ToolResult with the execution outcome.
         """
+        malformed = self._malformed_arguments_result(tool_call)
+        if malformed is not None:
+            return malformed
+
         # Check dedup cache
         dedup_enabled = (
             self._enable_dedup and tool_call.name not in self._dedup_excluded_tools
@@ -233,68 +206,39 @@ class ToolExecutor:
         # Look up tool
         fn = self._registry.get(tool_call.name)
         if fn is None:
-            duration_ms = (time.monotonic() - start) * 1000
-            result = ToolResult(
-                tool_call_id=tool_call.id,
-                name=tool_call.name,
-                content="",
-                is_error=True,
-                error=f"Unknown tool: {tool_call.name}",
-                error_type="UnknownToolError",
-                duration_ms=duration_ms,
-            )
-            return result
+            return self._unknown_tool_result(tool_call, start)
 
         effective_timeout = self._resolve_timeout(tool_call.name)
+        invocation: Any = None
         try:
             if is_async_callable(fn):
+                invocation = asyncio.ensure_future(fn(**tool_call.arguments))
                 output = await asyncio.wait_for(
-                    fn(**tool_call.arguments), timeout=effective_timeout
+                    invocation, timeout=effective_timeout
                 )
             else:
-                loop = asyncio.get_running_loop()
-                output = await asyncio.wait_for(
-                    loop.run_in_executor(None, lambda: fn(**tool_call.arguments)),
-                    timeout=effective_timeout,
+                invocation = submit_in_daemon_thread(fn, **tool_call.arguments)
+                output = await await_thread_future(
+                    invocation, timeout=effective_timeout
                 )
-        except asyncio.TimeoutError:
-            duration_ms = (time.monotonic() - start) * 1000
-            result = ToolResult(
-                tool_call_id=tool_call.id,
-                name=tool_call.name,
-                content="",
-                is_error=True,
-                error=f"Tool '{tool_call.name}' timed out after {effective_timeout}s",
-                error_type="TimeoutError",
-                duration_ms=duration_ms,
-            )
-            return result
+        except asyncio.TimeoutError as exc:
+            # asyncio.TimeoutError is the builtin TimeoutError on 3.11+, so a
+            # TimeoutError raised *by the tool itself* is caught here as well.
+            # An expired executor deadline cancels the task (or leaves the
+            # thread future unfinished); a tool-raised TimeoutError completes
+            # the invocation normally.
+            if isinstance(invocation, asyncio.Task):
+                hit_deadline = invocation.cancelled() or not invocation.done()
+            else:
+                hit_deadline = invocation is None or not invocation.done()
+            if not hit_deadline:
+                return self._error_result(tool_call, start, exc)
+            return self._deadline_result(tool_call, start, effective_timeout)
         except Exception as exc:
-            duration_ms = (time.monotonic() - start) * 1000
-            error_msg = str(exc)
-            error_type = type(exc).__name__
-            result = ToolResult(
-                tool_call_id=tool_call.id,
-                name=tool_call.name,
-                content=json.dumps({"error": error_msg, "type": error_type}),
-                is_error=True,
-                error=error_msg,
-                error_type=error_type,
-                duration_ms=duration_ms,
-            )
-            return result
+            return self._error_result(tool_call, start, exc)
 
         duration_ms = (time.monotonic() - start) * 1000
-        content = self._serialize_output(output, tool_name=tool_call.name)
-        truncated = content.endswith("[TRUNCATED]")
-
-        result = ToolResult(
-            tool_call_id=tool_call.id,
-            name=tool_call.name,
-            content=content,
-            is_error=truncated,
-            duration_ms=duration_ms,
-        )
+        result = self._build_output_result(tool_call, output, duration_ms)
 
         if dedup_enabled:
             self._dedup_cache[fingerprint] = result
@@ -320,6 +264,110 @@ class ToolExecutor:
 
     # ─── Internal helpers ───────────────────────────────────────────────
 
+    @staticmethod
+    def _malformed_arguments_result(tool_call: CanonicalToolCall) -> ToolResult | None:
+        """Return an error result for calls whose arguments failed to parse."""
+        arguments_error = getattr(tool_call, "arguments_error", None)
+        if not arguments_error:
+            return None
+        return ToolResult(
+            tool_call_id=tool_call.id,
+            name=tool_call.name,
+            content=json.dumps(
+                {"error": arguments_error, "type": "MalformedArgumentsError"}
+            ),
+            is_error=True,
+            error=arguments_error,
+            error_type="MalformedArgumentsError",
+            duration_ms=0.0,
+        )
+
+    @staticmethod
+    def _unknown_tool_result(
+        tool_call: CanonicalToolCall, start: float
+    ) -> ToolResult:
+        duration_ms = (time.monotonic() - start) * 1000
+        error_msg = f"Unknown tool: {tool_call.name}"
+        return ToolResult(
+            tool_call_id=tool_call.id,
+            name=tool_call.name,
+            # The envelope, not "": an empty tool message tells the model
+            # nothing, and it happily narrates the call as having worked.
+            content=json.dumps({"error": error_msg, "type": "UnknownToolError"}),
+            is_error=True,
+            error=error_msg,
+            error_type="UnknownToolError",
+            duration_ms=duration_ms,
+        )
+
+    @staticmethod
+    def _deadline_result(
+        tool_call: CanonicalToolCall, start: float, effective_timeout: float
+    ) -> ToolResult:
+        duration_ms = (time.monotonic() - start) * 1000
+        error_msg = (
+            f"Tool '{tool_call.name}' timed out after {effective_timeout}s"
+        )
+        return ToolResult(
+            tool_call_id=tool_call.id,
+            name=tool_call.name,
+            content=json.dumps({"error": error_msg, "type": "TimeoutError"}),
+            is_error=True,
+            error=error_msg,
+            error_type="TimeoutError",
+            duration_ms=duration_ms,
+        )
+
+    @staticmethod
+    def _error_result(
+        tool_call: CanonicalToolCall, start: float, exc: BaseException
+    ) -> ToolResult:
+        duration_ms = (time.monotonic() - start) * 1000
+        error_type = type(exc).__name__
+        # str(exc) is "" for a bare raise of many exception types; an empty
+        # error renders as an unexplained failure everywhere downstream.
+        error_msg = str(exc) or f"Tool '{tool_call.name}' raised {error_type}"
+        return ToolResult(
+            tool_call_id=tool_call.id,
+            name=tool_call.name,
+            content=json.dumps({"error": error_msg, "type": error_type}),
+            is_error=True,
+            error=error_msg,
+            error_type=error_type,
+            duration_ms=duration_ms,
+        )
+
+    def _build_output_result(
+        self, tool_call: CanonicalToolCall, output: Any, duration_ms: float
+    ) -> ToolResult:
+        """Serialize a successful tool return, reporting truncation with a cause."""
+        content, full_chars = self._serialize_output_with_size(
+            output, tool_name=tool_call.name
+        )
+        limit = self._resolve_max_content_size(tool_call.name)
+        truncated = full_chars > limit
+        if truncated:
+            error_msg = (
+                f"Tool '{tool_call.name}' produced {full_chars} characters; "
+                f"output was truncated to the {limit}-character limit"
+            )
+            return ToolResult(
+                tool_call_id=tool_call.id,
+                name=tool_call.name,
+                content=content,
+                is_error=True,
+                error=error_msg,
+                error_type="ContentTruncated",
+                duration_ms=duration_ms,
+            )
+        return ToolResult(
+            tool_call_id=tool_call.id,
+            name=tool_call.name,
+            content=content,
+            is_error=False,
+            duration_ms=duration_ms,
+        )
+
     def _resolve_timeout(self, tool_name: str) -> float:
         """Resolve the effective timeout for a tool name.
 
@@ -337,7 +385,7 @@ class ToolExecutor:
         self, fn: Callable[..., Any], arguments: dict[str, Any],
         timeout: float | None = None,
     ) -> Any:
-        """Execute a callable with timeout enforcement via ThreadPoolExecutor.
+        """Execute a callable in a daemon thread with timeout enforcement.
 
         Args:
             fn: The callable to execute.
@@ -351,13 +399,8 @@ class ToolExecutor:
             FuturesTimeoutError: If execution exceeds the timeout.
         """
         effective_timeout = timeout if timeout is not None else self._per_tool_timeout
-        executor = ThreadPoolExecutor(max_workers=1)
-        try:
-            future = executor.submit(fn, **arguments)
-            return future.result(timeout=effective_timeout)
-        finally:
-            # shutdown(wait=False) to avoid blocking on a timed-out thread
-            executor.shutdown(wait=False)
+        future = submit_in_daemon_thread(fn, **arguments)
+        return future.result(timeout=effective_timeout)
 
     def _resolve_max_content_size(self, tool_name: str) -> int:
         """Resolve the effective max content size for a tool name.
@@ -372,34 +415,37 @@ class ToolExecutor:
         """
         return self._max_content_sizes.get(tool_name, self._max_content_size)
 
-    def _serialize_output(self, output: Any, tool_name: str | None = None) -> str:
-        """Serialize tool output to a string with size enforcement.
+    def _serialize_output_with_size(
+        self, output: Any, tool_name: str | None = None
+    ) -> tuple[str, int]:
+        """Serialize tool output, returning (content, pre-truncation length).
 
         Attempts JSON serialization first; falls back to str() for
         non-JSON-serializable objects. If the resulting string exceeds
         the max content size for the tool, it is truncated with a
         [TRUNCATED] suffix.
-
-        NOTE: This does NOT set is_error. Callers should check the return
-        value for [TRUNCATED] suffix and set is_error=True if present.
-
-        Args:
-            output: The tool's return value.
-            tool_name: Optional tool name for per-tool size override lookup.
-
-        Returns:
-            A string representation of the output, possibly truncated.
         """
         try:
             result = json.dumps(output)
         except (TypeError, ValueError):
             result = str(output)
 
+        full_chars = len(result)
         max_size = self._resolve_max_content_size(tool_name or "")
-        if len(result) > max_size:
+        if full_chars > max_size:
             result = result[:max_size] + "[TRUNCATED]"
 
-        return result
+        return result, full_chars
+
+    def _serialize_output(self, output: Any, tool_name: str | None = None) -> str:
+        """Serialize tool output to a string with size enforcement.
+
+        Retained for compatibility; see _serialize_output_with_size, which
+        also reports the pre-truncation length so callers can attach a
+        truncation cause instead of a bare error flag.
+        """
+        content, _ = self._serialize_output_with_size(output, tool_name=tool_name)
+        return content
 
     @staticmethod
     def _compute_fingerprint(name: str, arguments: dict[str, Any]) -> str:

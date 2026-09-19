@@ -10,6 +10,7 @@ Covers:
 """
 
 import asyncio
+import inspect
 import json
 import time
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -29,12 +30,10 @@ from magic_llm.agent.types import (
     AgentBudget,
     AgentBudgetExceeded,
     AgentState,
-    CanonicalToolCall,
 )
 from magic_llm.agent.tool_executor import ToolExecutor
-from magic_llm.agent.tool_adapters import ToolAdapter, ToolAdapterFactory
+from magic_llm.agent.tool_adapters import ToolAdapter
 from magic_llm.agent._loop_shared import (
-    _build_initial_chat,
     _check_budget,
     _finalize_response,
     _invoke_hook_safely,
@@ -81,16 +80,9 @@ def _todo(todo_id=1, content="Do work", status="in_progress", priority="high"):
     return {"id": todo_id, "content": content, "status": status, "priority": priority}
 
 
-def _make_mock_adapter(is_finished=True, tool_calls=None):
-    """Create a mock ToolAdapter."""
-    adapter = MagicMock(spec=ToolAdapter)
-    adapter.serialize_tool_defs.return_value = None
-    adapter.deserialize_tool_calls.return_value = tool_calls or []
-    adapter.is_finished.return_value = is_finished
-    adapter.extract_final_text.return_value = ""
-    adapter.validate_pair_integrity.return_value = True
-    adapter.serialize_tool_results.return_value = None
-    return adapter
+def _make_mock_adapter():
+    """Create a compatibility adapter for constructor-selection tests."""
+    return MagicMock(spec=ToolAdapter)
 
 
 # ─── Slice 10: AsyncAgentLoop constructor, concurrency guard
@@ -117,25 +109,22 @@ class TestAsyncAgentLoopConstructor:
     def test_async_loop_constructor_with_defaults(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
         assert loop._budget.max_iterations == 150
 
     def test_async_loop_run_is_coroutine(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
-        assert asyncio.iscoroutinefunction(loop.run)
+        loop = AsyncAgentLoop(client, tools=[])
+        assert inspect.iscoroutinefunction(loop.run)
 
     def test_async_loop_concurrent_run_raises_runtime_error(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         async def try_concurrent():
             loop._running = True
@@ -150,9 +139,8 @@ class TestAsyncAgentLoopConstructor:
         client.llm.async_generate = AsyncMock(
             return_value=_make_response(content="done", finish_reason="stop")
         )
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         async def run_and_check():
             await loop.run("hello")
@@ -164,12 +152,10 @@ class TestAsyncAgentLoopConstructor:
     def test_async_lock_released_after_exception(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter(is_finished=False, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=0),
         )
 
@@ -183,13 +169,12 @@ class TestAsyncAgentLoopConstructor:
     def test_async_and_sync_instances_independent(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
 
         from magic_llm.agent.agent_loop import AgentLoop
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
 
-        sync_loop = AgentLoop(client, tools=[], adapter=adapter)
-        async_loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        sync_loop = AgentLoop(client, tools=[])
+        async_loop = AsyncAgentLoop(client, tools=[])
 
         # They should have independent locks (different types)
         import threading
@@ -212,9 +197,8 @@ class TestAsyncAgentLoopRun:
         client.llm.async_generate = AsyncMock(
             return_value=_make_response(content="hello world", finish_reason="stop")
         )
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         async def run_and_check():
             response = await loop.run("hello")
@@ -237,7 +221,7 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             "todoread",
         ]
 
-    def test_async_builtin_write_read_and_state_persistence(self):
+    async def test_async_builtin_write_read_and_state_persistence(self):
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
 
         client = MagicMock()
@@ -262,15 +246,13 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             ]
         )
 
-        async def run_and_check():
-            loop = AsyncAgentLoop(client, tools=[], budget=AgentBudget(max_iterations=5))
-            response = await loop.run("track")
-            assert response.content == "done"
-            tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
-            assert json.loads(tool_messages[0]["content"]) == {"ok": True, "todos": [_todo()]}
-            assert json.loads(tool_messages[1]["content"]) == {"ok": True, "todos": [_todo()]}
+        loop = AsyncAgentLoop(client, tools=[], budget=AgentBudget(max_iterations=5))
+        response = await loop.run("track")
 
-        asyncio.run(run_and_check())
+        assert response.content == "done"
+        tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
+        assert json.loads(tool_messages[0]["content"]) == {"ok": True, "todos": [_todo()]}
+        assert json.loads(tool_messages[1]["content"]) == {"ok": True, "todos": [_todo()]}
 
     def test_async_separate_runs_start_empty(self):
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
@@ -376,7 +358,8 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             assert loop._tools == []
             tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
             assert tool_messages[0]["is_error"] is True
-            assert tool_messages[0]["content"] == ""
+            parsed = json.loads(tool_messages[0]["content"])
+            assert parsed["type"] == "UnknownToolError"
 
         asyncio.run(run_and_check())
 
@@ -421,20 +404,11 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             ]
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={"city": "London"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def get_weather(city):
             return {"temp": 18}
 
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[get_weather], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[get_weather])
 
         async def run_and_check():
             response = await loop.run("What's the weather?")
@@ -456,23 +430,11 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             ]
         )
 
-        tool_calls = [
-            CanonicalToolCall(id="call_1", name="tool_a", arguments={}),
-            CanonicalToolCall(id="call_2", name="tool_b", arguments={}),
-        ]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def tool_a(): return "a"
         def tool_b(): return "b"
 
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[tool_a, tool_b], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[tool_a, tool_b])
 
         async def run_and_check():
             response = await loop.run("run both")
@@ -491,20 +453,10 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             )
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.return_value = tool_calls
-        adapter.is_finished.return_value = False
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[lambda: None],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=2),
         )
 
@@ -521,9 +473,8 @@ class TestAsyncAgentLoopBuiltinTodoTools:
         client.llm.async_generate = AsyncMock(
             return_value=_make_response(content="done", finish_reason="stop")
         )
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         async def run_and_check():
             await loop.run("hello")
@@ -545,15 +496,6 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             ]
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         # Track if execute_parallel_async was called
         original_execute_parallel_async = ToolExecutor.execute_parallel_async
 
@@ -567,7 +509,7 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             return {"temp": 18}
 
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[get_weather], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[get_weather])
 
         async def run_and_check():
             with patch.object(
@@ -598,20 +540,11 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             ]
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={"city": "London"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def get_weather(city):
             return {"temp": 18}
 
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[get_weather], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[get_weather])
 
         async def run_and_check():
             response = await loop.run("weather?")
@@ -650,9 +583,8 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             return_value=_make_response(content="hello world", finish_reason="stop")
         )
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         async def run_and_check():
             response = await loop.run("hello")
@@ -689,15 +621,6 @@ class TestAsyncAgentLoopToolFunctions:
             ]
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="custom_search", arguments={"q": "test"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         call_log = []
 
         def custom_search(q):
@@ -709,7 +632,6 @@ class TestAsyncAgentLoopToolFunctions:
             client,
             tools=[],
             tool_functions={"custom_search": custom_search},
-            adapter=adapter,
         )
 
         async def run_and_check():
@@ -734,18 +656,6 @@ class TestAsyncAgentLoopToolFunctions:
             ]
         )
 
-        tool_calls = [
-            CanonicalToolCall(id="call_a", name="tool_a", arguments={}),
-            CanonicalToolCall(id="call_b", name="custom_b", arguments={"x": 1}),
-        ]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         executed = []
 
         def tool_a():
@@ -761,7 +671,6 @@ class TestAsyncAgentLoopToolFunctions:
             client,
             tools=[tool_a],
             tool_functions={"custom_b": custom_b},
-            adapter=adapter,
         )
 
         async def run_and_check():
@@ -795,15 +704,6 @@ class TestAsyncAgentLoopToolFunctions:
             ]
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="search_database", arguments={"query": "climate"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         call_log = []
 
         def search_database(query):
@@ -815,7 +715,6 @@ class TestAsyncAgentLoopToolFunctions:
             client,
             tools=[tool_spec],
             tool_functions={"search_database": search_database},
-            adapter=adapter,
         )
 
         async def run_and_check():
@@ -839,15 +738,6 @@ class TestAsyncAgentLoopToolFunctions:
             ]
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_data", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def get_data():
             return "from_callable"
 
@@ -859,7 +749,6 @@ class TestAsyncAgentLoopToolFunctions:
             client,
             tools=[get_data],
             tool_functions={"get_data": get_data_override},
-            adapter=adapter,
         )
 
         async def run_and_check():
@@ -885,15 +774,6 @@ class TestAsyncAgentLoopToolFunctions:
             ]
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="async_fetch", arguments={"url": "https://example.com"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         call_log = []
 
         async def async_fetch(url):
@@ -905,7 +785,6 @@ class TestAsyncAgentLoopToolFunctions:
             client,
             tools=[],
             tool_functions={"async_fetch": async_fetch},
-            adapter=adapter,
         )
 
         async def run_and_check():
@@ -995,15 +874,6 @@ class TestAsyncAgentLoopToolFunctions:
             ]
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="schema_tool_name", arguments={"q": "test"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def different_key_callable(q):
             return {"results": [q]}
 
@@ -1012,7 +882,6 @@ class TestAsyncAgentLoopToolFunctions:
             client,
             tools=[tool_spec],
             tool_functions={"different_key": different_key_callable},
-            adapter=adapter,
         )
 
         async def run_and_check():
@@ -1034,9 +903,8 @@ class TestAsyncAgentLoopStream:
     def test_async_stream_returns_async_iterator(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         result = loop.stream("hello")
         # Should be an async generator
@@ -1046,9 +914,8 @@ class TestAsyncAgentLoopStream:
     def test_async_stream_sync_iteration_raises_type_error(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         result = loop.stream("hello")
         with pytest.raises(TypeError):
@@ -1080,9 +947,8 @@ class TestAsyncAgentLoopStream:
 
         client.llm.async_stream_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         async def collect_and_check():
             result = []
@@ -1117,9 +983,8 @@ class TestAsyncAgentLoopStream:
 
         client.llm.async_stream_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         initial_chat = ModelChat(system="sys")
         initial_chat.add_user_message(
@@ -1198,17 +1063,8 @@ class TestAsyncAgentLoopStream:
 
         client.llm.async_stream_generate = async_gen
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[lambda: None], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[lambda: None])
 
         async def collect_and_check():
             result = []
@@ -1225,9 +1081,8 @@ class TestAsyncAgentLoopStream:
         """AsyncAgentLoop should NOT have a .stream_sync() method."""
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         assert not hasattr(loop, "stream_sync")
 
@@ -1292,17 +1147,8 @@ class TestAsyncAgentLoopStream:
 
         client.llm.async_stream_generate = async_gen
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[lambda: None], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[lambda: None])
 
         async def collect_and_check():
             result = []
@@ -1361,9 +1207,8 @@ class TestAsyncAgentLoopStream:
 
         client.llm.async_stream_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         async def collect_and_check():
             result = []
@@ -1393,7 +1238,7 @@ class TestAsyncAgentLoopStream:
         role=tool messages with tool_call_id and URL/result content.
 
         This tests the full injection chain:
-          execute_parallel_async -> serialize_tool_results ->
+          execute_parallel_async -> append_tool_results ->
           chat.messages -> next async_stream_generate(chat)
 
         Also asserts final assistant message is present in state after
@@ -1471,32 +1316,8 @@ class TestAsyncAgentLoopStream:
         def get_weather() -> dict:
             return {"url": "https://api.weather.com/result/sunny"}
 
-        tool_calls = [
-            CanonicalToolCall(id="call_1", name="get_weather", arguments={})
-        ]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-
-        # serialize_tool_results MUST actually add role=tool messages to chat
-        # to simulate the real injection chain
-        def _mock_serialize_tool_results(
-            results: list, chat: object
-        ) -> None:
-            for result in results:
-                chat.add_tool_result(
-                    tool_call_id=result.tool_call_id or "",
-                    content=result.content,
-                    is_error=result.is_error,
-                )
-
-        adapter.serialize_tool_results.side_effect = _mock_serialize_tool_results
-
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[get_weather], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[get_weather])
 
         async def collect_and_check():
             result = []
@@ -1653,9 +1474,8 @@ class TestAsyncAgentLoopState:
     def test_async_state_property_returns_copy(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         state1 = loop.state
         state1.step = 999
@@ -1665,9 +1485,8 @@ class TestAsyncAgentLoopState:
     def test_async_state_messages_are_copied(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         state = loop.state
         state.messages.append({"role": "user", "content": "intruder"})
@@ -1676,13 +1495,12 @@ class TestAsyncAgentLoopState:
     def test_async_state_independent_from_sync(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
 
         from magic_llm.agent.agent_loop import AgentLoop
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
 
-        sync_loop = AgentLoop(client, tools=[], adapter=adapter)
-        async_loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        sync_loop = AgentLoop(client, tools=[])
+        async_loop = AsyncAgentLoop(client, tools=[])
 
         # States should be independent
         sync_state = sync_loop.state
@@ -1716,12 +1534,10 @@ class TestAsyncAgentLoopStreamBudget:
 
         client.llm.async_stream_generate = empty_stream
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=0),
         )
 
@@ -1745,12 +1561,10 @@ class TestAsyncAgentLoopStreamBudget:
 
         client.llm.async_stream_generate = empty_stream
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=0),
         )
 
@@ -1795,7 +1609,6 @@ class TestAsyncAgentLoopStreamBudget:
 
         client.llm.async_stream_generate = empty_stream
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         from magic_llm.agent.hooks import AgentHooks
 
@@ -1809,7 +1622,6 @@ class TestAsyncAgentLoopStreamBudget:
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=0),
             hooks=hooks,
         )
@@ -1838,12 +1650,10 @@ class TestAsyncAgentLoopStreamBudget:
 
         client.llm.async_stream_generate = slow_stream
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(wall_clock_timeout=0.05),
         )
 
@@ -1886,21 +1696,11 @@ class TestAsyncAgentLoopBudgetHook:
             )
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.return_value = tool_calls
-        adapter.is_finished.return_value = False
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         hooks = _RecordingBudgetHooks()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[lambda: None],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=1),
             hooks=hooks,
         )
@@ -1930,14 +1730,11 @@ class TestAsyncAgentLoopBudgetHook:
             )
         )
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
-
         hooks = _RecordingBudgetHooks()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(max_output_tokens=1),
             hooks=hooks,
         )
@@ -1961,14 +1758,11 @@ class TestAsyncAgentLoopBudgetHook:
             return_value=_make_response(content="hello world", finish_reason="stop")
         )
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
-
         hooks = _RecordingBudgetHooks()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             hooks=hooks,
         )
 
@@ -1990,21 +1784,11 @@ class TestAsyncAgentLoopBudgetHook:
             )
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.return_value = tool_calls
-        adapter.is_finished.return_value = False
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         hooks = _RecordingBudgetHooks()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[lambda: None],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=1),
             hooks=hooks,
         )
@@ -2021,81 +1805,6 @@ class TestAsyncAgentLoopBudgetHook:
             assert len(call[2]) > 0
 
         asyncio.run(run_and_check())
-
-
-class TestBuildInitialChatInitialChat:
-    def test_build_initial_chat_clones_initial_chat(self):
-        initial_chat = ModelChat(system="sys")
-        initial_chat.add_user_message(
-            "Describe this image",
-            image=["data:image/png;base64,abc"],
-        )
-
-        cloned = _build_initial_chat(initial_chat=initial_chat)
-
-        assert cloned is not initial_chat
-        assert cloned.messages == initial_chat.messages
-        cloned.messages[0]["content"] = "mutated"
-        assert initial_chat.messages[0]["content"] == "sys"
-
-    def test_build_initial_chat_with_initial_chat_and_system_prompt(self):
-        """system_prompt is merged into initial_chat when both provided."""
-        initial_chat = ModelChat(system="existing system")
-        initial_chat.add_user_message("hello")
-        chat = _build_initial_chat(
-            initial_chat=initial_chat,
-            system_prompt="PF: Use search first.",
-        )
-        assert len(chat.messages) == 2
-        assert chat.messages[0]["role"] == "system"
-        assert "PF: Use search first." in chat.messages[0]["content"]
-        assert "existing system" in chat.messages[0]["content"]
-        assert chat.messages[0]["content"].startswith("PF: Use search first.")
-
-    def test_build_initial_chat_with_initial_chat_and_no_system_prompt(self):
-        """When no system_prompt, initial_chat is returned as-is (cloned)."""
-        initial_chat = ModelChat(system="existing system")
-        chat = _build_initial_chat(
-            initial_chat=initial_chat,
-            system_prompt=None,
-        )
-        assert chat.messages[0]["content"] == "existing system"
-
-    def test_build_initial_chat_with_initial_chat_no_existing_system(self):
-        """system_prompt is inserted at position 0 when initial_chat has no system message."""
-        initial_chat = ModelChat()  # no system
-        initial_chat.add_user_message("hello")
-        chat = _build_initial_chat(
-            initial_chat=initial_chat,
-            system_prompt="PF: new instruction",
-        )
-        assert len(chat.messages) == 2
-        assert chat.messages[0]["role"] == "system"
-        assert chat.messages[0]["content"] == "PF: new instruction"
-
-    def test_build_initial_chat_does_not_mutate_original(self):
-        """Caller's initial_chat is not mutated."""
-        initial_chat = ModelChat(system="original")
-        original_messages = [dict(m) for m in initial_chat.messages]
-        _build_initial_chat(
-            initial_chat=initial_chat,
-            system_prompt="PF: new",
-        )
-        assert initial_chat.messages == original_messages
-
-    def test_build_initial_chat_merges_into_first_system_only(self):
-        """system_prompt is merged into the FIRST system message, not appended."""
-        initial_chat = ModelChat(system="first system")
-        initial_chat.add_system_message("second system")
-        initial_chat.add_user_message("hello")
-        chat = _build_initial_chat(
-            initial_chat=initial_chat,
-            system_prompt="PF: guidance",
-        )
-        assert len(chat.messages) == 3
-        assert "PF: guidance" in chat.messages[0]["content"]
-        assert "first system" in chat.messages[0]["content"]
-        assert chat.messages[1]["content"] == "second system"
 
 
 # ─── Phase 1A: prompt_fragment Tests ──────────────────────────────────────
@@ -2117,12 +1826,10 @@ class TestAsyncAgentLoopPromptFragment:
 
         client.llm.async_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             prompt_fragment="Use search first.",
         )
 
@@ -2151,12 +1858,10 @@ class TestAsyncAgentLoopPromptFragment:
 
         client.llm.async_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             prompt_fragment=lambda: "Dynamic fragment",
         )
 
@@ -2184,13 +1889,11 @@ class TestAsyncAgentLoopPromptFragment:
 
         client.llm.async_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         # url is passed via **kwargs and stored in _generate_kwargs
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             prompt_fragment=lambda url: f"URL: {url}",
             url="https://img.jpg",
         )
@@ -2219,9 +1922,8 @@ class TestAsyncAgentLoopPromptFragment:
 
         client.llm.async_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-        loop = AsyncAgentLoop(client, tools=[], adapter=adapter)
+        loop = AsyncAgentLoop(client, tools=[])
 
         async def run_and_check():
             await loop.run("hello", system_prompt="You are helpful.")
@@ -2247,12 +1949,10 @@ class TestAsyncAgentLoopPromptFragment:
 
         client.llm.async_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             prompt_fragment="Use tools.",
         )
 
@@ -2284,12 +1984,10 @@ class TestAsyncAgentLoopPromptFragment:
 
         client.llm.async_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             prompt_fragment="Use search first.",
         )
 
@@ -2327,12 +2025,10 @@ class TestAsyncAgentLoopPromptFragment:
 
         client.llm.async_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             prompt_fragment=lambda url: f"Edit URL: {url}",
             url="https://example.com/image.jpg",
         )
@@ -2370,12 +2066,10 @@ class TestAsyncAgentLoopPromptFragment:
 
         client.llm.async_generate = async_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             prompt_fragment="PF: instructions.",
         )
 
@@ -2418,12 +2112,10 @@ class TestAsyncAgentLoopPromptFragment:
 
         client.llm.async_stream_generate = async_stream_gen
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             prompt_fragment="Stream PF.",
         )
 
@@ -2457,14 +2149,12 @@ class TestAsyncAgentLoopEngineTypeWarning:
         client = MagicMock()
         client.llm = MagicMock()
 
-        adapter = _make_mock_adapter()
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
 
         with patch("magic_llm.agent.async_agent_loop.logger.warning") as mock_warning:
-            AsyncAgentLoop(
+            loop = AsyncAgentLoop(
                 client,
                 tools=[],
-                adapter=adapter,
                 engine_type="anthropic",
             )
             mock_warning.assert_called_once()
@@ -2477,32 +2167,6 @@ class TestAsyncAgentLoopEngineTypeWarning:
             # Check the engine_type value is passed as a formatting arg
             assert len(args) > 1 and args[1] == "anthropic"
 
-    def test_engine_type_not_passed_no_warning(self):
-        """No engine_type → no logger.warning."""
-        client = MagicMock()
-        client.llm = MagicMock()
-
-        adapter = _make_mock_adapter()
-        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-
-        with patch("magic_llm.agent.async_agent_loop.logger.warning") as mock_warning:
-            AsyncAgentLoop(client, tools=[], adapter=adapter)
-            mock_warning.assert_not_called()
-
-    def test_engine_type_not_in_generate_kwargs(self):
-        """engine_type is popped and NOT stored in _generate_kwargs."""
-        client = MagicMock()
-        client.llm = MagicMock()
-
-        adapter = _make_mock_adapter()
-        from magic_llm.agent.async_agent_loop import AsyncAgentLoop
-
-        loop = AsyncAgentLoop(
-            client,
-            tools=[],
-            adapter=adapter,
-            engine_type="anthropic",
-        )
         assert "engine_type" not in loop._generate_kwargs
 
 
@@ -2531,15 +2195,6 @@ class TestAsyncAgentLoopPerIterationPromptFragment:
             ]
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         # Callable PF that tracks invocation count
         call_count = [0]
 
@@ -2554,7 +2209,6 @@ class TestAsyncAgentLoopPerIterationPromptFragment:
         loop = AsyncAgentLoop(
             client,
             tools=[get_weather],
-            adapter=adapter,
             prompt_fragment=counting_pf,
         )
 
@@ -2626,15 +2280,6 @@ class TestAsyncAgentLoopPerIterationPromptFragment:
 
         client.llm.async_stream_generate = async_gen
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         # Callable PF that tracks invocation count
         call_count = [0]
 
@@ -2646,7 +2291,6 @@ class TestAsyncAgentLoopPerIterationPromptFragment:
         loop = AsyncAgentLoop(
             client,
             tools=[lambda: None],
-            adapter=adapter,
             prompt_fragment=counting_pf,
         )
 
@@ -2674,23 +2318,11 @@ class TestAsyncAgentLoopPerIterationPromptFragment:
                 if msg.get("role") == "system":
                     captured_system_messages.append(msg["content"])
                     break
-            return _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls")
+            if len(captured_system_messages) == 1:
+                return _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls")
+            return _make_response(content="done", finish_reason="stop")
 
-        client.llm.async_generate = AsyncMock(
-            side_effect=[
-                _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls"),
-                _make_response(content="done", finish_reason="stop"),
-            ]
-        )
-
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
+        client.llm.async_generate = async_gen_capture
 
         # Stateful PF that simulates document version changes
         doc_state = {"version": 1}
@@ -2708,12 +2340,16 @@ class TestAsyncAgentLoopPerIterationPromptFragment:
         loop = AsyncAgentLoop(
             client,
             tools=[get_weather],
-            adapter=adapter,
             prompt_fragment=doc_pf,
         )
 
         async def run_and_check():
-            await loop.run("weather?", system_prompt="You are helpful.")
+            response = await loop.run("weather?", system_prompt="You are helpful.")
+            assert response.content == "done"
+            assert captured_system_messages == [
+                "Document version 1\n\nYou are helpful.",
+                "Document version 2\n\nYou are helpful.",
+            ]
 
         asyncio.run(run_and_check())
 
@@ -2729,15 +2365,6 @@ class TestAsyncAgentLoopPerIterationPromptFragment:
                 _make_response(content="done", finish_reason="stop"),
             ]
         )
-
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
 
         captured_first: list[str] = []
         captured_second: list[str] = []
@@ -2761,15 +2388,6 @@ class TestAsyncAgentLoopPerIterationPromptFragment:
 
         client.llm.async_generate = capturing_gen
 
-        tool_calls_iter1 = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter2 = MagicMock(spec=ToolAdapter)
-        adapter2.serialize_tool_defs.return_value = None
-        adapter2.deserialize_tool_calls.side_effect = [tool_calls_iter1, []]
-        adapter2.is_finished.side_effect = [False, True]
-        adapter2.extract_final_text.return_value = ""
-        adapter2.validate_pair_integrity.return_value = True
-        adapter2.serialize_tool_results.return_value = None
-
         def get_weather():
             return {"temp": 22}
 
@@ -2777,7 +2395,6 @@ class TestAsyncAgentLoopPerIterationPromptFragment:
         loop = AsyncAgentLoop(
             client,
             tools=[get_weather],
-            adapter=adapter2,
             prompt_fragment="Static context.",
         )
 

@@ -14,7 +14,7 @@ pytestmark = pytest.mark.provider_functional
 
 # Providers with verified async STT support in the canonical media matrix.
 AUDIO_PROVIDERS = [
-    ("fireworks.ai", "openai", {"model": "whisper-v3"}),
+    ("fireworks.ai", "fireworks.ai", {"model": "whisper-v3"}),
     ("azure", "azure", {"language": "es-MX"}),
     ("openai", "openai", {"model": "whisper-1"}),
 ]
@@ -23,7 +23,7 @@ AUDIO_PROVIDERS = [
 TTS_PROVIDERS = [
     ("openai", "openai", {"model": "gpt-4o-mini-tts", "voice": "alloy"}),
     ("azure", "azure", {"voice": "en-US-AriaNeural"}),
-    ("together.ai", "openai", {"model": "cartesia/sonic-2", "voice": "spanish narrator man", "base_url": "https://api.together.xyz/v1"}),
+    ("together.ai", "together.ai", {"model": "cartesia/sonic-2", "voice": "spanish narrator man"}),
     ("google", "google", {"model": "gemini-2.5-flash-preview-tts", "voice": "Kore"}),
 ]
 

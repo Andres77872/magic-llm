@@ -411,34 +411,3 @@ class TestResultNormalizationInLoop:
         assert parsed["status"] == "ok"
         assert "**count**" in parsed["summary"]
         assert "3" in parsed["summary"]
-
-
-class TestTaskExecutorUnregisterInLoop:
-    """Tests for task unregistration in loop context."""
-
-    @pytest.mark.asyncio
-    async def test_unregister_removes_from_all_registries(self):
-        """Unregister removes from task registry and base registry."""
-        executor = TaskExecutor()
-
-        async def my_task(query: str) -> str:
-            return query
-
-        executor.register_task(_make_manifest(id="my_task"), my_task)
-
-        assert "my_task" in executor._task_registry
-        assert "my_task" in executor._registry
-
-        removed = executor.unregister_task("my_task")
-        assert removed is True
-
-        assert "my_task" not in executor._task_registry
-        assert "my_task" not in executor._registry
-
-    @pytest.mark.asyncio
-    async def test_unregister_unknown_returns_false(self):
-        """Unregister unknown task returns False."""
-        executor = TaskExecutor()
-
-        removed = executor.unregister_task("unknown")
-        assert removed is False

@@ -1,7 +1,7 @@
 """Capability inference strategy tests.
 
 Tests:
-- ``CapabilityInferenceStrategy`` protocol conformance
+- ``CapabilityInferenceStrategy`` abstraction contract
 - ``ModelNameRegexStrategy``: known model IDs produce expected dicts; unknown
   model IDs produce empty dict; regression snapshot against known model IDs
 - ``ProviderDefaultsStrategy``: each known provider returns expected defaults
@@ -35,19 +35,8 @@ from magic_llm.model.discovery import ModelCapabilities
 # Protocol Conformance
 # =============================================================================
 
-class TestStrategyProtocol:
-    """All concrete strategies implement ``infer()`` with correct signature."""
-
-    @pytest.mark.parametrize("strategy_cls", [
-        ModelNameRegexStrategy,
-        ProviderDefaultsStrategy,
-        ProviderFieldStrategy,
-        CompositeCapabilityInference,
-    ])
-    def test_concrete_strategy_has_infer(self, strategy_cls):
-        st = strategy_cls() if strategy_cls is not CompositeCapabilityInference else strategy_cls([])
-        assert hasattr(st, "infer")
-        assert callable(st.infer)
+class TestStrategyAbstraction:
+    """The abstract strategy cannot be used without an implementation."""
 
     def test_abstract_class_cannot_be_instantiated(self):
         with pytest.raises(TypeError):

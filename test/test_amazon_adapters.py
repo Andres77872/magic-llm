@@ -328,6 +328,12 @@ class TestAmazonAnthropicTransformResponse:
         assert result.choices[0].finish_reason == "stop"
         # Usage is approximated from character count
         assert result.usage.completion_tokens == len("Hello, I'm Claude.")
+        assert result.usage.usage_source == "estimated"
+        assert result.usage.provider_extra == {
+            "estimated": True,
+            "estimation_method": "character_count",
+            "bedrock_legacy_anthropic": True,
+        }
 
     def test_max_tokens_reason(self):
         raw = {

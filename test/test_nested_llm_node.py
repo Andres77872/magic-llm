@@ -134,7 +134,9 @@ class TestNestedLLMNodeExecution:
 
             executor.register_task(manifest, ignored_callable)
 
-            result = await executor.execute_async(_make_call("nested_task", {"query": "test"}))
+            result = await executor.execute_async(
+                _make_call("nested_task", {"query": "test"})
+            )
 
             # Verify child loop was instantiated
             mock_loop_class.assert_called_once()
@@ -244,46 +246,6 @@ class TestNestedLLMNodeExecution:
             assert "tools" in call_kwargs
             assert len(call_kwargs["tools"]) == 1
             assert call_kwargs["tools"][0] == child_tool
-
-        disable_nested_llm_nodes()
-
-    @pytest.mark.asyncio
-    async def test_global_depth_increments_decrements_on_child_execution(self):
-        """Global depth increments on child start, decrements on child finish."""
-        enable_nested_llm_nodes()
-        reset_depths()
-        reset_global_depth()
-
-        mock_client = MagicMock()
-
-        with patch("magic_llm.agent.async_agent_loop.AsyncAgentLoop") as mock_loop_class:
-            mock_loop = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.content = "Done"
-            mock_response.choices = []
-            mock_loop.run = AsyncMock(return_value=mock_response)
-            mock_loop_class.return_value = mock_loop
-
-            executor = TaskExecutor(client=mock_client)
-
-            manifest = _make_manifest(
-                id="nested_task",
-                nested_tools=[lambda x: x],
-            )
-
-            async def ignored_callable(**kwargs):
-                return "Ignored"
-
-            executor.register_task(manifest, ignored_callable)
-
-            # Before execution
-            assert get_global_depth() == 0
-
-            # Execute
-            result = await executor.execute_async(_make_call("nested_task", {"query": "test"}))
-
-            # After execution (depth should be back to 0)
-            assert get_global_depth() == 0
 
         disable_nested_llm_nodes()
 
@@ -484,13 +446,19 @@ class TestNestedLLMNodeExecution:
         reset_global_depth()
 
         mock_client = MagicMock()
+        depths_during_child = []
 
         with patch("magic_llm.agent.async_agent_loop.AsyncAgentLoop") as mock_loop_class:
             mock_loop = AsyncMock()
             mock_response = MagicMock()
             mock_response.content = "Done"
             mock_response.choices = []
-            mock_loop.run = AsyncMock(return_value=mock_response)
+
+            async def run_child(*args, **kwargs):
+                depths_during_child.append(get_global_depth())
+                return mock_response
+
+            mock_loop.run = AsyncMock(side_effect=run_child)
             mock_loop_class.return_value = mock_loop
 
             executor = TaskExecutor(client=mock_client)
@@ -509,68 +477,13 @@ class TestNestedLLMNodeExecution:
             assert get_global_depth() == 0
 
             # Execute nested task
-            result = await executor.execute_async(_make_call("nested_task", {"query": "test"}))
+            await executor.execute_async(_make_call("nested_task", {"query": "test"}))
 
             # After execution, global_depth should be back to 0 (incremented during, decremented after)
             assert get_global_depth() == 0
+            assert depths_during_child == [1]
 
         disable_nested_llm_nodes()
-
-
-class TestPublicAPIExports:
-    """Regression tests for public API export contract."""
-
-    def test_types_module_exports_global_depth(self):
-        """magic_llm.agent.types exports GLOBAL_DEPTH ContextVar."""
-        from magic_llm.agent.types import GLOBAL_DEPTH as types_global_depth
-        assert types_global_depth is not None
-        # Should be a ContextVar
-        import contextvars
-        assert isinstance(types_global_depth, contextvars.ContextVar)
-
-    def test_types_module_exports_global_depth_helpers(self):
-        """magic_llm.agent.types exports global depth helper functions."""
-        from magic_llm.agent.types import (
-            get_global_depth,
-            increment_global_depth,
-            decrement_global_depth,
-            reset_global_depth,
-        )
-
-        # Reset and verify helpers work
-        reset_global_depth()
-        assert get_global_depth() == 0
-
-        increment_global_depth()
-        assert get_global_depth() == 1
-
-        decrement_global_depth()
-        assert get_global_depth() == 0
-
-    def test_types_module_exports_max_global_depth(self):
-        """magic_llm.agent.types exports MAX_GLOBAL_DEPTH constant."""
-        from magic_llm.agent.types import MAX_GLOBAL_DEPTH
-        assert MAX_GLOBAL_DEPTH == 10
-
-    def test_agent_module_exports_global_depth_api(self):
-        """magic_llm.agent re-exports global depth API."""
-        from magic_llm.agent import (
-            GLOBAL_DEPTH,
-            get_global_depth,
-            increment_global_depth,
-            decrement_global_depth,
-            reset_global_depth,
-            MAX_GLOBAL_DEPTH,
-        )
-
-        # Verify all imports work
-        import contextvars
-        assert isinstance(GLOBAL_DEPTH, contextvars.ContextVar)
-        assert MAX_GLOBAL_DEPTH == 10
-        assert callable(get_global_depth)
-        assert callable(increment_global_depth)
-        assert callable(decrement_global_depth)
-        assert callable(reset_global_depth)
 
 
 class TestPublicAPIRuntimeParity:
@@ -612,6 +525,20 @@ class TestPublicAPIRuntimeParity:
 
         # MUST be the same value (constants are integers, identity works for small ints)
         assert types_max == config_max
+
+    def test_agent_package_reexports_the_types_api(self):
+        from magic_llm import agent
+        from magic_llm.agent import types
+
+        for name in (
+            "GLOBAL_DEPTH",
+            "get_global_depth",
+            "increment_global_depth",
+            "decrement_global_depth",
+            "reset_global_depth",
+            "MAX_GLOBAL_DEPTH",
+        ):
+            assert getattr(agent, name) is getattr(types, name)
 
     def test_public_api_observes_runtime_state(self):
         """Public API from types.py observes the SAME runtime state as TaskExecutor."""

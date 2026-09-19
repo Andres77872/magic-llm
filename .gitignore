@@ -1,4 +1,21 @@
 **/*.pyc
+**/__pycache__/
+.coverage
+.coverage.*
+.pytest_cache/
+htmlcov/
+*.egg-info/
+
+# Local credentials and private key material
+.env
+.env.*
+!.env.example
+*keys.json
+*secrets.json
+*credentials.json
+*.pem
+*.key
+
 .idea
 .jbeval
 .cadence

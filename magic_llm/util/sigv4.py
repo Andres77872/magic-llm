@@ -10,7 +10,6 @@ This module provides:
 - resolve_credentials(): Resolve AWS credentials (explicit or ambient IAM chain)
 """
 
-import asyncio
 from typing import Optional
 from urllib.parse import quote
 
@@ -18,6 +17,8 @@ from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest, AWSPreparedRequest
 from botocore.credentials import Credentials
 from botocore.session import Session
+
+from magic_llm.util.async_bridge import run_sync_in_thread
 
 
 def build_bedrock_url(region: str, model_id: str, stream: bool = False) -> str:
@@ -148,8 +149,7 @@ def resolve_credentials(
 
     If explicit credentials are provided, returns them directly.
     Otherwise, uses botocore's credential chain (environment variables,
-    shared credentials file, IAM role, etc.) via asyncio.to_thread() for
-    async-safe resolution.
+    shared credentials file, IAM role, etc.).
 
     Args:
         aws_access_key_id: Explicit AWS access key (optional)
@@ -188,7 +188,7 @@ async def resolve_credentials_async(
     region: str = 'us-east-1',
 ) -> tuple[str, str, str, Optional[str]]:
     """
-    Async wrapper for resolve_credentials using asyncio.to_thread().
+    Async wrapper for resolve_credentials.
 
     Freezes ambient credentials off the event loop to avoid blocking.
 
@@ -203,7 +203,7 @@ async def resolve_credentials_async(
     if aws_access_key_id and aws_secret_access_key:
         return aws_access_key_id, aws_secret_access_key, region, None
 
-    return await asyncio.to_thread(
+    return await run_sync_in_thread(
         resolve_credentials,
         aws_access_key_id,
         aws_secret_access_key,

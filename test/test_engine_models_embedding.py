@@ -7,10 +7,10 @@ from conftest import get_provider_key
 # Providers with embedding cap
 EMBEDDING_PROVIDERS = [
     ("openai", "openai", {"model": "text-embedding-3-small"}),
-    ("deepinfra", "openai", {"model": "BAAI/bge-m3", "encoding_format": "float"}),
-    ("novita.ai", "openai", {"model": "baai/bge-m3", "encoding_format": "float"}),
-    ("mistral", "openai", {"model": "mistral-embed"}),
-    ("together.ai", "openai", {"model": "BAAI/bge-base-en-v1.5"}),
+    ("deepinfra", "deepinfra", {"model": "BAAI/bge-m3", "encoding_format": "float"}),
+    ("novita.ai", "novita.ai", {"model": "baai/bge-m3", "encoding_format": "float"}),
+    ("mistral", "mistral", {"model": "mistral-embed"}),
+    ("together.ai", "together.ai", {"model": "BAAI/bge-base-en-v1.5"}),
 ]
 
 # All tests in this file require live provider access

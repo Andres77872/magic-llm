@@ -41,7 +41,7 @@ Subagents default to disabled. Call `enable_subagents()` before `load_subagents(
 The project test command is:
 
 ```bash
-pytest test/ -v
+python -m pytest
 ```
 
-Integration tests need provider keys and may call paid APIs.
+The configured default is offline. Live provider tests require an explicit marker selection and `MAGIC_LLM_KEYS` pointing to a private JSON file; they may call paid APIs.

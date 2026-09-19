@@ -2,42 +2,31 @@
 
 import json
 import os
-from typing import Any, Dict, Iterable, Sequence, TypeVar
-from unittest.mock import MagicMock, AsyncMock
+from pathlib import Path
+from typing import Any, Dict
 
 import pytest
 
 
 # ─── Key / Resource Fixtures ───────────────────────────────────────────────
 
-DEFAULT_KEYS_FILE = "/home/andres/Documents/keys.json"
-
-
-ProviderCase = TypeVar("ProviderCase", bound=Sequence[Any])
+KEYS_ENV_VAR = "MAGIC_LLM_KEYS"
 
 
 def resolve_keys_file(*, required: bool = False) -> str | None:
-    """Resolve the keys file path with fallback logic.
+    """Resolve an explicitly configured JSON credential file without reading it."""
+    configured_path = os.getenv(KEYS_ENV_VAR)
+    if not configured_path or not configured_path.strip():
+        if not required:
+            return None
+        raise RuntimeError(f"Set {KEYS_ENV_VAR} to a private JSON credential file.")
 
-    Priority:
-    1. MAGIC_LLM_KEYS env var (if set AND file exists)
-    2. DEFAULT_KEYS_FILE (if file exists)
-
-    Returns ``None`` if no keys file can be found unless ``required=True``.
-    This function only resolves paths; JSON parsing is deliberately lazy so
-    provider-live modules can be imported/collected by offline runs safely.
-    """
-    env_path = os.getenv("MAGIC_LLM_KEYS")
-    if env_path and os.path.exists(env_path):
-        return env_path
-    if os.path.exists(DEFAULT_KEYS_FILE):
-        return DEFAULT_KEYS_FILE
-    if not required:
-        return None
-    raise RuntimeError(
-        f"No API keys file found. Set MAGIC_LLM_KEYS to a valid path, "
-        "or use the optional local keys fixture path."
-    )
+    path = Path(configured_path).expanduser()
+    if path.suffix.lower() != ".json":
+        raise RuntimeError(f"{KEYS_ENV_VAR} must point to a .json file.")
+    if not path.is_file():
+        raise RuntimeError(f"{KEYS_ENV_VAR} does not point to an existing file.")
+    return str(path)
 
 
 @pytest.fixture(scope="session")
@@ -45,15 +34,26 @@ def keys_file_path() -> str:
     """Return the path to the keys file or skip selected live tests."""
     path = resolve_keys_file(required=False)
     if path is None:
-        pytest.skip("Provider tests require MAGIC_LLM_KEYS or the local keys fixture.")
+        pytest.skip(f"Provider tests require {KEYS_ENV_VAR}=/path/to/keys.json.")
     return path
+
+
+def load_keys_file(keys_file_path: str) -> Dict[str, Any]:
+    """Load a provider-keyed JSON object without exposing credential values."""
+    try:
+        with open(keys_file_path, encoding="utf-8") as f:
+            loaded = json.load(f)
+    except json.JSONDecodeError:
+        raise RuntimeError("The configured credential file is not valid JSON.") from None
+    if not isinstance(loaded, dict):
+        raise RuntimeError("The configured credential JSON must contain a provider object.")
+    return loaded
 
 
 @pytest.fixture(scope="session")
 def loaded_keys(keys_file_path: str) -> Dict[str, Any]:
-    """Load keys from the keys file lazily for selected live tests only."""
-    with open(keys_file_path, encoding="utf-8") as f:
-        return json.load(f)
+    """Load keys lazily for explicitly selected live tests only."""
+    return load_keys_file(keys_file_path)
 
 
 @pytest.fixture(scope="session")
@@ -74,19 +74,6 @@ def get_provider_key(provider_keys: Dict[str, Any], provider: str, key_name: str
     if isinstance(entry, dict):
         return dict(entry)
     return {"private_key": entry}
-
-
-def available_provider_cases(
-    provider_keys: Dict[str, Any],
-    cases: Iterable[ProviderCase],
-    *,
-    key_index: int = 1,
-) -> list[ProviderCase]:
-    """Filter live provider cases after fixture-time credential loading."""
-    available = [case for case in cases if str(case[key_index]) in provider_keys]
-    if not available:
-        pytest.skip("No selected provider cases have credentials in provider_keys.")
-    return available
 
 
 @pytest.fixture
@@ -112,131 +99,3 @@ def sample_image_b64() -> str:
         )
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
-
-
-# ─── Mock HTTP Client Fixtures ─────────────────────────────────────────────
-
-@pytest.fixture
-def mock_sync_response():
-    """Create a mock requests.Response object."""
-    response = MagicMock()
-    response.status_code = 200
-    response.content = b'{"ok": true}'
-    response.headers = {"Content-Type": "application/json"}
-    return response
-
-
-@pytest.fixture
-def mock_sync_session(mock_sync_response):
-    """Create a mock requests.Session that returns a configured response."""
-    session = MagicMock()
-    session.request.return_value.__enter__ = MagicMock(return_value=mock_sync_response)
-    session.request.return_value.__exit__ = MagicMock(return_value=False)
-    session.request.return_value = mock_sync_response
-    return session
-
-
-@pytest.fixture
-def mock_async_response():
-    """Create a mock aiohttp response context manager."""
-    response = AsyncMock()
-    response.status = 200
-    response.read = AsyncMock(return_value=b'{"ok": true}')
-    response.headers = {"Content-Type": "application/json"}
-    # Make it work as an async context manager
-    response.__aenter__ = AsyncMock(return_value=response)
-    response.__aexit__ = AsyncMock(return_value=False)
-    return response
-
-
-@pytest.fixture
-def mock_async_session(mock_async_response):
-    """Create a mock aiohttp.ClientSession that returns a configured response."""
-    session = AsyncMock()
-    session.request.return_value = mock_async_response
-    return session
-
-
-# ─── Model Chat Fixtures ──────────────────────────────────────────────────
-
-@pytest.fixture
-def simple_chat():
-    """Create a minimal ModelChat with one user message."""
-    from magic_llm.model import ModelChat
-    chat = ModelChat()
-    chat.add_user_message("Hello, world!")
-    return chat
-
-
-@pytest.fixture
-def simple_response():
-    """Create a minimal valid ModelChatResponse."""
-    from magic_llm.model.ModelChatResponse import (
-        ModelChatResponse, Choice, Message, UsageModel,
-    )
-    return ModelChatResponse(
-        id="test-123",
-        object="chat.completion",
-        created=1700000000.0,
-        model="test-model",
-        choices=[
-            Choice(
-                index=0,
-                message=Message(role="assistant", content="Hello!"),
-                finish_reason="stop",
-            )
-        ],
-        usage=UsageModel(prompt_tokens=10, completion_tokens=5, total_tokens=15),
-    )
-
-
-@pytest.fixture
-def stream_chunk():
-    """Create a minimal ChatCompletionModel stream chunk."""
-    from magic_llm.model.ModelChatStream import (
-        ChatCompletionModel, ChoiceModel, DeltaModel, UsageModel,
-    )
-    return ChatCompletionModel(
-        id="chunk-1",
-        model="test-model",
-        choices=[
-            ChoiceModel(
-                index=0,
-                delta=DeltaModel(content="Hello"),
-                finish_reason=None,
-            )
-        ],
-        usage=UsageModel(),
-    )
-
-
-# ─── Agentic Loop Mock Builders ────────────────────────────────────────────
-
-def make_mock_client(responses: list):
-    """Create a mock client that returns responses in sequence from client.llm.generate."""
-    client = MagicMock()
-    client.llm.generate = MagicMock(side_effect=responses)
-    return client
-
-
-def make_response(content=None, tool_calls=None, finish_reason="stop", model="test-model"):
-    """Build a valid ModelChatResponse with optional tool_calls."""
-    from magic_llm.model.ModelChatResponse import (
-        ModelChatResponse, Choice, Message, UsageModel,
-    )
-    message = Message(role="assistant", content=content, tool_calls=tool_calls)
-    choice = Choice(index=0, message=message, finish_reason=finish_reason)
-    return ModelChatResponse(
-        id="test-1",
-        object="chat.completion",
-        created=1700000000.0,
-        model=model,
-        choices=[choice],
-        usage=UsageModel(prompt_tokens=10, completion_tokens=5, total_tokens=15),
-    )
-
-
-def make_tool_call(id="call_1", name="get_weather", arguments='{"city":"London"}'):
-    """Build a valid ToolCall."""
-    from magic_llm.model.ModelChatResponse import ToolCall, FunctionCall
-    return ToolCall(id=id, function=FunctionCall(name=name, arguments=arguments))

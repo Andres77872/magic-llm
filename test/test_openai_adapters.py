@@ -53,10 +53,6 @@ class TestGroqProcessChunk:
 
         assert result is None
 
-    def test_returns_none_for_done(self):
-        result = self.provider.process_chunk("data: [DONE]\n\n")
-        assert result is None
-
     def test_returns_none_for_non_data_line(self):
         result = self.provider.process_chunk(": keep-alive\n\n")
         assert result is None
@@ -128,10 +124,6 @@ class TestDeepseekProcessChunk:
 
         assert result is None
 
-    def test_returns_none_for_done(self):
-        result = self.provider.process_chunk("data: [DONE]\n\n")
-        assert result is None
-
     def test_no_usage_field(self):
         """Chunk without usage field still processes content."""
         chunk = (
@@ -171,14 +163,8 @@ class TestOpenAiBaseProcessChunk:
     def test_raises_when_no_choices(self):
         chunk = 'data: {"id":"chat-1","model":"test"}\n\n'
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(ValueError, match="no choices"):
             self.provider.process_chunk(chunk)
-
-        assert "no choices" in str(exc_info.value)
-
-    def test_returns_none_for_done(self):
-        result = self.provider.process_chunk("data: [DONE]\n\n")
-        assert result is None
 
     def test_returns_none_for_ping(self):
         result = self.provider.process_chunk(": ping\n\n")
@@ -208,3 +194,28 @@ class TestOpenAiBaseProcessChunk:
     def test_whitespace_only_returns_none(self):
         result = self.provider.process_chunk("   \n\n")
         assert result is None
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        pytest.param(
+            ProviderGroq(api_key="test", model="llama-3.1-8b"),
+            id="groq",
+        ),
+        pytest.param(
+            ProviderDeepseek(api_key="test", model="deepseek-chat"),
+            id="deepseek",
+        ),
+        pytest.param(
+            OpenAiBaseProvider(
+                base_url="https://api.test.com",
+                api_key="test",
+                model="test-model",
+            ),
+            id="base",
+        ),
+    ],
+)
+def test_openai_compatible_adapters_ignore_done_sentinel(provider):
+    assert provider.process_chunk("data: [DONE]\n\n") is None

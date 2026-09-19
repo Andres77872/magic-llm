@@ -477,13 +477,35 @@ def extract_tool_calls(response: Any) -> list[Any]:
         if isinstance(function, dict):
             arguments_raw = function.get("arguments")
             name = function.get("name")
+        arguments_error = None
         try:
             arguments = json.loads(arguments_raw or "{}")
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
             arguments = {}
+            arguments_error = _describe_arguments_error(name, arguments_raw, exc)
         tc_id = getattr(tc, "id", None) if not isinstance(tc, dict) else tc.get("id")
-        result.append(CanonicalToolCall(id=tc_id or "", name=name or "", arguments=arguments))
+        result.append(
+            CanonicalToolCall(
+                id=tc_id or "",
+                name=name or "",
+                arguments=arguments,
+                arguments_error=arguments_error,
+            )
+        )
     return result
+
+
+def _describe_arguments_error(
+    name: Any, arguments_raw: Any, exc: Exception
+) -> str:
+    """Explain an unparseable argument payload without echoing all of it."""
+    raw = arguments_raw if isinstance(arguments_raw, str) else repr(arguments_raw)
+    snippet = raw[:200] + ("…" if len(raw) > 200 else "")
+    return (
+        f"Arguments for tool '{name or ''}' were not valid JSON "
+        f"({exc}); the model's tool call may have been cut off "
+        f"mid-stream. Raw prefix: {snippet}"
+    )
 
 
 def is_finished(provider: str, response: Any) -> bool:
@@ -653,9 +675,20 @@ def stream_summary_tool_calls(summary: StreamIterationSummary) -> list[Any]:
     calls = []
     for entry in sorted(summary.tool_calls, key=lambda item: item.get("index", 0)):
         function = entry.get("function", {})
+        arguments_error = None
         try:
             arguments = json.loads(function.get("arguments") or "{}")
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
             arguments = {}
-        calls.append(CanonicalToolCall(id=entry.get("id", ""), name=function.get("name", ""), arguments=arguments))
+            arguments_error = _describe_arguments_error(
+                function.get("name"), function.get("arguments"), exc
+            )
+        calls.append(
+            CanonicalToolCall(
+                id=entry.get("id", ""),
+                name=function.get("name", ""),
+                arguments=arguments,
+                arguments_error=arguments_error,
+            )
+        )
     return calls

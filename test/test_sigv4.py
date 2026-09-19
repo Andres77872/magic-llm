@@ -1,7 +1,9 @@
 """Tests for AWS SigV4 signing utility."""
 import json
-import pytest
 from urllib.parse import quote
+from unittest.mock import Mock, patch
+
+import pytest
 
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest, AWSPreparedRequest
@@ -13,7 +15,13 @@ from magic_llm.util.sigv4 import (
     build_bedrock_url,
     build_polly_url,
     resolve_credentials,
+    resolve_credentials_async,
 )
+
+
+TEST_ACCESS_KEY_ID = "test-access-key-id"
+TEST_SECRET_ACCESS_KEY = "test-secret-access-key"
+TEST_SESSION_TOKEN = "test-session-token"
 
 
 class TestBuildSigv4Headers:
@@ -27,8 +35,8 @@ class TestBuildSigv4Headers:
             method="POST",
             url=url,
             body=body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
         )
@@ -46,8 +54,8 @@ class TestBuildSigv4Headers:
             method="POST",
             url=url,
             body=body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
         )
@@ -66,8 +74,8 @@ class TestBuildSigv4Headers:
             method="POST",
             url=url,
             body=body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
         )
@@ -78,8 +86,8 @@ class TestBuildSigv4Headers:
         """SigV4 output matches direct botocore signing for the same request."""
         body = json.dumps({"messages": [{"role": "user", "content": "hello"}]})
         url = "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-lite-v1:0/invoke"
-        access_key = "AKIAIOSFODNN7EXAMPLE"
-        secret_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        access_key = TEST_ACCESS_KEY_ID
+        secret_key = TEST_SECRET_ACCESS_KEY
         region = "us-east-1"
 
         # Our function
@@ -109,11 +117,11 @@ class TestBuildSigv4Headers:
             method="POST",
             url=url,
             body=body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
-            session_token="FwoGZXIvYXdzEBY...",
+            session_token=TEST_SESSION_TOKEN,
         )
         assert "X-Amz-Security-Token" in headers
 
@@ -125,8 +133,8 @@ class TestBuildSigv4Headers:
             method="POST",
             url=url,
             body=body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="polly",
         )
@@ -189,54 +197,78 @@ class TestResolveCredentials:
     def test_explicit_credentials_returned(self):
         """Explicit credentials are returned directly."""
         result = resolve_credentials(
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
         )
-        assert result == ("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "us-east-1", None)
+        assert result == (TEST_ACCESS_KEY_ID, TEST_SECRET_ACCESS_KEY, "us-east-1", None)
 
-    def test_partial_credentials_falls_back_to_ambient(self):
-        """When only access_key is provided, falls back to ambient credentials."""
-        # This will either resolve ambient creds or raise if none configured
-        try:
-            result = resolve_credentials(
-                aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
+    @patch("magic_llm.util.sigv4.Session")
+    def test_partial_credentials_merge_with_mocked_ambient_chain(self, session_class):
+        """Partial explicit credentials merge deterministically with ambient values."""
+        frozen = Mock(access_key=None, secret_key=TEST_SECRET_ACCESS_KEY, token=TEST_SESSION_TOKEN)
+        session_class.return_value.get_credentials.return_value.get_frozen_credentials.return_value = frozen
+
+        result = resolve_credentials(
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=None,
+            region="us-east-1",
+        )
+
+        assert result == (
+            TEST_ACCESS_KEY_ID,
+            TEST_SECRET_ACCESS_KEY,
+            "us-east-1",
+            TEST_SESSION_TOKEN,
+        )
+
+    @patch("magic_llm.util.sigv4.Session")
+    def test_missing_credentials_raises_without_reading_real_aws_state(self, session_class):
+        session_class.return_value.get_credentials.return_value = None
+
+        with pytest.raises(ValueError, match="No AWS credentials found"):
+            resolve_credentials(
+                aws_access_key_id=None,
                 aws_secret_access_key=None,
                 region="us-east-1",
             )
-            # If ambient creds exist, access_key should be the explicit one
-            assert result[0] == "AKIAIOSFODNN7EXAMPLE"
-        except ValueError:
-            # Expected if no ambient credentials configured
-            pass
 
-    def test_missing_credentials_raises(self):
-        """When no credentials available, raises ValueError."""
-        # Clear any ambient credentials for this test
-        import os
-        old_key = os.environ.pop("AWS_ACCESS_KEY_ID", None)
-        old_secret = os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
-        old_session = os.environ.pop("AWS_SESSION_TOKEN", None)
-        # Also clear any cached credentials file path
-        old_shared = os.environ.pop("AWS_SHARED_CREDENTIALS_FILE", None)
+    @patch("magic_llm.util.sigv4.Session")
+    def test_incomplete_ambient_credentials_raise(self, session_class):
+        frozen = Mock(access_key=None, secret_key=None, token=None)
+        session_class.return_value.get_credentials.return_value.get_frozen_credentials.return_value = frozen
 
-        try:
-            with pytest.raises(ValueError, match="No AWS credentials found"):
-                resolve_credentials(
-                    aws_access_key_id=None,
-                    aws_secret_access_key=None,
-                    region="us-east-1",
-                )
-        finally:
-            # Restore environment
-            if old_key is not None:
-                os.environ["AWS_ACCESS_KEY_ID"] = old_key
-            if old_secret is not None:
-                os.environ["AWS_SECRET_ACCESS_KEY"] = old_secret
-            if old_session is not None:
-                os.environ["AWS_SESSION_TOKEN"] = old_session
-            if old_shared is not None:
-                os.environ["AWS_SHARED_CREDENTIALS_FILE"] = old_shared
+        with pytest.raises(ValueError, match="incomplete"):
+            resolve_credentials()
+
+    async def test_async_explicit_credentials_do_not_touch_ambient_chain(self):
+        with patch("magic_llm.util.sigv4.Session") as session_class:
+            result = await resolve_credentials_async(
+                TEST_ACCESS_KEY_ID,
+                TEST_SECRET_ACCESS_KEY,
+                "eu-west-1",
+            )
+
+        assert result == (TEST_ACCESS_KEY_ID, TEST_SECRET_ACCESS_KEY, "eu-west-1", None)
+        session_class.assert_not_called()
+
+    @patch("magic_llm.util.sigv4.Session")
+    async def test_async_ambient_resolution_runs_with_mocked_session(self, session_class):
+        frozen = Mock(
+            access_key=TEST_ACCESS_KEY_ID,
+            secret_key=TEST_SECRET_ACCESS_KEY,
+            token=TEST_SESSION_TOKEN,
+        )
+        session_class.return_value.get_credentials.return_value.get_frozen_credentials.return_value = frozen
+
+        result = await resolve_credentials_async(region="us-west-2")
+
+        assert result == (
+            TEST_ACCESS_KEY_ID,
+            TEST_SECRET_ACCESS_KEY,
+            "us-west-2",
+            TEST_SESSION_TOKEN,
+        )
 
 
 class TestBuildSigv4PreparedRequest:
@@ -250,8 +282,8 @@ class TestBuildSigv4PreparedRequest:
             method="POST",
             url=url,
             body=body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
         )
@@ -265,8 +297,8 @@ class TestBuildSigv4PreparedRequest:
             method="POST",
             url=url,
             body=body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
         )
@@ -281,8 +313,8 @@ class TestBuildSigv4PreparedRequest:
             method="POST",
             url=url,
             body=body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
             extra_headers={
@@ -304,8 +336,8 @@ class TestBuildSigv4PreparedRequest:
             method="POST",
             url=url,
             body=body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
         )
@@ -318,8 +350,8 @@ class TestBuildSigv4PreparedRequest:
             method="POST",
             url="https://bedrock-runtime.us-east-1.amazonaws.com/model/test/invoke",
             body='{"test": true}',  # string body
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
         )
@@ -332,8 +364,8 @@ class TestBuildSigv4PreparedRequest:
             method="POST",
             url="https://bedrock-runtime.us-east-1.amazonaws.com/model/test/invoke",
             body=raw_body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
         )
@@ -347,11 +379,11 @@ class TestBuildSigv4PreparedRequest:
             method="POST",
             url=url,
             body=body,
-            aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
-            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            aws_access_key_id=TEST_ACCESS_KEY_ID,
+            aws_secret_access_key=TEST_SECRET_ACCESS_KEY,
             region="us-east-1",
             service="bedrock",
-            session_token="FwoGZXIvYXdzEBY...",
+            session_token=TEST_SESSION_TOKEN,
         )
         assert "X-Amz-Security-Token" in prepared.headers
 
@@ -359,8 +391,8 @@ class TestBuildSigv4PreparedRequest:
         """Prepared request Authorization matches direct botocore signing with same headers."""
         body = json.dumps({"messages": [{"role": "user", "content": "hello"}]})
         url = "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-lite-v1:0/invoke"
-        access_key = "AKIAIOSFODNN7EXAMPLE"
-        secret_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        access_key = TEST_ACCESS_KEY_ID
+        secret_key = TEST_SECRET_ACCESS_KEY
         region = "us-east-1"
         extra = {"Content-Type": "application/json", "Accept": "application/json"}
 

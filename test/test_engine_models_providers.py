@@ -24,7 +24,7 @@ TEST_PROVIDERS = [
     ("deepseek", "deepseek", "deepseek-chat", "FAIL/deepseek-chat"),
     # ("parasail", "parasail", "parasail-mistral-nemo", "parasail-mistral-nemo-fail"),
     ("x.ai", "x.ai", "grok-3-mini", "grok-3-mini-fail"),
-    ("together.ai", "Qwen/Qwen3-Next-80B-A3B-Instruct", "meta-llama/Llama-3-8b-chat-hf", "meta-llama/Llama-3-8b-chat-hf-fail"),
+    ("together.ai", "together.ai", "meta-llama/Llama-3-8b-chat-hf", "meta-llama/Llama-3-8b-chat-hf-fail"),
     ("perplexity", "perplexity", "sonar", "sonar-fail"),
     ("openrouter", "openrouter", "mistralai/mistral-nemo", "mistralai/mistral-nemo-fail"),
     ("novita.ai", "novita.ai", "mistralai/mistral-nemo", "FAIL/mistralai/mistral-nemo"),

@@ -10,6 +10,7 @@ Covers:
 """
 
 import pytest
+from pydantic import ValidationError
 
 from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider
 from magic_llm.model.ModelEmbeddingResponse import ModelEmbeddingResponse, EmbeddingData
@@ -149,7 +150,7 @@ class TestEmbeddingResponseModelValidation:
             "model": "test-model",
         }
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ModelEmbeddingResponse(**raw)
 
     def test_rejects_missing_model_field(self):
@@ -161,7 +162,7 @@ class TestEmbeddingResponseModelValidation:
             ],
         }
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ModelEmbeddingResponse(**raw)
 
     def test_rejects_non_list_embedding(self):
@@ -174,7 +175,7 @@ class TestEmbeddingResponseModelValidation:
             "model": "test-model",
         }
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             ModelEmbeddingResponse(**raw)
 
     def test_defaults_object_to_list(self):

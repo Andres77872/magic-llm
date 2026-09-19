@@ -8,14 +8,20 @@ Covers:
 
 import asyncio
 import json
-import time
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from magic_llm.agent.tool_executor import ToolExecutor
 from magic_llm.agent.async_agent_loop import AsyncAgentLoop
 from magic_llm.agent.types import CanonicalToolCall
+from magic_llm.model.ModelChatStream import (
+    ChatCompletionModel,
+    ChoiceModel,
+    DeltaModel,
+    FunctionCall,
+    ToolCall,
+)
 
 
 def _make_call(name: str, args: dict | None = None, id: str = "call_1") -> CanonicalToolCall:
@@ -36,8 +42,8 @@ class TestPerToolTimeout:
         return "done"
 
     async def test_per_tool_timeout_cancels_long_tool(self):
-        """Tool with global 1.0s timeout and no per-tool override is cancelled."""
-        executor = ToolExecutor(per_tool_timeout=1.0)
+        """Tool with a short global timeout and no override is cancelled."""
+        executor = ToolExecutor(per_tool_timeout=0.01)
         executor.register("slow", self._async_slow_tool)
 
         result = await executor.execute_async(_make_call("slow"))
@@ -45,12 +51,12 @@ class TestPerToolTimeout:
         assert result.is_error is True
         assert result.error_type == "TimeoutError"
         assert "timed out" in result.error
-        assert "1.0" in result.error
+        assert "0.01" in result.error
 
     async def test_per_tool_name_override_applies(self):
         """Caller-owned generate_image tool timeout uses 120.0, not global 1.0."""
         executor = ToolExecutor(
-            per_tool_timeout=1.0,
+            per_tool_timeout=0.01,
             tool_timeouts={"generate_image": 120.0},
         )
 
@@ -60,7 +66,7 @@ class TestPerToolTimeout:
 
         executor.register("generate_image", fast_image_tool)
 
-        # Would time out at 1.0s, but 120.0s override lets it succeed
+        # The per-tool override lets the call succeed despite the short global timeout.
         result = await executor.execute_async(_make_call("generate_image"))
 
         assert result.is_error is False
@@ -74,7 +80,7 @@ class TestPerToolTimeout:
         )
 
         async def browsing_tool() -> str:
-            await asyncio.sleep(5)  # Would exceed global 1.0s
+            await asyncio.Event().wait()
             return "search results"
 
         executor.register("search", browsing_tool)
@@ -84,35 +90,31 @@ class TestPerToolTimeout:
         assert result.error_type == "TimeoutError"
 
     async def test_no_orphan_tasks_on_timeout(self):
-        """Cancelled timeout leaves no persistent orphan asyncio tasks."""
-        executor = ToolExecutor(per_tool_timeout=0.5)
+        """A timed-out coroutine is cancelled without leaving pending tasks."""
+        executor = ToolExecutor(per_tool_timeout=0.01)
+        cancellation_seen = asyncio.Event()
 
-        async def leaky_tool() -> str:
+        async def cancellable_tool() -> str:
             try:
-                await asyncio.sleep(10)
-            except asyncio.CancelledError:
-                # Simulate a tool that catches CancelledError and hangs
-                await asyncio.sleep(10)
-                raise
-            return "done"
+                await asyncio.Event().wait()
+            finally:
+                cancellation_seen.set()
 
-        executor.register("leaky", leaky_tool)
-
-        tasks_before = {t for t in asyncio.all_tasks() if not t.get_name().startswith("Task-")}
-
-        result = await executor.execute_async(_make_call("leaky"))
-
-        tasks_after = {t for t in asyncio.all_tasks() if not t.get_name().startswith("Task-")}
+        executor.register("cancellable", cancellable_tool)
+        tasks_before = asyncio.all_tasks()
+        result = await executor.execute_async(_make_call("cancellable"))
+        orphaned_tasks = {
+            task for task in asyncio.all_tasks() - tasks_before if not task.done()
+        }
 
         assert result.is_error is True
         assert result.error_type == "TimeoutError"
-        # No significant NEW persistent tasks
-        new_tasks = tasks_after - tasks_before
-        assert len(new_tasks) <= 2, f"Potential orphan tasks detected: {len(new_tasks)}"
+        assert cancellation_seen.is_set()
+        assert orphaned_tasks == set()
 
     async def test_timeout_returns_safe_error_message(self):
         """Timeout returns ToolResult with safe error and no stack trace."""
-        executor = ToolExecutor(per_tool_timeout=1.0)
+        executor = ToolExecutor(per_tool_timeout=0.01)
 
         async def fail_tool() -> str:
             await asyncio.sleep(30)
@@ -137,166 +139,93 @@ class TestHeartbeatCallback:
 
     pytestmark = pytest.mark.asyncio
 
-    async def test_heartbeat_invoked_during_long_execution(self):
-        """Heartbeat callback invoked at least once for tools taking >0.5s.
+    @staticmethod
+    def _streaming_client(tool_name: str):
+        client = MagicMock()
+        client.llm = MagicMock()
+        call_count = 0
 
-        We test the heartbeat mechanism directly: spawn a heartbeat task
-        alongside a long tool execution, verify the task fires.
-        """
+        async def generate(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield ChatCompletionModel(
+                    id="tool-chunk",
+                    model="test-model",
+                    choices=[ChoiceModel(
+                        delta=DeltaModel(tool_calls=[ToolCall(
+                            index=0,
+                            id="call_1",
+                            function=FunctionCall(name=tool_name, arguments="{}"),
+                        )]),
+                        finish_reason="tool_calls",
+                    )],
+                )
+            else:
+                yield ChatCompletionModel(
+                    id="final-chunk",
+                    model="test-model",
+                    choices=[ChoiceModel(
+                        delta=DeltaModel(content="done"),
+                        finish_reason="stop",
+                    )],
+                )
+
+        client.llm.async_stream_generate = generate
+        return client
+
+    async def test_stream_heartbeat_runs_while_real_loop_executes_tool(self, monkeypatch):
+        heartbeat_seen = asyncio.Event()
         heartbeat_calls = []
-        start_time = time.monotonic()
+        original_sleep = asyncio.sleep
 
-        async def heartbeat() -> None:
-            heartbeat_calls.append(time.monotonic() - start_time)
+        async def accelerated_heartbeat_sleep(delay):
+            assert delay == 8
+            await original_sleep(0)
 
-        executor = ToolExecutor(per_tool_timeout=10.0)
+        monkeypatch.setattr(
+            "magic_llm.agent.async_agent_loop.asyncio.sleep",
+            accelerated_heartbeat_sleep,
+        )
 
-        async def slow_tool() -> str:
-            """Tool that takes ~2 seconds."""
-            await asyncio.sleep(2)
-            return json.dumps({"status": "done"})
+        async def heartbeat():
+            heartbeat_calls.append("heartbeat")
+            heartbeat_seen.set()
 
-        executor.register("slow_tool", slow_tool)
+        async def slow_tool():
+            await asyncio.wait_for(heartbeat_seen.wait(), timeout=1)
+            return {"status": "done"}
 
-        # Spawn heartbeat task alongside tool execution
-        async def _heartbeat_loop():
-            while True:
-                await asyncio.sleep(0.5)  # 500ms interval for test speed
-                await heartbeat()
+        loop = AsyncAgentLoop(
+            client=self._streaming_client("slow_tool"),
+            tools=[slow_tool],
+            heartbeat_cb=heartbeat,
+        )
 
-        heartbeat_task = asyncio.create_task(_heartbeat_loop())
+        chunks = [chunk async for chunk in loop.stream("run the tool")]
 
-        try:
-            result = await executor.execute_async(_make_call("slow_tool"))
-        finally:
-            heartbeat_task.cancel()
-            try:
-                await heartbeat_task
-            except asyncio.CancelledError:
-                pass
+        assert heartbeat_calls
+        assert chunks[-1].choices[0].delta.content == "done"
 
-        # Tool should have succeeded
-        assert result.is_error is False
-        # Heartbeat should have been called multiple times (every 0.5s for ~2s)
-        assert len(heartbeat_calls) >= 1, f"Expected >=1 heartbeat, got {len(heartbeat_calls)}"
-
-    async def test_heartbeat_not_invoked_for_fast_tools(self):
-        """Heartbeat NOT invoked when no heartbeat task is spawned (tool < 0.5s cycle)."""
+    async def test_stream_fast_tool_is_done_before_first_heartbeat(self):
         heartbeat_calls = []
 
-        async def heartbeat() -> None:
-            heartbeat_calls.append(time.monotonic())
+        async def heartbeat():
+            heartbeat_calls.append("heartbeat")
 
-        executor = ToolExecutor(per_tool_timeout=10.0)
-
-        async def fast_tool() -> str:
-            await asyncio.sleep(0.01)
-            return json.dumps({"status": "fast"})
-
-        executor.register("fast_tool", fast_tool)
-
-        # No heartbeat task spawned — just tool execution
-        result = await executor.execute_async(_make_call("fast_tool"))
-
-        assert result.is_error is False
-        # No heartbeat task was created, so no calls
-        # This verifies the default is no heartbeat
-
-    async def test_heartbeat_cb_none_does_not_spawn_task(self):
-        """heartbeat_cb=None (default) — zero overhead, no heartbeat task spawned."""
-        executor = ToolExecutor(per_tool_timeout=10.0)
-
-        async def fast_tool() -> str:
-            return json.dumps({"status": "done"})
-
-        executor.register("fast_tool", fast_tool)
-
-        task_count_before = len(asyncio.all_tasks())
-
-        result = await executor.execute_async(_make_call("fast_tool"))
-
-        task_count_after = len(asyncio.all_tasks())
-
-        assert result.is_error is False
-        # No extra tasks should have been spawned by heartbeat
-        # (some variance expected from asyncio internals)
-        assert task_count_after <= task_count_before + 2
-
-
-# ─── Task 1.4: Custom ToolExecutor flows through AsyncAgentLoop ────────────
-
-
-class TestCustomToolExecutorThroughLoop:
-    """Task 1.4: Custom ToolExecutor flows through AsyncAgentLoop."""
-
-    def test_custom_tool_executor_flows_to_agent_loop(self):
-        """AsyncAgentLoop with custom executor uses it instead of creating a default one."""
-        executor = ToolExecutor(
-            per_tool_timeout=120.0,
-            tool_timeouts={"generate_image": 120.0},
-            max_content_sizes={"generate_image": 2000},
-        )
-
-        mock_client = MagicMock()
-        mock_llm = MagicMock()
-        mock_client.llm = mock_llm
+        async def fast_tool():
+            return {"status": "done"}
 
         loop = AsyncAgentLoop(
-            client=mock_client,
-            tools=[],
-            tool_executor=executor,
+            client=self._streaming_client("fast_tool"),
+            tools=[fast_tool],
+            heartbeat_cb=heartbeat,
         )
 
-        # Verify the executor was stored (not a new default one)
-        assert loop._executor is executor
-        assert loop._executor._per_tool_timeout == 120.0
-        assert loop._executor._tool_timeouts == {"generate_image": 120.0}
-        assert loop._executor._max_content_sizes == {"generate_image": 2000}
+        chunks = [chunk async for chunk in loop.stream("run the tool")]
 
-    def test_default_executor_created_when_none_provided(self):
-        """No executor provided → default ToolExecutor(per_tool_timeout=30.0) created."""
-        mock_client = MagicMock()
-        mock_llm = MagicMock()
-        mock_client.llm = mock_llm
-
-        loop = AsyncAgentLoop(
-            client=mock_client,
-            tools=[],
-            tool_executor=None,
-        )
-
-        assert loop._executor is not None
-        assert loop._executor._per_tool_timeout == 30.0
-        assert loop._executor._tool_timeouts == {}
-
-    def test_custom_executor_timeout_and_content_sizes_apply(self):
-        """Custom executor's max_content_sizes and tool_timeouts work in the loop."""
-        executor = ToolExecutor(
-            per_tool_timeout=120.0,
-            tool_timeouts={"generate_image": 120.0},
-            max_content_sizes={"generate_image": 2000},
-        )
-
-        # Verify directly on the executor
-        assert executor._resolve_timeout("generate_image") == 120.0
-        assert executor._resolve_timeout("search") == 120.0  # Falls back to global
-        assert executor._resolve_max_content_size("generate_image") == 2000
-        assert executor._resolve_max_content_size("search") == 50000  # Falls back to global
-
-    def test_backward_compatible_no_executor(self):
-        """Existing code that doesn't pass tool_executor works unchanged."""
-        mock_client = MagicMock()
-        mock_llm = MagicMock()
-        mock_client.llm = mock_llm
-
-        # No tool_executor arg — should work with defaults
-        loop = AsyncAgentLoop(
-            client=mock_client,
-            tools=[],
-        )
-
-        assert loop._executor is not None
-        assert loop._executor._per_tool_timeout == 30.0
+        assert heartbeat_calls == []
+        assert chunks[-1].choices[0].delta.content == "done"
 
 
 # ─── Integration: Combined behavior of all Phase 1 changes ─────────────────
@@ -317,13 +246,13 @@ class TestPhase1Integration:
 
         async def image_tool() -> dict:
             # Caller-owned test tool; Magic LLM does not provide first-class image generation.
-            await asyncio.sleep(0.1)  # Fast enough for both timeouts
             return {"url": "/images/img.webp", "data": "x" * 100}
 
         executor.register("generate_image", image_tool)
         result = await executor.execute_async(_make_call("generate_image"))
 
-        # Timeout: 10s override, tool takes 0.1s → no timeout → is_error from truncation
-        assert result.error_type is None or result.error_type != "TimeoutError"
+        # Truncation now carries its cause instead of a bare is_error flag.
+        assert result.error_type == "ContentTruncated"
+        assert "truncated" in result.error
         # Content: truncated by max_content_size=20
         assert result.content.endswith("[TRUNCATED]")

@@ -1,6 +1,6 @@
 # Testing
 
-The default proof gate is offline, deterministic, and non-billable. Do **not** use plain `pytest test/ -v` as the default command because it can select live/provider markers.
+The configured default proof gate is offline, deterministic, and non-billable. Pytest excludes `provider_functional` and `provider_health` unless a command explicitly overrides the marker expression.
 
 ## Managed async stack
 
@@ -9,7 +9,6 @@ The project-managed test stack declares:
 - `pytest==8.3.4`
 - `pytest-asyncio==0.24.0`
 - `pytest-cov==5.0.0`
-- `pytest-timeout==2.3.1`
 
 `setup.cfg` keeps editable installs below unsupported major versions. `pyproject.toml` uses `asyncio_mode = "auto"` and `asyncio_default_fixture_loop_scope = "function"`, so bare `async def test_*` functions and explicit `@pytest.mark.asyncio` tests run under pytest-asyncio.
 
@@ -20,16 +19,13 @@ The project-managed test stack declares:
 | `provider_functional` | Explicit live/billable provider tests requiring credentials | Excluded |
 | `provider_health` | Explicit live discovery/health smoke; also provider behavior | Excluded |
 | `integration` | Offline multi-module seam tests with provider/network boundaries mocked | Included |
-| `slow` | Deterministic but slow local tests | Included unless quick gate excludes it |
-| `timeout` | Timeout behavior tests or pytest-timeout-controlled tests | Included |
 
 ## Command matrix
 
 | Purpose | Command | Live/billable? |
 | --- | --- | --- |
-| Default offline proof | `python -m pytest test/ -m "not provider_functional and not provider_health" -v` | No |
-| Quick offline proof | `python -m pytest test/ -m "not provider_functional and not provider_health and not slow" -v` | No |
-| Collection safety | `python -m pytest --collect-only -q -m "not provider_functional and not provider_health"` | No |
+| Default offline proof | `python -m pytest` | No |
+| Collection safety | `python -m pytest --collect-only -q` | No |
 | Async reliability slice | `python -m pytest test/test_long_running_tool_budget.py -m "not provider_functional and not provider_health" -v` | No |
 | Core media/protocol proof | `python -m pytest test/test_media_fail_fast.py test/test_stt_multipart.py test/test_media_retry.py -m "not provider_functional and not provider_health" -v` | No |
 | Provider media request shapes | `python -m pytest test/test_openai_provider_media_shapes.py test/test_provider_support_flags.py test/test_google_tts_payload_shape.py -m "not provider_functional and not provider_health" -v` | No |
@@ -37,11 +33,11 @@ The project-managed test stack declares:
 | Discovery consolidation proof | `python -m pytest test/test_discovery_integration.py -m "not provider_functional and not provider_health" -v` | No |
 | Provider health smoke | `MAGIC_LLM_KEYS=/path/to/keys.json python -m pytest test/test_discovery_smoke.py -m "provider_health" -v` | Yes — explicit live |
 | Provider-functional smoke | `MAGIC_LLM_KEYS=/path/to/keys.json python -m pytest test/ -m "provider_functional and not provider_health" -v` | Yes — explicit live |
-| Coverage reporting | `python -m pytest test/ -m "not provider_functional and not provider_health" --cov=magic_llm` | No; informational until runner/live gates remain trustworthy |
+| Coverage gate | `python -m pytest --cov=magic_llm --cov-branch` | No; enforced at the configured threshold |
 
 ## Credentials and resource fixtures
 
-Live tests load credentials lazily through fixtures only after explicit live marker selection. They look for `MAGIC_LLM_KEYS` first and may fall back to `/home/andres/Documents/keys.json` as an optional maintainer-local fixture path. That path is not a CI requirement.
+Live tests load credentials lazily through fixtures only after explicit live marker selection. `MAGIC_LLM_KEYS` is required and must point to an existing `.json` file; no local fallback is consulted.
 
 Missing credentials skip selected live tests with provider/key-category messages. Offline collection must not open or parse credential files.
 

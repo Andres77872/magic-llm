@@ -3,13 +3,13 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
+addopts = ["-m", "not provider_functional and not provider_health"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
 testpaths = ["test"]
 markers = [
     "integration: offline multi-module seam tests with provider/network boundaries mocked",
-    "slow: deterministic but slow tests excluded from quick local gates",
-    "timeout: timeout behavior tests or pytest-timeout-controlled tests",
     "provider_health: explicit live provider discovery/health smoke; excluded from offline gates",
     "provider_functional: explicit live/billable provider tests requiring credentials",
 ]
@@ -19,13 +19,13 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
+branch = true
 source = ["magic_llm"]
 
 [tool.coverage.report]
-fail_under = 60
+fail_under = 78
 show_missing = true
-exclude_lines = [
-    "pragma: no cover",
-    "raise NotImplementedError",
+exclude_also = [
+    "if TYPE_CHECKING:",
     "if __name__ == .__main__.:",
 ]

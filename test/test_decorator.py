@@ -7,6 +7,7 @@ Tests cover:
 - register_callable manual registration
 """
 import pytest
+import inspect
 import logging
 import warnings
 
@@ -275,8 +276,7 @@ class TestDecoratorEdgeCases:
         async def async_func(query: str) -> str:
             return query
 
-        import asyncio
-        assert asyncio.iscoroutinefunction(async_func)
+        assert inspect.iscoroutinefunction(async_func)
 
     def test_decorator_on_sync_function(self):
         """@subagent can decorate sync function (Binder will reject later)."""

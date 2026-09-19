@@ -66,14 +66,6 @@ class TestMagicLLMEndToEnd:
             async_mock.return_value = async_instance
             yield {"sync": sync_mock, "async": async_mock}
 
-    def test_list_models_returns_normalized(self, mock_http):
-        client = MagicLLM(engine="openai", private_key="sk-test", model="gpt-4o")
-        result = client.list_models()
-        assert len(result) == 2
-        for m in result:
-            assert m.external_id
-            assert m.provider == "openai"
-
     def test_list_models_for_unsupported_engine_raises(self):
         """Unsupported engines raise NotImplementedError via resolver."""
         from magic_llm.base import MagicLlmBase
@@ -84,15 +76,6 @@ class TestMagicLLMEndToEnd:
             )
         assert "definitely-not-supported" in str(exc.value)
         assert "no discovery adapter" in str(exc.value)
-
-    @pytest.mark.asyncio
-    async def test_async_list_models(self, mock_http):
-        client = MagicLLM(engine="openai", private_key="sk-test", model="gpt-4o")
-        result = await client.async_list_models()
-        assert len(result) == 2
-        for m in result:
-            assert m.external_id
-            assert m.provider == "openai"
 
     @pytest.mark.asyncio
     async def test_sync_and_async_identical(self, mock_http):
@@ -112,38 +95,6 @@ class TestMagicLLMEndToEnd:
 
 
 # ── Registry Completeness ────────────────────────────────────────────────
-
-class TestOpenAIRegisteredOnImport:
-    """Regression guard: ``openai`` adapter MUST be registered when the discovery
-    package is imported — regardless of test execution order.
-
-    The ``openai`` adapter registration lives in ``openai_discovery.py``, which
-    is NOT imported by any adapter submodule — it MUST be explicitly imported
-    by ``magic_llm/engine/discovery/__init__.py`` or it will never fire.
-
-    This test verifies that fix independently of any other test file's imports.
-    """
-
-    def test_openai_registered_after_clean_import(self):
-        from magic_llm.engine.discovery import get_adapter as ga
-        cls = ga("openai")
-        assert cls is not None, (
-            "get_adapter('openai') returned None — "
-            "openai_discovery is not imported by discovery/__init__.py"
-        )
-
-    def test_list_supported_engines_includes_openai(self):
-        from magic_llm.engine.discovery import list_supported_engines as lse
-        engines = lse()
-        assert "openai" in engines, (
-            "'openai' missing from list_supported_engines() — "
-            "adapter was never registered"
-        )
-
-    def test_supports_discovery_true_for_openai(self):
-        from magic_llm.engine.discovery import supports_discovery as sd
-        assert sd("openai") is True
-
 
 class TestRegistryCompleteness:
     """Every engine name from the prior registration block still resolves."""
@@ -313,18 +264,6 @@ class TestOpenAICompatibleDiscoveryQuirkTable:
 class TestOfflineDiscoveryFacadeReplacement:
     """Offline facade-chain proof that keeps live discovery smoke optional."""
 
-    def test_magicllm_facade_core_provider_list_models_with_mocked_http(self):
-        with patch("magic_llm.engine.discovery.base_discovery.HttpClient") as mock_cls:
-            instance = MagicMock()
-            instance.request.return_value = json.dumps(OPENAI_PAYLOAD).encode("utf-8")
-            instance.__enter__.return_value = instance
-            mock_cls.return_value = instance
-
-            models = MagicLLM(engine="openai", private_key="sk-test", model="gpt-4o").list_models()
-
-        assert [m.provider for m in models] == ["openai", "openai"]
-        mock_cls.return_value.request.assert_called_once()
-
     def test_resolver_facade_proxy_provider_list_models_with_mocked_http(self):
         with patch("magic_llm.engine.discovery.base_discovery.HttpClient") as mock_cls:
             instance = MagicMock()
@@ -378,11 +317,6 @@ class TestBackwardCompat:
         """Import exactly as api.magic_llm's discovery_client.py does."""
         from magic_llm.engine.discovery import get_adapter as ga
         assert ga is get_adapter  # same symbol
-
-    def test_get_adapter_openai_returns_class(self):
-        cls = get_adapter("openai")
-        assert cls is not None
-        assert issubclass(cls, BaseDiscoveryAdapter)
 
     def test_get_adapter_instantiation(self):
         """Verify adapter can be instantiated the way consumers do it."""

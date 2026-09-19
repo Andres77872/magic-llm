@@ -10,23 +10,29 @@ from magic_llm.model import ModelChat
 class TestGoogleKeyNotInUrls:
     """Test that EngineGoogle URLs do not contain API key."""
 
-    def test_url_no_key(self):
-        """self.url does not contain key= query parameter."""
+    @pytest.mark.parametrize(
+        ("attribute", "expected"),
+        [
+            (
+                "url",
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+            ),
+            (
+                "url_stream",
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?alt=sse",
+            ),
+            (
+                "url_tts",
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent",
+            ),
+        ],
+    )
+    def test_api_key_is_absent_from_urls(self, attribute, expected):
         engine = EngineGoogle(api_key="test-key-123", model="gemini-pro")
-        assert "key=" not in engine.url
-        assert engine.url == "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
+        url = getattr(engine, attribute)
 
-    def test_url_stream_no_key(self):
-        """self.url_stream does not contain key= query parameter."""
-        engine = EngineGoogle(api_key="test-key-123", model="gemini-pro")
-        assert "key=" not in engine.url_stream
-        assert engine.url_stream == "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?alt=sse"
-
-    def test_url_tts_no_key(self):
-        """self.url_tts does not contain key= query parameter."""
-        engine = EngineGoogle(api_key="test-key-123", model="gemini-pro")
-        assert "key=" not in engine.url_tts
-        assert engine.url_tts == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent"
+        assert "key=" not in url
+        assert url == expected
 
 
 class TestGoogleKeyInHeaders:
@@ -49,11 +55,3 @@ class TestGoogleKeyInHeaders:
         _, headers, _ = asyncio.run(engine.prepare_data(chat))
         assert "x-goog-api-key" in headers
         assert headers["x-goog-api-key"] == "my-secret-key"
-
-    def test_header_value_matches_api_key(self):
-        """x-goog-api-key header value matches the provided API key."""
-        engine = EngineGoogle(api_key="special-key-abc123", model="gemini-pro")
-        chat = ModelChat()
-        chat.add_message("user", "test")
-        _, headers, _ = engine.prepare_data_sync(chat)
-        assert headers["x-goog-api-key"] == "special-key-abc123"

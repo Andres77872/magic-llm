@@ -313,7 +313,6 @@ def test_callable_param_with_nested_pydantic_schema_includes_inner_properties():
         return ""
 
     out = normalize_openai_tools([use_nested])
-    print(out)
     assert isinstance(out, list) and len(out) == 1
     entry = out[0]
     assert entry["name"] == "use_nested"

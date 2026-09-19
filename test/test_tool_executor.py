@@ -10,6 +10,7 @@ Tests cover:
 
 import asyncio
 import json
+import threading
 import time
 from unittest.mock import MagicMock
 
@@ -81,7 +82,11 @@ class TestToolExecutorSingleExecution:
         assert result.error_type == "UnknownToolError"
         assert result.name == "unknown_tool"
         assert result.tool_call_id == "call_1"
-        assert result.content == ""
+        # The failure envelope reaches the model — an empty content string
+        # left the model unaware the call ever failed.
+        parsed = json.loads(result.content)
+        assert parsed["type"] == "UnknownToolError"
+        assert "Unknown tool" in parsed["error"]
 
     def test_execute_tool_exception_returns_error_result(self):
         """Tool raises ValueError('boom'), assert ToolResult(is_error=True, error='boom', error_type='ValueError')."""
@@ -128,11 +133,10 @@ class TestToolExecutorTimeout:
     """Slice 2: Per-tool timeout enforcement."""
 
     def test_execute_timeout_returns_error_result(self):
-        """Tool sleeps 10s, timeout=2.0, assert ToolResult(is_error=True, error_type='TimeoutError') within ~2s."""
-        executor = ToolExecutor(per_tool_timeout=2.0)
+        executor = ToolExecutor(per_tool_timeout=0.01)
 
         def slow_tool():
-            time.sleep(10)
+            time.sleep(0.05)
             return "should not reach here"
 
         executor.register("slow", slow_tool)
@@ -143,15 +147,13 @@ class TestToolExecutorTimeout:
         assert result.is_error is True
         assert result.error_type == "TimeoutError"
         assert "timed out" in result.error
-        # Should complete within ~2s (±500ms tolerance)
-        assert elapsed < 3.0, f"Timeout took {elapsed:.1f}s, expected ~2s"
+        assert elapsed < 0.2
 
     def test_execute_within_timeout_succeeds(self):
-        """Tool sleeps 0.1s, timeout=2.0, assert success."""
-        executor = ToolExecutor(per_tool_timeout=2.0)
+        executor = ToolExecutor(per_tool_timeout=0.2)
 
         def fast_tool():
-            time.sleep(0.1)
+            time.sleep(0.01)
             return {"status": "ok"}
 
         executor.register("fast", fast_tool)
@@ -163,12 +165,12 @@ class TestToolExecutorTimeout:
 
     def test_per_tool_timeout_override_returns_structured_timeout_error(self):
         executor = ToolExecutor(
-            per_tool_timeout=10.0,
-            tool_timeouts={"slow": 0.05},
+            per_tool_timeout=1.0,
+            tool_timeouts={"slow": 0.01},
         )
 
         def slow_tool():
-            time.sleep(1)
+            time.sleep(0.05)
             return "too slow"
 
         executor.register("slow", slow_tool)
@@ -176,12 +178,14 @@ class TestToolExecutorTimeout:
         result = executor.execute(_make_call("slow", id="call_slow"))
         elapsed = time.monotonic() - start
 
-        assert elapsed < 0.5
+        assert elapsed < 0.2
         assert result.tool_call_id == "call_slow"
         assert result.is_error is True
         assert result.error_type == "TimeoutError"
-        assert "0.05" in result.error
-        assert result.content == ""
+        assert "0.01" in result.error
+        parsed = json.loads(result.content)
+        assert parsed["type"] == "TimeoutError"
+        assert "timed out" in parsed["error"]
 
 
 # ─── Slice 3: Parallel execution with ordering ──────────────────────────────
@@ -210,11 +214,11 @@ class TestToolExecutorParallel:
         assert results[2].name == "tool_c"
 
     def test_execute_parallel_completes_concurrently(self):
-        """3 tools each sleep 1s, total wall time < 2s (proves true parallelism)."""
-        executor = ToolExecutor(per_tool_timeout=10.0)
+        executor = ToolExecutor(per_tool_timeout=1.0)
+        rendezvous = threading.Barrier(3)
 
         def sleepy():
-            time.sleep(1)
+            rendezvous.wait(timeout=0.5)
             return "done"
 
         executor.register("sleepy", sleepy)
@@ -224,14 +228,10 @@ class TestToolExecutorParallel:
             _make_call("sleepy", id="call_3"),
         ]
 
-        start = time.monotonic()
         results = executor.execute_parallel(calls)
-        elapsed = time.monotonic() - start
 
         assert len(results) == 3
         assert all(r.is_error is False for r in results)
-        # Should complete in ~1s, not 3s (proves parallelism)
-        assert elapsed < 2.0, f"Parallel execution took {elapsed:.1f}s, expected <2s"
 
 
 # ─── Slice 4: Deduplication (opt-in) ────────────────────────────────────────
@@ -364,16 +364,27 @@ class TestToolExecutorAsync:
     """Slice 12: Async execution variants."""
 
     @pytest.mark.asyncio
-    async def test_execute_async_sync_callable_runs_in_executor(self):
-        """Sync callable in execute_async, assert it runs without blocking."""
+    async def test_execute_async_sync_callable_does_not_block_event_loop(self):
+        """A sync callable does not block other event-loop work."""
         executor = ToolExecutor()
+        started = threading.Event()
 
         def sync_tool():
-            time.sleep(0.1)
+            started.set()
+            time.sleep(0.02)
             return {"sync": True}
 
         executor.register("sync_tool", sync_tool)
-        result = await executor.execute_async(_make_call("sync_tool"))
+        execution = asyncio.create_task(
+            executor.execute_async(_make_call("sync_tool"))
+        )
+
+        while not started.is_set():
+            await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert not execution.done()
+
+        result = await execution
 
         assert result.is_error is False
         parsed = json.loads(result.content)
@@ -414,11 +425,17 @@ class TestToolExecutorAsync:
 
     @pytest.mark.asyncio
     async def test_execute_parallel_async_runs_concurrently(self):
-        """3 async tools each sleep 1s, total wall time < 2s."""
-        executor = ToolExecutor(per_tool_timeout=10.0)
+        executor = ToolExecutor(per_tool_timeout=1.0)
+        all_started = asyncio.Event()
+        release = asyncio.Event()
+        started = 0
 
         async def sleepy_async():
-            await asyncio.sleep(1)
+            nonlocal started
+            started += 1
+            if started == 3:
+                all_started.set()
+            await release.wait()
             return "done"
 
         executor.register("sleepy", sleepy_async)
@@ -428,14 +445,13 @@ class TestToolExecutorAsync:
             _make_call("sleepy", id="call_3"),
         ]
 
-        start = time.monotonic()
-        results = await executor.execute_parallel_async(calls)
-        elapsed = time.monotonic() - start
+        execution = asyncio.create_task(executor.execute_parallel_async(calls))
+        await asyncio.wait_for(all_started.wait(), timeout=0.2)
+        release.set()
+        results = await execution
 
         assert len(results) == 3
         assert all(r.is_error is False for r in results)
-        # Should complete in ~1s, not 3s (proves parallelism)
-        assert elapsed < 2.0, f"Async parallel execution took {elapsed:.1f}s, expected <2s"
 
     @pytest.mark.asyncio
     async def test_execute_async_callable_instance_with_async_call(self):
@@ -524,3 +540,139 @@ class TestIsAsyncCallable:
         from magic_llm.util import is_async_callable
 
         assert is_async_callable(lambda x: x) is False
+
+
+# ─── Failure-cause reporting (envelopes, truncation, malformed args) ────────
+
+
+class TestToolExecutorFailureCauses:
+    """Every failed ToolResult must carry a cause the model and UI can read."""
+
+    def test_truncation_sets_error_and_error_type(self):
+        executor = ToolExecutor(max_content_size=20)
+
+        def big_tool() -> str:
+            return "x" * 100
+
+        executor.register("big", big_tool)
+        result = executor.execute(_make_call("big"))
+
+        assert result.is_error is True
+        assert result.error_type == "ContentTruncated"
+        assert "truncated" in result.error
+        assert "102" in result.error  # json.dumps adds two quote chars
+        assert result.content.endswith("[TRUNCATED]")
+
+    def test_legitimate_truncated_suffix_is_not_flagged(self):
+        """A tool that returns a string ending in [TRUNCATED] is not an error."""
+        executor = ToolExecutor(max_content_size=50)
+
+        def tricky_tool() -> str:
+            return "data[TRUNCATED]"
+
+        executor.register("tricky", tricky_tool)
+        result = executor.execute(_make_call("tricky"))
+
+        assert result.is_error is False
+        assert result.error is None
+
+    def test_malformed_arguments_refuse_execution(self):
+        executor = ToolExecutor()
+        called = []
+
+        def some_tool(**kwargs) -> str:
+            called.append(kwargs)
+            return "ran"
+
+        executor.register("some_tool", some_tool)
+        call = CanonicalToolCall(
+            id="call_bad",
+            name="some_tool",
+            arguments={},
+            arguments_error="Arguments for tool 'some_tool' were not valid JSON",
+        )
+        result = executor.execute(call)
+
+        assert called == []
+        assert result.is_error is True
+        assert result.error_type == "MalformedArgumentsError"
+        parsed = json.loads(result.content)
+        assert parsed["type"] == "MalformedArgumentsError"
+
+    def test_async_malformed_arguments_refuse_execution(self):
+        executor = ToolExecutor()
+
+        async def some_tool(**kwargs) -> str:
+            return "ran"
+
+        executor.register("some_tool", some_tool)
+        call = CanonicalToolCall(
+            id="call_bad",
+            name="some_tool",
+            arguments={},
+            arguments_error="not valid JSON",
+        )
+        result = asyncio.run(executor.execute_async(call))
+        assert result.is_error is True
+        assert result.error_type == "MalformedArgumentsError"
+
+    def test_empty_str_exception_gets_fallback_message(self):
+        executor = ToolExecutor()
+
+        class SilentError(Exception):
+            def __str__(self) -> str:
+                return ""
+
+        def silent_tool() -> str:
+            raise SilentError()
+
+        executor.register("silent", silent_tool)
+        result = executor.execute(_make_call("silent"))
+
+        assert result.is_error is True
+        assert result.error_type == "SilentError"
+        assert result.error  # never empty
+        assert "SilentError" in result.error
+
+    def test_async_internal_timeout_error_is_not_reported_as_deadline(self):
+        """A TimeoutError raised BY the tool is the tool's own error."""
+        executor = ToolExecutor(per_tool_timeout=5.0)
+
+        async def flaky_tool() -> str:
+            raise TimeoutError("upstream service deadline")
+
+        executor.register("flaky", flaky_tool)
+        result = asyncio.run(executor.execute_async(_make_call("flaky")))
+
+        assert result.is_error is True
+        assert result.error == "upstream service deadline"
+        assert "timed out after" not in result.error
+
+    def test_async_deadline_timeout_reports_executor_limit(self):
+        executor = ToolExecutor(per_tool_timeout=0.05)
+
+        async def slow_tool() -> str:
+            await asyncio.sleep(1.0)
+            return "late"
+
+        executor.register("slow", slow_tool)
+        result = asyncio.run(executor.execute_async(_make_call("slow")))
+
+        assert result.is_error is True
+        assert result.error_type == "TimeoutError"
+        assert "timed out after 0.05s" in result.error
+        parsed = json.loads(result.content)
+        assert parsed["type"] == "TimeoutError"
+
+    def test_sync_internal_timeout_error_is_not_reported_as_deadline(self):
+        executor = ToolExecutor(per_tool_timeout=5.0)
+
+        def flaky_tool() -> str:
+            raise TimeoutError("db read deadline")
+
+        executor.register("flaky", flaky_tool)
+        result = executor.execute(_make_call("flaky"))
+
+        assert result.is_error is True
+        assert result.error == "db read deadline"
+        assert "timed out after" not in result.error

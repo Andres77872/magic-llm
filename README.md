@@ -13,8 +13,14 @@ Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface
 - [5-minute quickstart](docs/quickstart.md)
 - [Provider guide](docs/providers/index.md)
 - [Chat usage](docs/usage/chat.md)
+- [Vision](docs/usage/vision.md)
+- [Audio](docs/usage/audio.md)
+- [Embeddings](docs/usage/embeddings.md)
+- [Error handling](docs/usage/error-handling.md)
 - [Tool calling and agents](docs/agents/index.md)
+- [Subagents](docs/agents/subagents.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [FAQ](docs/faq.md)
 - [Development setup](docs/development/setup.md)
 - [Testing](docs/development/testing.md)
 
@@ -23,10 +29,10 @@ Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface
 - Unified `MagicLLM(engine=..., model=..., private_key=...)` constructor.
 - Public chat methods: `generate`, `stream_generate`, `async_generate`, and `async_stream_generate`.
 - Native engines: `openai`, `google`, `cloudflare`, `amazon`, `cohere`, `anthropic`, and `azure`.
-- OpenAI-compatible routing by `engine='openai'` plus `base_url` for Groq, SambaNova, OpenRouter, Mistral, Fireworks, DeepSeek, DeepInfra, Together, and similar endpoints.
+- OpenAI-compatible routing by `engine='openai'` plus `base_url`: dedicated chat adapters are URL-matched for Groq, SambaNova, OpenRouter, Mistral, Fireworks, DeepSeek, DeepInfra, and Together; any other OpenAI-compatible endpoint works through the generic path.
 - Streaming and async support across the core chat surface.
 - Unified response models with usage and latency metadata where providers expose it.
-- Embeddings, speech-to-text, text-to-speech, model discovery, fallback clients, callbacks, tool calling, ReAct agents, and subagents.
+- Embeddings, speech-to-text, text-to-speech, model discovery, fallback clients, callbacks, tool calling, ReAct agents (`run_agent`, `run_agent_stream`, `run_agent_async`, `run_agent_stream_async`), and YAML-backed subagents.
 - Vision means image input for chat. First-class image generation/image output is not part of the current core API; user tools named `generate_image` are caller-owned tools.
 
 ## Install
@@ -85,7 +91,7 @@ async for chunk in client.llm.async_stream_generate(chat):
 | Provider family | Engine | Notes |
 | --- | --- | --- |
 | OpenAI | `openai` | Official OpenAI endpoint by default. |
-| OpenAI-compatible providers | `openai` + `base_url` | Groq, SambaNova, OpenRouter, Mistral, Fireworks, DeepSeek, DeepInfra, Together, and others are selected by URL matching. |
+| OpenAI-compatible providers | `openai` + `base_url` | Groq, SambaNova, OpenRouter, Mistral, Fireworks, DeepSeek, DeepInfra, and Together are selected by URL matching; other endpoints use the generic path. |
 | Anthropic | `anthropic` | Native Claude API support. |
 | Google AI Studio | `google` | Native Gemini request/response formatting. |
 | AWS Bedrock | `amazon` | Routes by Bedrock model prefix. Model discovery is unsupported. |
@@ -108,7 +114,9 @@ client = MagicLLM(
 )
 ```
 
-Magic LLM detects known provider URLs and applies provider-specific adapters where implemented.
+Magic LLM detects known provider URLs and applies provider-specific chat adapters where implemented; unrecognized `base_url` values fall back to the generic OpenAI-compatible path.
+
+Model discovery covers a wider set than chat routing: registered discovery adapters also include xAI, Cerebras, Hyperbolic, Nebius, Novita, Parasail, and Perplexity. See [usage/model-discovery.md](docs/usage/model-discovery.md).
 
 ## Key gotchas
 
@@ -141,6 +149,8 @@ response = client.run_agent(
 print(response.content)
 ```
 
+`run_agent` is the synchronous entry point. The same loop is also available as `run_agent_stream` (sync streaming), `run_agent_async` (async), and `run_agent_stream_async` (async streaming). See [agents/index.md](docs/agents/index.md).
+
 Tool specs may be Python callables, OpenAI-style JSON schemas with `tool_functions`, or Pydantic model classes. See [agents/tool-calling.md](docs/agents/tool-calling.md).
 
 ## Model discovery
@@ -152,6 +162,8 @@ for model in client.list_models():
     print(model.external_id, model.capabilities.chat)
 ```
 
+An async variant, `client.async_list_models()`, is also available.
+
 Discovery is provider-dependent. Amazon and Cloudflare are explicitly unsupported. See [usage/model-discovery.md](docs/usage/model-discovery.md).
 
 ## Development
@@ -161,15 +173,15 @@ git clone https://github.com/Andres77872/magic-llm.git
 cd magic-llm
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e '.[test]'
 ```
 
 Test command used by the project:
 
 ```bash
-pytest test/ -v
+python -m pytest
 ```
 
-Do not commit real keys. Integration tests use `MAGIC_LLM_KEYS`, `MAGIC_LLM_AUDIO_FILE`, and `MAGIC_LLM_IMAGE_B64_FILE`; debug payload logging uses `MAGIC_LLM_DEBUG_PAYLOAD` and `MAGIC_LLM_DEBUG_PAYLOAD_FULL`.
+The configured default excludes live/billable provider tests. Run those only with an explicit provider marker and `MAGIC_LLM_KEYS=/path/to/private-keys.json`. Do not commit real keys. Optional live media tests use `MAGIC_LLM_AUDIO_FILE` and `MAGIC_LLM_IMAGE_B64_FILE`; debug payload logging uses `MAGIC_LLM_DEBUG_PAYLOAD` and `MAGIC_LLM_DEBUG_PAYLOAD_FULL`.
 
 More details: [development/setup.md](docs/development/setup.md), [development/testing.md](docs/development/testing.md), and [development/contributing.md](docs/development/contributing.md).

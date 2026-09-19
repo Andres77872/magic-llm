@@ -1,7 +1,6 @@
 """Unit tests for GeminiToolAdapter serialization/deserialization.
 
 Tests cover:
-- Protocol conformance
 - serialize_tool_defs: callable, dict, Pydantic model, empty list
 - deserialize_tool_calls: single, multiple, none, malformed JSON
 - serialize_tool_results: single, multiple, error, incomplete
@@ -21,7 +20,6 @@ from pydantic import BaseModel
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatResponse import Choice, Message, ToolCall, FunctionCall
 from magic_llm.agent.types import CanonicalToolCall, ToolResult
-from magic_llm.agent.tool_adapters import ToolAdapter
 from magic_llm.agent.adapters import GeminiToolAdapter
 
 
@@ -51,29 +49,6 @@ def _make_tool_call(id="call_1", name="get_weather", arguments='{"city":"London"
 
 
 # ─── Protocol conformance ──────────────────────────────────────────────────
-
-
-class TestGeminiProtocolConformance:
-    """GeminiToolAdapter satisfies ToolAdapter protocol."""
-
-    def test_isinstance_tool_adapter(self):
-        """isinstance(GeminiToolAdapter(), ToolAdapter) is True."""
-        adapter = GeminiToolAdapter()
-        assert isinstance(adapter, ToolAdapter)
-
-    def test_has_all_required_methods(self):
-        """All 6 methods present."""
-        required_methods = [
-            "serialize_tool_defs",
-            "deserialize_tool_calls",
-            "serialize_tool_results",
-            "is_finished",
-            "extract_final_text",
-            "validate_pair_integrity",
-        ]
-        adapter = GeminiToolAdapter()
-        for method_name in required_methods:
-            assert hasattr(adapter, method_name), f"Missing {method_name}"
 
 
 # ─── serialize_tool_defs ───────────────────────────────────────────────────

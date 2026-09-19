@@ -52,7 +52,6 @@ def test_image_url(provider_keys, key_name, provider, kwargs):
 
     # Verify we got a response
     assert resp.content, "Expected non-empty content"
-    print(f"Response for URL image: {resp.content[:100]}...")
 
 @pytest.mark.parametrize(
     ("key_name", "provider", "kwargs"),
@@ -73,7 +72,6 @@ def test_image_base64(provider_keys, sample_image_b64, key_name, provider, kwarg
 
     # Verify we got a response
     assert resp.content, "Expected non-empty content"
-    print(f"Response for base64 image: {resp.content[:100]}...")
 
 @pytest.mark.parametrize(
     ("key_name", "provider", "kwargs"),
@@ -94,7 +92,6 @@ def test_image_bytes(provider_keys, sample_image_b64, key_name, provider, kwargs
 
     # Verify we got a response
     assert resp.content, "Expected non-empty content"
-    print(f"Response for bytes image: {resp.content[:100]}...")
 
 @pytest.mark.parametrize(
     ("key_name", "provider", "kwargs"),
@@ -118,7 +115,6 @@ def test_multiple_images(provider_keys, sample_image_b64, key_name, provider, kw
 
     # Verify we got a response
     assert resp.content, "Expected non-empty content"
-    print(f"Response for multiple images: {resp.content[:100]}...")
 
 @pytest.mark.parametrize(
     ("key_name", "provider", "kwargs"),
@@ -139,15 +135,6 @@ def test_image_with_different_media_type(provider_keys, sample_image_b64, key_na
 
     # Verify we got a response
     assert resp.content, "Expected non-empty content"
-    print(f"Response for image with different media type: {resp.content[:100]}...")
-
-def test_image_error_case():
-    """Test error case when trying to add an image without content"""
-    chat = ModelChat()
-
-    # This should raise an exception
-    with pytest.raises(Exception, match="Image cannot be alone"):
-        chat.add_user_message("", image=SAMPLE_IMAGE_URL)
 
 @pytest.mark.parametrize(
     ("key_name", "provider", "kwargs"),
@@ -168,4 +155,3 @@ def test_async_vision_input_generation(provider_keys, key_name, provider, kwargs
 
     # Verify we got a response
     assert resp.content, "Expected non-empty content"
-    print(f"Async response for image: {resp.content[:100]}...")

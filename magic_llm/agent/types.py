@@ -72,14 +72,25 @@ class CanonicalToolCall:
         id: The provider-specific tool call identifier.
         name: The tool/function name.
         arguments: Parsed arguments as a dict (never a JSON string).
+        arguments_error: When the provider's argument payload could not be
+            parsed as JSON, a human-readable description of the failure.
+            Executors must refuse to run the call and surface this as the
+            tool error instead of executing with silently-emptied arguments.
     """
 
-    __slots__ = ("id", "name", "arguments")
+    __slots__ = ("id", "name", "arguments", "arguments_error")
 
-    def __init__(self, id: str, name: str, arguments: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        id: str,
+        name: str,
+        arguments: dict[str, Any],
+        arguments_error: Optional[str] = None,
+    ) -> None:
         self.id = id
         self.name = name
         self.arguments = arguments
+        self.arguments_error = arguments_error
 
     def __repr__(self) -> str:
         return f"CanonicalToolCall(id={self.id!r}, name={self.name!r}, arguments={self.arguments!r})"

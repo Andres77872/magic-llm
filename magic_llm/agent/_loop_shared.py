@@ -34,7 +34,6 @@ import hashlib
 import json
 import logging
 import time
-from datetime import datetime, timezone
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from magic_llm.agent.builtin_tools import TODO_TOOL_NAMES
@@ -400,33 +399,26 @@ def _invoke_hook_safely(
     try:
         hook_method(*args)
     except Exception as e:
-        # Log hook failure with full context
-        timestamp = datetime.now(timezone.utc).isoformat()
         error_type = type(e).__name__
-        error_message = str(e)
+        error_message = str(e) or "(no message)"
 
-        # Build state context for logging
-        state_context = {}
-        if state is not None:
-            state_context = {
-                "step": state.step,
-                "messages_count": len(state.messages) if state.messages else 0,
-                "total_input_tokens": state.total_input_tokens,
-                "total_output_tokens": state.total_output_tokens,
-            }
-
+        # Context goes in the message itself: `extra` fields are invisible
+        # under default formatters, and a swallowed hook error without a
+        # traceback is undiagnosable — the loop deliberately continues, so
+        # this log line is the only evidence the hook ever failed.
+        step = state.step if state is not None else None
+        messages_count = (
+            len(state.messages) if state is not None and state.messages else 0
+        )
         logger.warning(
-            "Hook '%s' raised exception: %s: %s",
+            "Hook '%s' raised %s: %s (step=%s, messages=%d); "
+            "continuing without it",
             hook_name,
             error_type,
             error_message,
-            extra={
-                "timestamp": timestamp,
-                "hook_name": hook_name,
-                "error_type": error_type,
-                "error_message": error_message,
-                "state": state_context,
-            }
+            step,
+            messages_count,
+            exc_info=True,
         )
 
 

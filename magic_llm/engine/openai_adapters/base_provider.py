@@ -277,7 +277,7 @@ class OpenAiBaseProvider(ABC):
             chunk = json.loads(chunk[5:])
             # TODO improve server side error per provider
             if 'choices' not in chunk:
-                raise Exception(f'no choices, {chunk}')
+                raise ValueError(f'no choices, {chunk}')
             chunk['usage'] = usage_from_openai_payload(chunk) if chunk.get('usage') else {}
             if len(chunk['choices']) == 0:
                 return None

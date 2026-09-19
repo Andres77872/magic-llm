@@ -1,6 +1,7 @@
 import abc
 import asyncio
 import functools
+import inspect
 import logging
 import threading
 import time
@@ -91,7 +92,7 @@ class BaseChat(abc.ABC):
             return
 
         try:
-            if asyncio.iscoroutinefunction(self.callback):
+            if inspect.iscoroutinefunction(self.callback):
                 await self.callback(chat, response_content, usage, model, meta)
             else:
                 await asyncio.get_event_loop().run_in_executor(
@@ -123,7 +124,7 @@ class BaseChat(abc.ABC):
             return
 
         try:
-            if asyncio.iscoroutinefunction(self.callback):
+            if inspect.iscoroutinefunction(self.callback):
                 result = []
                 exception = []
 

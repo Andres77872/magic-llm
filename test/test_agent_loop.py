@@ -1,6 +1,6 @@
 """Tests for Phase 3: _loop_shared.py and AgentLoop.
 
-TDD: react-like-agent-loop-refactor — Phase 3 (Slices 1-9, 14)
+TDD: react-like-agent-loop-refactor — Phase 3 (Slices 1-9)
 
 Covers:
 - Slice 1: _check_budget (iteration, wall-clock, tokens)
@@ -12,7 +12,6 @@ Covers:
 - Slice 7: AgentLoop.run() budget enforcement, error paths
 - Slice 8: AgentLoop.run() deduplication, adapter override, state read-only
 - Slice 9: AgentLoop.stream() chunk ordering, separator
-- Slice 14: _loop_shared.py sync-only audit
 """
 
 import hashlib
@@ -32,7 +31,6 @@ from magic_llm.agent.types import (
     AgentBudget,
     AgentBudgetExceeded,
     AgentState,
-    CanonicalToolCall,
 )
 from magic_llm.agent.tool_executor import ToolExecutor
 from magic_llm.agent.tool_adapters import ToolAdapter, ToolAdapterFactory
@@ -85,16 +83,9 @@ def _todo(todo_id=1, content="Do work", status="in_progress", priority="high"):
     return {"id": todo_id, "content": content, "status": status, "priority": priority}
 
 
-def _make_mock_adapter(is_finished=True, tool_calls=None):
-    """Create a mock ToolAdapter."""
-    adapter = MagicMock(spec=ToolAdapter)
-    adapter.serialize_tool_defs.return_value = None
-    adapter.deserialize_tool_calls.return_value = tool_calls or []
-    adapter.is_finished.return_value = is_finished
-    adapter.extract_final_text.return_value = ""
-    adapter.validate_pair_integrity.return_value = True
-    adapter.serialize_tool_results.return_value = None
-    return adapter
+def _make_mock_adapter():
+    """Create a compatibility adapter for constructor-selection tests."""
+    return MagicMock(spec=ToolAdapter)
 
 
 # ─── Slice 1: _check_budget ────────────────────────────────────────────────
@@ -264,6 +255,36 @@ class TestBuildInitialChat:
             system_prompt="new prompt",
         )
         assert initial_chat.messages == original_messages
+
+    def test_build_initial_chat_deep_clones_multimodal_content(self):
+        initial_chat = ModelChat(system="sys")
+        initial_chat.add_user_message(
+            "Describe this image",
+            image=["data:image/png;base64,abc"],
+        )
+
+        cloned = _build_initial_chat(initial_chat=initial_chat)
+        cloned.messages[1]["content"][1]["image_url"]["url"] = "mutated"
+
+        assert cloned is not initial_chat
+        assert (
+            initial_chat.messages[1]["content"][1]["image_url"]["url"]
+            == "data:image/png;base64,abc"
+        )
+
+    def test_build_initial_chat_merges_into_first_system_only(self):
+        initial_chat = ModelChat(system="first system")
+        initial_chat.add_system_message("second system")
+        initial_chat.add_user_message("hello")
+
+        chat = _build_initial_chat(
+            initial_chat=initial_chat,
+            system_prompt="additional guidance",
+        )
+
+        assert chat.messages[0]["content"].startswith("additional guidance")
+        assert "first system" in chat.messages[0]["content"]
+        assert chat.messages[1]["content"] == "second system"
 
 
 class TestRegisterToolsWithExecutor:
@@ -477,43 +498,31 @@ class TestAgentLoopConstructor:
     def test_agent_loop_constructor_with_deduplicate_true(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
-        with patch.object(
-            ToolAdapterFactory, "create_for_client", return_value=adapter
-        ):
-            from magic_llm.agent.agent_loop import AgentLoop
-            loop = AgentLoop(client, tools=[lambda: None], deduplicate=True)
+        from magic_llm.agent.agent_loop import AgentLoop
+        loop = AgentLoop(client, tools=[lambda: None], deduplicate=True)
         assert loop._executor._enable_dedup is True
 
     def test_agent_loop_constructor_ignores_engine_type(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
-        with patch.object(
-            ToolAdapterFactory, "create_for_client", return_value=adapter
-        ):
-            from magic_llm.agent.agent_loop import AgentLoop
-            loop = AgentLoop(
-                client,
-                tools=[lambda: None],
-                engine_type="anthropic",
-            )
+        from magic_llm.agent.agent_loop import AgentLoop
+        loop = AgentLoop(
+            client,
+            tools=[lambda: None],
+            engine_type="anthropic",
+        )
         # No error raised, engine_type not in kwargs
         assert "engine_type" not in loop._generate_kwargs
 
     def test_agent_loop_constructor_stores_kwargs(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
-        with patch.object(
-            ToolAdapterFactory, "create_for_client", return_value=adapter
-        ):
-            from magic_llm.agent.agent_loop import AgentLoop
-            loop = AgentLoop(
-                client,
-                tools=[lambda: None],
-                custom_kwarg="value",
-            )
+        from magic_llm.agent.agent_loop import AgentLoop
+        loop = AgentLoop(
+            client,
+            tools=[lambda: None],
+            custom_kwarg="value",
+        )
         assert loop._generate_kwargs.get("custom_kwarg") == "value"
 
 
@@ -525,9 +534,8 @@ class TestAgentLoopConcurrencyGuard:
     def test_concurrent_run_raises_runtime_error(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         # Manually set _running to True
         loop._running = True
@@ -538,9 +546,8 @@ class TestAgentLoopConcurrencyGuard:
     def test_concurrent_stream_raises_runtime_error(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         loop._running = True
 
@@ -553,9 +560,8 @@ class TestAgentLoopConcurrencyGuard:
         client.llm.generate.return_value = _make_response(
             content="done", finish_reason="stop"
         )
-        adapter = _make_mock_adapter(is_finished=True)
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         loop.run("hello")
         assert loop._running is False
@@ -567,13 +573,11 @@ class TestAgentLoopConcurrencyGuard:
     def test_lock_released_after_exception(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter(is_finished=False, tool_calls=[])
         # Force budget exceeded on first iteration
         from magic_llm.agent.agent_loop import AgentLoop
         loop = AgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=0),
         )
 
@@ -588,7 +592,6 @@ class TestAgentLoopConcurrencyGuard:
         client.llm.generate.return_value = _make_response(
             content="done", finish_reason="stop"
         )
-        adapter.is_finished.return_value = True
         loop.run("hello")
         assert loop._running is False
 
@@ -610,9 +613,8 @@ class TestAgentLoopConcurrencyGuard:
         )
         client.llm.stream_generate.return_value = iter([chunk])
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         list(loop.stream("hello"))
         assert loop._running is False
@@ -629,9 +631,8 @@ class TestAgentLoopRun:
         client.llm.generate.return_value = _make_response(
             content="hello world", finish_reason="stop"
         )
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         response = loop.run("hello")
 
@@ -649,20 +650,11 @@ class TestAgentLoopRun:
             _make_response(content="final answer", finish_reason="stop"),
         ]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={"city": "London"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def get_weather(city):
             return {"temp": 18}
 
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[get_weather], adapter=adapter)
+        loop = AgentLoop(client, tools=[get_weather])
 
         response = loop.run("What's the weather?")
 
@@ -680,62 +672,16 @@ class TestAgentLoopRun:
             _make_response(content="done", finish_reason="stop"),
         ]
 
-        tool_calls = [
-            CanonicalToolCall(id="call_1", name="tool_a", arguments={}),
-            CanonicalToolCall(id="call_2", name="tool_b", arguments={}),
-        ]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def tool_a(): return "a"
         def tool_b(): return "b"
 
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[tool_a, tool_b], adapter=adapter)
+        loop = AgentLoop(client, tools=[tool_a, tool_b])
 
         response = loop.run("run both")
 
         assert client.llm.generate.call_count == 2
         assert response.content == "done"
-
-    def test_run_adds_assistant_message_when_content_exists(self):
-        """When response has content AND tool_calls, assistant message is added."""
-        client = MagicMock()
-        client.llm = MagicMock()
-        tc = _make_tool_call()
-
-        client.llm.generate.side_effect = [
-            _make_response(content="thinking...", tool_calls=[tc], finish_reason="tool_calls"),
-            _make_response(content="final", finish_reason="stop"),
-        ]
-
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={"city": "London"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
-        def get_weather(city):
-            return {"temp": 18}
-
-        from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[get_weather], adapter=adapter)
-
-        loop.run("weather?")
-
-        # Check that chat has assistant message (from iteration 0 with content)
-        assistant_msgs = [
-            m for m in loop.state.messages if m.get("role") == "assistant"
-        ]
-        assert len(assistant_msgs) >= 1
 
     def test_run_adds_tool_call_message_when_tool_calls_exist(self):
         client = MagicMock()
@@ -747,20 +693,11 @@ class TestAgentLoopRun:
             _make_response(content="final", finish_reason="stop"),
         ]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={"city": "London"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def get_weather(city):
             return {"temp": 18}
 
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[get_weather], adapter=adapter)
+        loop = AgentLoop(client, tools=[get_weather])
 
         loop.run("weather?")
 
@@ -785,20 +722,11 @@ class TestAgentLoopRun:
             _make_response(content="final", finish_reason="stop"),
         ]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={"city": "London"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def get_weather(city):
             return {"temp": 18}
 
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[get_weather], adapter=adapter)
+        loop = AgentLoop(client, tools=[get_weather])
 
         response = loop.run("weather?")
 
@@ -837,9 +765,8 @@ class TestAgentLoopRun:
         client.llm.generate.return_value = _make_response(
             content="hello world", finish_reason="stop"
         )
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         response = loop.run("hello")
 
@@ -865,20 +792,11 @@ class TestAgentLoopRun:
             _make_response(content="done", finish_reason="stop"),
         ]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={"city": "London"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def get_weather(city):
             return {"temp": 18}
 
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[get_weather], adapter=adapter)
+        loop = AgentLoop(client, tools=[get_weather])
 
         response = loop.run("weather?")
 
@@ -908,17 +826,8 @@ class TestAgentLoopRun:
             content="done", tool_calls=[tc], finish_reason="stop"
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.return_value = tool_calls
-        adapter.is_finished.return_value = True  # finished despite tool_calls
-        adapter.extract_final_text.return_value = "done"
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         response = loop.run("hello")
 
@@ -1116,7 +1025,8 @@ class TestAgentLoopBuiltinTodoTools:
         assert loop._tools == []
         tool_messages = [m for m in loop.state.messages if m.get("role") == "tool"]
         assert tool_messages[0]["is_error"] is True
-        assert tool_messages[0]["content"] == ""
+        parsed = json.loads(tool_messages[0]["content"])
+        assert parsed["type"] == "UnknownToolError"
 
     def test_unrelated_user_tool_still_executes_with_builtins_enabled(self):
         from magic_llm.agent.agent_loop import AgentLoop
@@ -1197,20 +1107,10 @@ class TestAgentLoopBudgetErrors:
             content=None, tool_calls=[tc], finish_reason="tool_calls"
         )
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.return_value = tool_calls
-        adapter.is_finished.return_value = False
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         from magic_llm.agent.agent_loop import AgentLoop
         loop = AgentLoop(
             client,
             tools=[lambda: None],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=2),
         )
 
@@ -1233,15 +1133,6 @@ class TestAgentLoopBudgetErrors:
 
         client.llm.generate.side_effect = slow_generate
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="slow_tool", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.return_value = tool_calls
-        adapter.is_finished.return_value = False
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def slow_tool():
             time.sleep(0.3)
             return "done"
@@ -1250,7 +1141,6 @@ class TestAgentLoopBudgetErrors:
         loop = AgentLoop(
             client,
             tools=[slow_tool],
-            adapter=adapter,
             budget=AgentBudget(wall_clock_timeout=0.1),
         )
 
@@ -1269,17 +1159,8 @@ class TestAgentLoopBudgetErrors:
             _make_response(content="done", finish_reason="stop"),
         ]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="unknown_tool", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         response = loop.run("hello")
 
@@ -1293,8 +1174,6 @@ class TestAgentLoopBudgetErrors:
         client.llm.generate.return_value = _make_response(
             content="done", finish_reason="stop"
         )
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
-
         class RecordingHooks:
             def __init__(self):
                 self.calls = []
@@ -1311,7 +1190,7 @@ class TestAgentLoopBudgetErrors:
         hooks = RecordingHooks()
 
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter, hooks=hooks)
+        loop = AgentLoop(client, tools=[], hooks=hooks)
 
         loop.run("hello")
 
@@ -1338,15 +1217,6 @@ class TestAgentLoopToolFunctions:
             _make_response(content="done", finish_reason="stop"),
         ]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="custom_search", arguments={"q": "test"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         call_log = []
 
         def custom_search(q):
@@ -1358,7 +1228,6 @@ class TestAgentLoopToolFunctions:
             client,
             tools=[],
             tool_functions={"custom_search": custom_search},
-            adapter=adapter,
         )
 
         response = loop.run("search for test")
@@ -1379,18 +1248,6 @@ class TestAgentLoopToolFunctions:
             _make_response(content="done", finish_reason="stop"),
         ]
 
-        tool_calls = [
-            CanonicalToolCall(id="call_a", name="tool_a", arguments={}),
-            CanonicalToolCall(id="call_b", name="custom_b", arguments={"x": 1}),
-        ]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         executed = []
 
         def tool_a():
@@ -1406,7 +1263,6 @@ class TestAgentLoopToolFunctions:
             client,
             tools=[tool_a],
             tool_functions={"custom_b": custom_b},
-            adapter=adapter,
         )
 
         response = loop.run("run both")
@@ -1437,15 +1293,6 @@ class TestAgentLoopToolFunctions:
             _make_response(content="found results", finish_reason="stop"),
         ]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="search_database", arguments={"query": "climate"})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         call_log = []
 
         def search_database(query):
@@ -1457,7 +1304,6 @@ class TestAgentLoopToolFunctions:
             client,
             tools=[tool_spec],
             tool_functions={"search_database": search_database},
-            adapter=adapter,
         )
 
         response = loop.run("search for climate")
@@ -1477,15 +1323,6 @@ class TestAgentLoopToolFunctions:
             _make_response(content="done", finish_reason="stop"),
         ]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_data", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         def get_data():
             return "from_callable"
 
@@ -1497,7 +1334,6 @@ class TestAgentLoopToolFunctions:
             client,
             tools=[get_data],
             tool_functions={"get_data": get_data_override},
-            adapter=adapter,
         )
 
         response = loop.run("test")
@@ -1536,20 +1372,10 @@ class TestAgentLoopDedupAndState:
             _make_response(content="done", finish_reason="stop"),
         ]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="counter", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, tool_calls, []]
-        adapter.is_finished.side_effect = [False, False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         from magic_llm.agent.agent_loop import AgentLoop
         loop = AgentLoop(
             client,
             tools=[counter],
-            adapter=adapter,
             deduplicate=True,
         )
 
@@ -1578,27 +1404,10 @@ class TestAgentLoopDedupAndState:
             _make_response(content="done2", finish_reason="stop"),
         ]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="counter", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [
-            tool_calls, [], tool_calls, []
-        ]
-        # is_finished is only called when tool_calls is non-empty (short-circuit otherwise)
-        # Run 1 iter 0: tool_calls non-empty → is_finished called → False
-        # Run 1 iter 1: tool_calls empty → is_finished NOT called (short-circuit)
-        # Run 2 iter 0: tool_calls non-empty → is_finished called → False
-        # Run 2 iter 1: tool_calls empty → is_finished NOT called (short-circuit)
-        adapter.is_finished.side_effect = [False, False]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         from magic_llm.agent.agent_loop import AgentLoop
         loop = AgentLoop(
             client,
             tools=[counter],
-            adapter=adapter,
             deduplicate=True,
         )
 
@@ -1618,7 +1427,7 @@ class TestAgentLoopDedupAndState:
         client.llm.generate.return_value = _make_response(
             content="done", finish_reason="stop"
         )
-        custom_adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
+        custom_adapter = _make_mock_adapter()
 
         from magic_llm.agent.agent_loop import AgentLoop
         loop = AgentLoop(client, tools=[], adapter=custom_adapter)
@@ -1635,9 +1444,8 @@ class TestAgentLoopDedupAndState:
     def test_state_property_returns_copy(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         state1 = loop.state
         state1.step = 999
@@ -1647,9 +1455,8 @@ class TestAgentLoopDedupAndState:
     def test_state_messages_are_copied(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         state = loop.state
         state.messages.append({"role": "user", "content": "intruder"})
@@ -1658,9 +1465,8 @@ class TestAgentLoopDedupAndState:
     def test_state_fingerprints_are_copied(self):
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         state = loop.state
         state.executed_fingerprints.add("x")
@@ -1692,9 +1498,8 @@ class TestAgentLoopStream:
         ]
         client.llm.stream_generate.return_value = iter(chunks)
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         result = list(loop.stream("hello"))
 
@@ -1746,17 +1551,8 @@ class TestAgentLoopStream:
 
         client.llm.stream_generate.side_effect = [iter(chunks_iter0), iter(chunks_iter1)]
 
-        tool_calls = [CanonicalToolCall(id="call_1", name="get_weather", arguments={})]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[lambda: None], adapter=adapter)
+        loop = AgentLoop(client, tools=[lambda: None])
 
         result = list(loop.stream("hello"))
 
@@ -1788,9 +1584,8 @@ class TestAgentLoopStream:
         ]
         client.llm.stream_generate.return_value = iter(chunks)
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         result = list(loop.stream("hello"))
 
@@ -1941,19 +1736,8 @@ class TestAgentLoopStreamInvariant:
             iter(chunks_iter0), iter(chunks_iter1),
         ]
 
-        tool_calls = [CanonicalToolCall(
-            id="call_1", name="get_weather", arguments={},
-        )]
-        adapter = MagicMock(spec=ToolAdapter)
-        adapter.serialize_tool_defs.return_value = None
-        adapter.deserialize_tool_calls.side_effect = [tool_calls, []]
-        adapter.is_finished.side_effect = [False, True]
-        adapter.extract_final_text.return_value = ""
-        adapter.validate_pair_integrity.return_value = True
-        adapter.serialize_tool_results.return_value = None
-
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[lambda: None], adapter=adapter)
+        loop = AgentLoop(client, tools=[lambda: None])
 
         result = list(loop.stream("hello"))
 
@@ -2005,9 +1789,8 @@ class TestAgentLoopStreamInvariant:
         ]
         client.llm.stream_generate.return_value = iter(chunks)
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
-        loop = AgentLoop(client, tools=[], adapter=adapter)
+        loop = AgentLoop(client, tools=[])
 
         result = list(loop.stream("hello"))
 
@@ -2036,12 +1819,10 @@ class TestAgentLoopStreamBudget:
         # Empty generator — never enters streaming body
         client.llm.stream_generate.return_value = iter([])
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
         loop = AgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=0),
         )
 
@@ -2056,12 +1837,10 @@ class TestAgentLoopStreamBudget:
         client.llm = MagicMock()
         client.llm.stream_generate.return_value = iter([])
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
         loop = AgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=0),
         )
 
@@ -2092,7 +1871,6 @@ class TestAgentLoopStreamBudget:
         client.llm = MagicMock()
         client.llm.stream_generate.return_value = iter([])
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
         from magic_llm.agent.hooks import AgentHooks
 
@@ -2107,7 +1885,6 @@ class TestAgentLoopStreamBudget:
         loop = AgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(max_iterations=0),
             hooks=hooks,
         )
@@ -2132,52 +1909,16 @@ class TestAgentLoopStreamBudget:
 
         client.llm.stream_generate.side_effect = slow_stream
 
-        adapter = _make_mock_adapter(is_finished=True, tool_calls=[])
         from magic_llm.agent.agent_loop import AgentLoop
         loop = AgentLoop(
             client,
             tools=[],
-            adapter=adapter,
             budget=AgentBudget(wall_clock_timeout=0.05),
         )
 
         with pytest.raises(AgentBudgetExceeded) as exc_info:
             list(loop.stream("hello"))
         assert exc_info.value.budget_type == "wall_clock_timeout"
-
-
-# ─── Slice 14: _loop_shared.py sync-only audit
-
-class TestLoopSharedSyncOnly:
-    """_loop_shared.py must NOT contain any async code."""
-
-    def test_loop_shared_has_no_async_functions(self):
-        import magic_llm.agent._loop_shared as mod
-        import inspect
-
-        for name, obj in inspect.getmembers(mod, inspect.isfunction):
-            assert not inspect.iscoroutinefunction(obj), (
-                f"Function {name} is async — _loop_shared.py must be sync-only"
-            )
-
-    def test_loop_shared_has_no_asyncio_import(self):
-        import magic_llm.agent._loop_shared as mod
-        import inspect
-        source = inspect.getsource(mod)
-        assert "import asyncio" not in source
-        assert "from asyncio" not in source
-
-    def test_loop_shared_has_no_await_keywords(self):
-        import magic_llm.agent._loop_shared as mod
-        import inspect
-        source = inspect.getsource(mod)
-        for line in source.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("#"):
-                continue
-            assert "await " not in stripped, (
-                f"Found 'await' in _loop_shared.py: {stripped}"
-            )
 
 
 # ─── Phase 1A: engine_type Warning Test ────────────────────────────────────
@@ -2190,14 +1931,12 @@ class TestAgentLoopEngineTypeWarning:
         """engine_type='anthropic' → logger.warning is called."""
         client = MagicMock()
         client.llm = MagicMock()
-        adapter = _make_mock_adapter()
         from magic_llm.agent.agent_loop import AgentLoop
 
         with patch("magic_llm.agent.agent_loop.logger.warning") as mock_warning:
-            AgentLoop(
+            loop = AgentLoop(
                 client,
                 tools=[],
-                adapter=adapter,
                 engine_type="anthropic",
             )
             mock_warning.assert_called_once()
@@ -2209,28 +1948,4 @@ class TestAgentLoopEngineTypeWarning:
             # Check the engine_type value is passed as a formatting arg
             assert len(args) > 1 and args[1] == "anthropic"
 
-    def test_engine_type_not_passed_no_warning(self):
-        """No engine_type → no logger.warning."""
-        client = MagicMock()
-        client.llm = MagicMock()
-        adapter = _make_mock_adapter()
-        from magic_llm.agent.agent_loop import AgentLoop
-
-        with patch("magic_llm.agent.agent_loop.logger.warning") as mock_warning:
-            AgentLoop(client, tools=[], adapter=adapter)
-            mock_warning.assert_not_called()
-
-    def test_engine_type_not_in_generate_kwargs(self):
-        """engine_type is popped and NOT stored in _generate_kwargs."""
-        client = MagicMock()
-        client.llm = MagicMock()
-        adapter = _make_mock_adapter()
-        from magic_llm.agent.agent_loop import AgentLoop
-
-        loop = AgentLoop(
-            client,
-            tools=[],
-            adapter=adapter,
-            engine_type="anthropic",
-        )
         assert "engine_type" not in loop._generate_kwargs

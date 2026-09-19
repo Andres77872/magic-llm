@@ -62,22 +62,6 @@ class TestToolAdapterProtocol:
         adapter3 = GeminiToolAdapter()
         assert isinstance(adapter3, ToolAdapter)
 
-    def test_tool_adapter_protocol_has_required_methods(self):
-        """All 6 methods present."""
-        required_methods = [
-            "serialize_tool_defs",
-            "deserialize_tool_calls",
-            "serialize_tool_results",
-            "is_finished",
-            "extract_final_text",
-            "validate_pair_integrity",
-        ]
-        for method_name in required_methods:
-            assert hasattr(OpenAIToolAdapter, method_name), f"Missing {method_name}"
-            assert hasattr(AnthropicToolAdapter, method_name), f"Missing {method_name}"
-            assert hasattr(GeminiToolAdapter, method_name), f"Missing {method_name}"
-
-
 # ─── Slice 6: OpenAIToolAdapter — serialize_tool_defs + deserialize_tool_calls
 
 

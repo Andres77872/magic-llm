@@ -6,6 +6,7 @@ and contract behavior.
 """
 import json
 import pytest
+from pydantic import ValidationError
 
 from magic_llm.agent import TaskManifest, TaskResult, TaskError
 
@@ -46,7 +47,7 @@ class TestTaskManifest:
 
     def test_invalid_id_pattern_uppercase(self):
         """Invalid ID pattern with uppercase raises ValidationError."""
-        with pytest.raises(Exception):  # Pydantic ValidationError
+        with pytest.raises(ValidationError):
             TaskManifest(
                 id="Invalid-ID",  # Contains uppercase
                 name="Test",
@@ -56,7 +57,7 @@ class TestTaskManifest:
 
     def test_invalid_id_pattern_spaces(self):
         """Invalid ID pattern with spaces raises ValidationError."""
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskManifest(
                 id="test agent",  # Contains space
                 name="Test",
@@ -106,7 +107,7 @@ class TestTaskManifest:
         assert manifest_max.timeout_seconds == 600
 
         # Invalid bounds
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskManifest(
                 id="test",
                 name="Test",
@@ -115,7 +116,7 @@ class TestTaskManifest:
                 timeout_seconds=0,  # Below min
             )
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskManifest(
                 id="test",
                 name="Test",
@@ -146,7 +147,7 @@ class TestTaskManifest:
         assert manifest_max.max_concurrency == 20
 
         # Invalid bounds
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskManifest(
                 id="test",
                 name="Test",
@@ -155,7 +156,7 @@ class TestTaskManifest:
                 max_concurrency=0,
             )
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskManifest(
                 id="test",
                 name="Test",
@@ -186,7 +187,7 @@ class TestTaskManifest:
         assert manifest_max.max_depth == 10
 
         # Invalid bounds
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskManifest(
                 id="test",
                 name="Test",
@@ -195,7 +196,7 @@ class TestTaskManifest:
                 max_depth=0,
             )
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskManifest(
                 id="test",
                 name="Test",
@@ -368,7 +369,7 @@ class TestTaskResult:
             assert result.status == status
 
         # Invalid status
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             TaskResult(
                 task_id="test",
                 task_type="test.agent",
@@ -418,10 +419,6 @@ class TestTaskResult:
         assert parsed["error"]["message"] == "Failed"
         assert parsed["error"]["retryable"] is True
 
-    def_to_tool_result_json_excludes_none_error = (
-        "JSON serialization excludes error field when None."
-    )
-
     def test_model_dump_json_format(self):
         """model_dump_json returns valid JSON."""
         result = TaskResult(
@@ -440,7 +437,7 @@ class TestTaskResult:
 class TestTaskResultTaskErrorIntegration:
     """Tests for TaskResult + TaskError interaction."""
 
-    def result_preserves_error_reference(self):
+    def test_result_preserves_error_reference(self):
         """Result preserves exact error reference."""
         error = TaskError(
             error_type=TaskError.VALIDATION,

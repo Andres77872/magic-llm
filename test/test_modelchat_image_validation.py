@@ -69,3 +69,10 @@ def test_bytes_with_media_type_ok():
     # ensure the payload matches the encoded bytes
     payload = url.split(",", 1)[1]
     assert base64.b64decode(payload) == PNG_1x1_BYTES
+
+
+def test_image_without_text_raises():
+    chat = ModelChat()
+
+    with pytest.raises(ValueError, match="Image cannot be alone"):
+        chat.add_user_message("", image="https://example.com/image.png")

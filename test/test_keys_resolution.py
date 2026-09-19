@@ -1,73 +1,48 @@
-"""Characterization tests for resolve_keys_file() key resolution logic.
+"""Behavioral tests for explicit JSON credential-file resolution."""
 
-Proves all branches of the key-resolution helper:
-1. Env set, file exists → use env path
-2. Env set, file missing → use fallback
-3. Env unset, fallback exists → use fallback
-4. Env unset, fallback missing → return None unless required=True
-5. Env empty string, fallback exists → use fallback
-"""
-
-import os
-from unittest.mock import patch
+import json
 
 import pytest
 
-# Import from conftest — the module where resolve_keys_file lives.
-# conftest.py is auto-imported by pytest; we import it explicitly for testing.
-from conftest import resolve_keys_file, DEFAULT_KEYS_FILE
+from conftest import KEYS_ENV_VAR, load_keys_file, resolve_keys_file
 
 
-class TestResolveKeysFile:
-    """All tests mock os.getenv and os.path.exists to prove branch coverage.
+def test_unconfigured_credentials_are_absent_until_live_tests_require_them(monkeypatch):
+    monkeypatch.delenv(KEYS_ENV_VAR, raising=False)
 
-    Patch targets are 'os.getenv' and 'os.path.exists' at the module level
-    since conftest.py uses 'import os' and calls os.getenv/os.path.exists directly.
-    """
+    assert resolve_keys_file() is None
+    with pytest.raises(RuntimeError, match=KEYS_ENV_VAR):
+        resolve_keys_file(required=True)
 
-    def test_env_set_file_exists_returns_env_path(self):
-        """Scenario 1: MAGIC_LLM_KEYS is set and the file exists → use env path."""
-        env_path = "/tmp/keys.json"
-        with patch("os.getenv", return_value=env_path), \
-             patch("os.path.exists", return_value=True):
-            result = resolve_keys_file()
-        assert result == env_path
 
-    def test_env_set_file_missing_returns_fallback(self):
-        """Scenario 2: MAGIC_LLM_KEYS is set but file doesn't exist → use fallback."""
-        env_path = "/tmp/keys.json"
+def test_configured_json_path_uses_the_real_filesystem(monkeypatch, tmp_path):
+    keys_path = tmp_path / "provider-keys.json"
+    keys_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv(KEYS_ENV_VAR, str(keys_path))
 
-        def exists_side_effect(path):
-            return path == DEFAULT_KEYS_FILE
+    assert resolve_keys_file() == str(keys_path)
 
-        with patch("os.getenv", return_value=env_path), \
-             patch("os.path.exists", side_effect=exists_side_effect):
-            result = resolve_keys_file()
-        assert result == DEFAULT_KEYS_FILE
 
-    def test_env_unset_fallback_exists_returns_fallback(self):
-        """Scenario 3: MAGIC_LLM_KEYS is unset but fallback exists → use fallback."""
-        with patch("os.getenv", return_value=None), \
-             patch("os.path.exists", return_value=True):
-            result = resolve_keys_file()
-        assert result == DEFAULT_KEYS_FILE
+@pytest.mark.parametrize("configured_name", ["missing.json", "keys.txt"])
+def test_invalid_configured_path_fails_without_falling_back(monkeypatch, tmp_path, configured_name):
+    configured_path = tmp_path / configured_name
+    if configured_path.suffix != ".json":
+        configured_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv(KEYS_ENV_VAR, str(configured_path))
 
-    def test_env_unset_fallback_missing_returns_none_when_not_required(self):
-        """Scenario 4: missing credentials do not abort collection by default."""
-        with patch("os.getenv", return_value=None), \
-               patch("os.path.exists", return_value=False):
-            assert resolve_keys_file() is None
+    with pytest.raises(RuntimeError, match=KEYS_ENV_VAR):
+        resolve_keys_file()
 
-    def test_env_unset_fallback_missing_raises_when_required(self):
-        """Explicit live setup can request a hard failure."""
-        with patch("os.getenv", return_value=None), \
-              patch("os.path.exists", return_value=False):
-            with pytest.raises(RuntimeError, match="No API keys file found"):
-                resolve_keys_file(required=True)
 
-    def test_env_empty_string_fallback_exists_returns_fallback(self):
-        """Scenario 5: MAGIC_LLM_KEYS is empty string but fallback exists → use fallback."""
-        with patch("os.getenv", return_value=""), \
-             patch("os.path.exists", return_value=True):
-            result = resolve_keys_file()
-        assert result == DEFAULT_KEYS_FILE
+def test_loaded_keys_accepts_only_a_json_provider_object(tmp_path):
+    valid_path = tmp_path / "valid.json"
+    valid_path.write_text(json.dumps({"openai": {"private_key": "sentinel"}}), encoding="utf-8")
+    assert load_keys_file(str(valid_path)) == {
+        "openai": {"private_key": "sentinel"},
+    }
+
+    for name, payload in (("invalid.json", "{"), ("list.json", "[]")):
+        invalid_path = tmp_path / name
+        invalid_path.write_text(payload, encoding="utf-8")
+        with pytest.raises(RuntimeError, match="credential"):
+            load_keys_file(str(invalid_path))

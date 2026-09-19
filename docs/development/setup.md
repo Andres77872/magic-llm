@@ -7,11 +7,10 @@ git clone https://github.com/Andres77872/magic-llm.git
 cd magic-llm
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
-python -m pip install -r requirements.txt
+python -m pip install -e '.[test]'
 ```
 
-The project uses setuptools through `setup.cfg` and `pyproject.toml`. The managed test stack is pinned in `requirements.txt`; editable installs keep pytest/plugin dependencies below unsupported major versions.
+The project uses setuptools through `setup.cfg` and `pyproject.toml`. Test tooling is exposed through the `test` extra rather than installed for runtime consumers. `requirements.txt` remains the fully pinned local development environment.
 
 ## Python version
 
@@ -40,9 +39,10 @@ For explicit live/provider jobs only, point `MAGIC_LLM_KEYS` at a local JSON fil
 
 ```bash
 export MAGIC_LLM_KEYS=/path/to/local/keys.json
+chmod 600 /path/to/local/keys.json
 ```
 
-The maintainer-local fallback `/home/andres/Documents/keys.json` is supported only as a local convenience for explicit live runs. It is not a CI contract, not required for offline tests, and its contents must never be printed, copied, committed, or persisted.
+There is no implicit credential-file fallback. This prevents an ordinary test run from silently using one maintainer's real keys. The JSON contents must never be printed, copied, committed, or persisted.
 
 Credential file shape is provider-keyed JSON. Use your real values locally; do not paste them into docs, logs, commits, or SDD/RDD artifacts.
 
@@ -56,11 +56,11 @@ export MAGIC_LLM_IMAGE_B64_FILE=/path/to/image-base64.txt
 ## Safe test commands
 
 ```bash
-python -m pytest --collect-only -q -m "not provider_functional and not provider_health"
-python -m pytest test/ -m "not provider_functional and not provider_health" -v
+python -m pytest --collect-only -q
+python -m pytest
 ```
 
-Live commands must select `provider_functional` or `provider_health` explicitly and should set `MAGIC_LLM_KEYS`.
+The pytest configuration excludes live markers by default. Live commands must override the marker expression explicitly and set `MAGIC_LLM_KEYS`.
 
 ## Debugging provider payloads
 

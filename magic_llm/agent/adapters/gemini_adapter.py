@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from magic_llm.agent.tool_adapters import ToolAdapter
 from magic_llm.agent.types import CanonicalToolCall, ToolResult
 from magic_llm.engine.tooling import (
     append_tool_results,
@@ -22,7 +21,7 @@ from magic_llm.model import ModelChat, ModelChatResponse
 logger = logging.getLogger(__name__)
 
 
-class GeminiToolAdapter(ToolAdapter):
+class GeminiToolAdapter:
     """ToolAdapter implementation for Google Gemini models.
 
     Serializes tool definitions to Gemini's functionDeclarations format

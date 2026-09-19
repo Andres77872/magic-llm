@@ -33,10 +33,11 @@ Then call `await client.load_subagents(...)`.
 
 ## Tests cannot find API keys
 
-Set `MAGIC_LLM_KEYS` to a JSON file containing your provider keys. Do not rely on the maintainer-local fallback path.
+Set `MAGIC_LLM_KEYS` to a JSON file containing your provider keys. There is no implicit local fallback.
 
 ```bash
 export MAGIC_LLM_KEYS=/path/to/keys.json
+chmod 600 /path/to/keys.json
 ```
 
 ## Need to see request payloads

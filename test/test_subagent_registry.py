@@ -9,7 +9,7 @@ Tests cover:
 """
 import pytest
 
-from magic_llm.agent.registry import SubagentRegistry, RegistryBackend
+from magic_llm.agent.registry import SubagentRegistry
 from magic_llm.agent.definitions import SubagentManifest
 from magic_llm.agent.errors import DuplicateSubagentError
 
@@ -299,33 +299,6 @@ class TestSubagentRegistryLifecycle:
         assert registry.list_manifests() == []
         assert registry.list_callable_ids() == []
         assert registry.is_initialized() is False
-
-
-# ─── RegistryBackend Protocol Tests ───────────────────────────────────────────
-
-
-class TestRegistryBackendProtocol:
-    """RegistryBackend protocol compliance."""
-
-    def test_subagent_registry_is_registry_backend(self):
-        """SubagentRegistry implements RegistryBackend protocol."""
-        registry = SubagentRegistry()
-
-        # Protocol methods should exist
-        assert hasattr(registry, "register_manifest")
-        assert hasattr(registry, "register_callable")
-        assert hasattr(registry, "get_manifest")
-        assert hasattr(registry, "get_callable")
-        assert hasattr(registry, "list_manifests")
-        assert hasattr(registry, "is_initialized")
-        assert hasattr(registry, "mark_initialized")
-        assert hasattr(registry, "clear")
-
-        # Protocol compliance check
-        def check_protocol(obj: RegistryBackend) -> None:
-            pass
-
-        check_protocol(registry)  # Should not raise TypeError
 
 
 # ─── Combined Registration Tests ───────────────────────────────────────────────

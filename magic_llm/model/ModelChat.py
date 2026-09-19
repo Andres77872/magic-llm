@@ -101,7 +101,7 @@ class ModelChat:
         elif content and not image:
             _content = content
         else:
-            raise Exception('Image cannot be alone')
+            raise ValueError('Image cannot be alone')
 
         self.messages.append({
             "role": "user",

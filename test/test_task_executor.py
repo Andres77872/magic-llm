@@ -86,6 +86,23 @@ class TestTaskExecutorRouting:
         assert "summary" in parsed
 
     @pytest.mark.asyncio
+    async def test_concurrent_task_invocations_receive_unique_ids(self):
+        executor = TaskExecutor()
+
+        async def my_task(query: str) -> str:
+            return query
+
+        executor.register_task(_make_manifest(id="my_task"), my_task)
+        results = await asyncio.gather(
+            executor.execute_async(_make_call("my_task", {"query": "one"})),
+            executor.execute_async(_make_call("my_task", {"query": "two"})),
+        )
+
+        task_ids = [json.loads(result.content)["task_id"] for result in results]
+        assert len(set(task_ids)) == 2
+        assert all(len(task_id) == 8 for task_id in task_ids)
+
+    @pytest.mark.asyncio
     async def test_non_task_tool_delegates_to_base_executor(self):
         """Non-task tool delegates to super().execute_async()."""
         executor = TaskExecutor()
@@ -133,6 +150,7 @@ class TestTaskExecutorRouting:
         executor.register_task(manifest, my_task)
 
         assert "my_task" in executor._task_registry
+        assert "my_task" in executor._registry
         stored = executor._task_registry["my_task"]
         assert stored.id == "my_task"
         assert stored.timeout_seconds == 30
@@ -468,6 +486,7 @@ class TestTaskExecutorUnregister:
         removed = executor.unregister_task("my_task")
         assert removed is True
         assert "my_task" not in executor._task_registry
+        assert "my_task" not in executor._registry
         assert "my_task" not in executor._task_semaphores
 
     @pytest.mark.asyncio
