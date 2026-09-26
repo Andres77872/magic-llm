@@ -12,6 +12,7 @@ Concurrent .run()/.stream() calls on the same instance raise RuntimeError.
 from __future__ import annotations
 
 import json
+import copy
 import logging
 import threading
 import time
@@ -87,6 +88,7 @@ class AgentLoop:
         content_separator: str = "\n\n",
         tool_choice: str | dict[str, Any] | None = "auto",
         prompt_fragment: str | Callable[..., str] | None = None,
+        builtin_todo_tools: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         self._client = client
@@ -95,7 +97,8 @@ class AgentLoop:
         # Store tools for registration at run time
         self._user_tools = list(tools or [])
         self._builtin_tool_functions: dict[str, Callable[..., Any]] = {}
-        self._builtin_todo_enabled = agent_config.is_builtin_todo_tools_enabled()
+        self._builtin_todo_enabled = (agent_config.is_builtin_todo_tools_enabled()
+                                      if builtin_todo_tools is None else builtin_todo_tools)
         if self._builtin_todo_enabled:
             builtin_schemas, self._builtin_tool_functions = create_builtin_todo_bundle()
             self._tools = [*builtin_schemas, *self._user_tools]
@@ -147,7 +150,7 @@ class AgentLoop:
         Mutations to the returned state do NOT affect internal loop state.
         """
         return AgentState(
-            messages=list(self._state.messages),
+            messages=copy.deepcopy(self._state.messages),
             step=self._state.step,
             total_input_tokens=self._state.total_input_tokens,
             total_output_tokens=self._state.total_output_tokens,
@@ -173,7 +176,7 @@ class AgentLoop:
 
     def _acquire_lock(self) -> None:
         """Acquire the concurrency lock. Raises RuntimeError if already running."""
-        if self._running:
+        if self._running or not self._lock.acquire(blocking=False):
             raise RuntimeError(
                 "AgentLoop instance is already running. "
                 "Do not call .run() or .stream() concurrently on the same instance."
@@ -183,6 +186,7 @@ class AgentLoop:
     def _release_lock(self) -> None:
         """Release the concurrency lock (reset _running flag)."""
         self._running = False
+        self._lock.release()
 
     def run(
         self,
@@ -209,53 +213,52 @@ class AgentLoop:
             RuntimeError: If called while the loop is already running.
             AgentBudgetExceeded: If any budget constraint is violated.
         """
-        # INIT: Resolve prompt_fragment and prepend to system prompt (C3)
-        pf = self._resolve_prompt_fragment(**self._generate_kwargs)
-        if pf:
-            system_prompt = (
-                f"{pf}\n\n{system_prompt}".strip()
-                if system_prompt
-                else pf
-            )
-
-        # Build initial chat
-        chat = _build_initial_chat(
-            user_input=user_input,
-            system_prompt=system_prompt,
-            extra_messages=extra_messages,
-        )
-
-        # Register tools
-        if self._builtin_todo_enabled:
-            _, self._builtin_tool_functions = create_builtin_todo_bundle()
-        _register_tools_with_executor(
-            self._executor,
-            tools=self._user_tools,
-            tool_functions=self._tool_functions,
-            builtin_tool_functions=self._builtin_tool_functions,
-        )
-
-        # Reset dedup fingerprints for this run
-        if self._deduplicate:
-            self._executor._dedup_cache.clear()
-
-        # Initialize state
-        self._state = AgentState(
-            messages=chat.messages,
-            step=0,
-            start_time=time.monotonic(),
-        )
-
-        collected_content: list[str] = []
-        response: Optional[ModelChatResponse] = None
-
-        # Acquire concurrency guard
         self._acquire_lock()
         try:
+            # INIT: Resolve prompt_fragment and prepend to system prompt (C3)
+            pf = self._resolve_prompt_fragment(**self._generate_kwargs)
+            if pf:
+                system_prompt = (
+                    f"{pf}\n\n{system_prompt}".strip()
+                    if system_prompt
+                    else pf
+                )
+
+            # Build initial chat
+            chat = _build_initial_chat(
+                user_input=user_input,
+                system_prompt=system_prompt,
+                extra_messages=extra_messages,
+            )
+
+            # Register tools
+            if self._builtin_todo_enabled:
+                _, self._builtin_tool_functions = create_builtin_todo_bundle()
+            _register_tools_with_executor(
+                self._executor,
+                tools=self._user_tools,
+                tool_functions=self._tool_functions,
+                builtin_tool_functions=self._builtin_tool_functions,
+            )
+
+            # Reset dedup fingerprints for this run
+            if self._deduplicate:
+                self._executor._dedup_cache.clear()
+
+            # Initialize state
+            self._state = AgentState(
+                messages=chat.messages,
+                step=0,
+                start_time=time.monotonic(),
+            )
+
+            collected_content: list[str] = []
+            response: Optional[ModelChatResponse] = None
+
             while True:
                 # Step 3: CHECK_BUDGET (pre-call: iterations + wall-clock)
                 try:
-                    _check_budget(self._state, self._budget, include_tokens=False)
+                    _check_budget(self._state, self._budget, include_tokens=True)
                 except AgentBudgetExceeded as exc:
                     # Fire on_budget_exceeded BEFORE exception propagates
                     _invoke_hook_safely(
@@ -424,59 +427,60 @@ class AgentLoop:
         Raises:
             RuntimeError: If called while the loop is already running.
         """
-        # INIT: Resolve prompt_fragment and prepend to system prompt (C3)
-        pf = self._resolve_prompt_fragment(**self._generate_kwargs)
-        if pf:
-            system_prompt = (
-                f"{pf}\n\n{system_prompt}".strip()
-                if system_prompt
-                else pf
-            )
-
-        # Build initial chat
-        chat = _build_initial_chat(
-            user_input=user_input,
-            system_prompt=system_prompt,
-            extra_messages=extra_messages,
-        )
-
-        # Register tools
-        if self._builtin_todo_enabled:
-            _, self._builtin_tool_functions = create_builtin_todo_bundle()
-        _register_tools_with_executor(
-            self._executor,
-            tools=self._user_tools,
-            tool_functions=self._tool_functions,
-            builtin_tool_functions=self._builtin_tool_functions,
-        )
-
-        # Reset dedup fingerprints for this run
-        if self._deduplicate:
-            self._executor._dedup_cache.clear()
-
-        # Initialize state
-        self._state = AgentState(
-            messages=chat.messages,
-            step=0,
-            start_time=time.monotonic(),
-        )
-
-        # Accumulated content across all iterations (for on_loop_complete)
-        collected_content: list[str] = []
-        response: Optional[ModelChatResponse] = None
-
-        # Acquire concurrency guard
         self._acquire_lock()
         # Track whether budget was exceeded — if so, skip on_loop_complete
         # in the finally block (budget-exceeded uses on_budget_exceeded instead)
         _budget_exceeded = False
+        response = None
+        collected_content = []
         try:
+            # INIT: Resolve prompt_fragment and prepend to system prompt (C3)
+            pf = self._resolve_prompt_fragment(**self._generate_kwargs)
+            if pf:
+                system_prompt = (
+                    f"{pf}\n\n{system_prompt}".strip()
+                    if system_prompt
+                    else pf
+                )
+
+            # Build initial chat
+            chat = _build_initial_chat(
+                user_input=user_input,
+                system_prompt=system_prompt,
+                extra_messages=extra_messages,
+            )
+
+            # Register tools
+            if self._builtin_todo_enabled:
+                _, self._builtin_tool_functions = create_builtin_todo_bundle()
+            _register_tools_with_executor(
+                self._executor,
+                tools=self._user_tools,
+                tool_functions=self._tool_functions,
+                builtin_tool_functions=self._builtin_tool_functions,
+            )
+
+            # Reset dedup fingerprints for this run
+            if self._deduplicate:
+                self._executor._dedup_cache.clear()
+
+            # Initialize state
+            self._state = AgentState(
+                messages=chat.messages,
+                step=0,
+                start_time=time.monotonic(),
+            )
+
+            # Accumulated content across all iterations (for on_loop_complete)
+            collected_content: list[str] = []
+            response: Optional[ModelChatResponse] = None
+
             first_iteration = True
 
             while True:
                 # Pre-call budget check (iterations + wall-clock)
                 try:
-                    _check_budget(self._state, self._budget, include_tokens=False)
+                    _check_budget(self._state, self._budget, include_tokens=True)
                 except AgentBudgetExceeded as exc:
                     _budget_exceeded = True
                     # Fire on_budget_exceeded BEFORE exception propagates
@@ -501,15 +505,32 @@ class AgentLoop:
                 summary = StreamIterationSummary()
                 last_chunk: Optional[ChatCompletionModel] = None
 
-                for chunk in self._client.llm.stream_generate(
+                source = self._client.llm.stream_generate(
                     chat,
                     tools=self._tools,
                     tool_choice=self._tool_choice,
                     **self._generate_kwargs,
-                ):
-                    accumulate_stream_chunk(summary, chunk)
-                    yield chunk
-                    last_chunk = chunk
+                )
+                try:
+                    for chunk in source:
+                        before_input = getattr(summary.usage, "prompt_tokens", 0) or 0
+                        before_output = getattr(summary.usage, "completion_tokens", 0) or 0
+                        accumulate_stream_chunk(summary, chunk)
+                        self._state.total_input_tokens += (getattr(summary.usage, "prompt_tokens", 0) or 0) - before_input
+                        self._state.total_output_tokens += (getattr(summary.usage, "completion_tokens", 0) or 0) - before_output
+                        try:
+                            _check_budget(self._state, self._budget, include_tokens=True)
+                        except AgentBudgetExceeded as exc:
+                            _budget_exceeded = True
+                            _invoke_hook_safely(getattr(self._hooks, "on_budget_exceeded", None),
+                                                exc.budget_type, str(exc), state=self.state)
+                            raise
+                        last_chunk = chunk
+                        yield chunk
+                finally:
+                    close = getattr(source, "close", None)
+                    if close is not None:
+                        close()
 
                 # Build a synthetic response from normalized engine/core stream summary.
                 if last_chunk is not None:
@@ -530,15 +551,6 @@ class AgentLoop:
                             )
                         ],
                     )
-
-                    # Update token counts
-                    if last_chunk.usage is not None:
-                        self._state.total_input_tokens += getattr(
-                            last_chunk.usage, "prompt_tokens", 0
-                        ) or 0
-                        self._state.total_output_tokens += getattr(
-                            last_chunk.usage, "completion_tokens", 0
-                        ) or 0
 
                     # Post-call budget check (tokens)
                     try:

@@ -377,7 +377,7 @@ class MagicLLM(MagicLlmBase):
         if budget is None:
             budget = AgentBudget(max_iterations=max_iterations)
 
-        loop_kwargs = {}
+        loop_kwargs = dict(kwargs)
         if model is not None:
             loop_kwargs["model"] = model
 
@@ -458,7 +458,7 @@ class MagicLLM(MagicLlmBase):
         if budget is None:
             budget = AgentBudget(max_iterations=max_iterations)
 
-        loop_kwargs = {}
+        loop_kwargs = dict(kwargs)
         if model is not None:
             loop_kwargs["model"] = model
 
@@ -554,12 +554,12 @@ class MagicLLM(MagicLlmBase):
         if budget is None:
             budget = AgentBudget(max_iterations=max_iterations)
 
-        loop_kwargs = {}
+        loop_kwargs = dict(kwargs)
         if model is not None:
             loop_kwargs["model"] = model
 
         # Use provided task_executor, or internal one if tasks were registered
-        executor = task_executor or self._task_executor
+        executor = task_executor or (self._task_executor.fork() if self._task_executor is not None else None)
 
         loop = AsyncAgentLoop(
             client=self,
@@ -642,12 +642,12 @@ class MagicLLM(MagicLlmBase):
         if budget is None:
             budget = AgentBudget(max_iterations=max_iterations)
 
-        loop_kwargs = {}
+        loop_kwargs = dict(kwargs)
         if model is not None:
             loop_kwargs["model"] = model
 
         # Use provided task_executor, or internal one if tasks were registered
-        executor = task_executor or self._task_executor
+        executor = task_executor or (self._task_executor.fork() if self._task_executor is not None else None)
 
         loop = AsyncAgentLoop(
             client=self,

@@ -12,6 +12,7 @@ This module provides the ToolExecutor class responsible for:
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import time
@@ -45,7 +46,13 @@ class ToolExecutor:
         max_content_sizes: dict[str, int] | None = None,
         tool_timeouts: dict[str, float] | None = None,
         dedup_excluded_tools: set[str] | None = None,
+        max_parallel_tools: int = 8,
+        serial_tools: set[str] | None = None,
     ) -> None:
+        if isinstance(max_parallel_tools, bool) or max_parallel_tools < 1:
+            raise ValueError("max_parallel_tools must be a positive integer")
+        self._max_parallel_tools = max_parallel_tools
+        self._serial_tools = set(serial_tools or ())
         self._per_tool_timeout = per_tool_timeout
         self._enable_dedup = enable_dedup
         self._max_content_size = max_content_size
@@ -55,9 +62,28 @@ class ToolExecutor:
         self._registry: dict[str, Callable[..., Any]] = {}
         self._dedup_cache: dict[str, ToolResult] = {}
 
+    def fork(self):
+        """Return an isolated per-run registry and result cache."""
+        clone = copy.copy(self)
+        clone._registry = dict(self._registry)
+        clone._dedup_cache = {}
+        clone._dedup_excluded_tools = set(self._dedup_excluded_tools)
+        clone._serial_tools = set(self._serial_tools)
+        clone._max_content_sizes = dict(self._max_content_sizes)
+        clone._tool_timeouts = dict(self._tool_timeouts)
+        return clone
+
     def exclude_from_dedup(self, *names: str) -> None:
         """Exclude stateful tools from fingerprint deduplication."""
         self._dedup_excluded_tools.update(names)
+
+    def serialize_tools(self, *names: str) -> None:
+        """Make stateful calls ordered barriers within each model tool batch."""
+        self._serial_tools.update(names)
+
+    def _invalidate_tool_cache(self, name: str) -> None:
+        self._dedup_cache = {key: value for key, value in self._dedup_cache.items()
+                             if value.name != name}
 
     def register(self, name: str, fn: Callable[..., Any]) -> None:
         """Register a tool callable under the given name.
@@ -66,6 +92,7 @@ class ToolExecutor:
             name: The tool name used for lookup during execution.
             fn: The callable to invoke when the tool is executed.
         """
+        self._invalidate_tool_cache(name)
         self._registry[name] = fn
 
     def unregister(self, name: str) -> bool:
@@ -79,7 +106,7 @@ class ToolExecutor:
         """
         if name in self._registry:
             del self._registry[name]
-            self._dedup_cache.pop(name, None)
+            self._invalidate_tool_cache(name)
             return True
         return False
 
@@ -117,6 +144,7 @@ class ToolExecutor:
             )
             if fingerprint in self._dedup_cache:
                 cached = self._dedup_cache[fingerprint].model_copy()
+                cached.tool_call_id = tool_call.id
                 cached.is_deduplicated = True
                 return cached
 
@@ -147,7 +175,7 @@ class ToolExecutor:
         result = self._build_output_result(tool_call, output, duration_ms)
 
         # Cache for dedup
-        if dedup_enabled:
+        if dedup_enabled and not result.is_error:
             self._dedup_cache[fingerprint] = result
 
         return result
@@ -168,9 +196,31 @@ class ToolExecutor:
         if not tool_calls:
             return []
 
-        with ThreadPoolExecutor(max_workers=len(tool_calls)) as executor:
-            results = list(executor.map(self.execute, tool_calls))
+        results: list[ToolResult] = []
+        for batch in self._ordered_batches(tool_calls):
+            with ThreadPoolExecutor(max_workers=min(len(batch), self._max_parallel_tools)) as executor:
+                results.extend(executor.map(self.execute, batch))
         return results
+
+    def _ordered_batches(self, tool_calls: list[CanonicalToolCall]):
+        # Stateful operations form barriers. Independent read tools may run
+        # concurrently; repeated dedup fingerprints wait for their first result.
+        batch: list[CanonicalToolCall] = []
+        seen: set[str] = set()
+        for call in tool_calls:
+            fingerprint = self._compute_fingerprint(call.name, call.arguments)
+            duplicate = (self._enable_dedup and call.name not in self._dedup_excluded_tools
+                         and fingerprint in seen)
+            if call.name in self._serial_tools or duplicate:
+                if batch:
+                    yield batch
+                    batch = []
+                yield [call]
+            else:
+                batch.append(call)
+            seen.add(fingerprint)
+        if batch:
+            yield batch
 
     async def execute_async(self, tool_call: CanonicalToolCall) -> ToolResult:
         """Execute a single tool call, supporting both sync and async callables.
@@ -198,6 +248,7 @@ class ToolExecutor:
             )
             if fingerprint in self._dedup_cache:
                 cached = self._dedup_cache[fingerprint].model_copy()
+                cached.tool_call_id = tool_call.id
                 cached.is_deduplicated = True
                 return cached
 
@@ -240,7 +291,7 @@ class ToolExecutor:
         duration_ms = (time.monotonic() - start) * 1000
         result = self._build_output_result(tool_call, output, duration_ms)
 
-        if dedup_enabled:
+        if dedup_enabled and not result.is_error:
             self._dedup_cache[fingerprint] = result
 
         return result
@@ -259,8 +310,25 @@ class ToolExecutor:
         if not tool_calls:
             return []
 
-        tasks = [self.execute_async(tc) for tc in tool_calls]
-        return list(await asyncio.gather(*tasks))
+        results: list[ToolResult] = []
+        semaphore = asyncio.Semaphore(self._max_parallel_tools)
+
+        async def execute_bounded(call: CanonicalToolCall) -> ToolResult:
+            async with semaphore:
+                return await self.execute_async(call)
+
+        for batch in self._ordered_batches(tool_calls):
+            tasks = [asyncio.create_task(execute_bounded(call)) for call in batch]
+            try:
+                results.extend(await asyncio.gather(*tasks))
+            except BaseException:
+                # gather does not cancel siblings when one child fails/cancels.
+                # Never leave detached tools running after a batch has aborted.
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+        return results
 
     # ─── Internal helpers ───────────────────────────────────────────────
 

@@ -12,8 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import copy
 import logging
 import time
+
+try:
+    from asyncio import timeout as async_timeout
+except ImportError:  # Python 3.10
+    from async_timeout import timeout as async_timeout
 from typing import Any, AsyncIterator, Callable, Optional
 
 from magic_llm.agent import config as agent_config
@@ -27,6 +33,7 @@ from magic_llm.agent._loop_shared import (
     PARENT_BUDGET,
     PARENT_HOOKS,
     PARENT_STATE,
+    PARENT_TODO_TOOLS,
 )
 from magic_llm.agent.builtin_tools import create_builtin_todo_bundle
 from magic_llm.agent.hooks import AgentHooks
@@ -101,6 +108,7 @@ class AsyncAgentLoop:
         tool_choice: str | dict[str, Any] | None = "auto",
         heartbeat_cb: Optional[Callable[[], Any]] = None,
         prompt_fragment: str | Callable[..., str] | None = None,
+        builtin_todo_tools: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         self._client = client
@@ -111,7 +119,8 @@ class AsyncAgentLoop:
         # Store tools for registration at run time
         self._user_tools = list(tools or [])
         self._builtin_tool_functions: dict[str, Callable[..., Any]] = {}
-        self._builtin_todo_enabled = agent_config.is_builtin_todo_tools_enabled()
+        self._builtin_todo_enabled = (agent_config.is_builtin_todo_tools_enabled()
+                                      if builtin_todo_tools is None else builtin_todo_tools)
         if self._builtin_todo_enabled:
             builtin_schemas, self._builtin_tool_functions = create_builtin_todo_bundle()
             self._tools = [*builtin_schemas, *self._user_tools]
@@ -167,7 +176,7 @@ class AsyncAgentLoop:
         Mutations to the returned state do NOT affect internal loop state.
         """
         return AgentState(
-            messages=list(self._state.messages),
+            messages=copy.deepcopy(self._state.messages),
             step=self._state.step,
             total_input_tokens=self._state.total_input_tokens,
             total_output_tokens=self._state.total_output_tokens,
@@ -208,7 +217,60 @@ class AsyncAgentLoop:
         """Release the concurrency lock (reset _running flag)."""
         self._running = False
 
-    async def run(
+    async def run(self, user_input=None, system_prompt=None, extra_messages=None, initial_chat=None) -> ModelChatResponse:
+        """Run exclusively; reject concurrent use before mutating state."""
+        self._acquire_lock()
+        try:
+            return await self._run(user_input, system_prompt, extra_messages, initial_chat)
+        finally:
+            self._release_lock()
+
+    async def stream(self, user_input=None, system_prompt=None, extra_messages=None, initial_chat=None) -> AsyncIterator[ChatCompletionModel]:
+        """Stream exclusively and close the underlying stream on cancellation."""
+        self._acquire_lock()
+        source = self._stream(user_input, system_prompt, extra_messages, initial_chat)
+        try:
+            async for chunk in source:
+                yield chunk
+        finally:
+            try:
+                await source.aclose()
+            finally:
+                self._release_lock()
+
+    async def _await_with_budget(self, awaitable):
+        """Interrupt a stalled provider/tool await at the run's deadline."""
+        timeout = self._budget.wall_clock_timeout
+        if timeout is None:
+            return await awaitable
+        remaining = timeout - (time.monotonic() - self._state.start_time)
+        deadline = async_timeout(max(0.0, remaining))
+        try:
+            async with deadline:
+                return await awaitable
+        except asyncio.TimeoutError:
+            expired = deadline.expired
+            if not (expired() if callable(expired) else expired):
+                raise  # TimeoutError raised by the provider itself.
+            exc = AgentBudgetExceeded("wall_clock_timeout", timeout, time.monotonic() - self._state.start_time)
+            _invoke_hook_safely(getattr(self._hooks, "on_budget_exceeded", None),
+                                exc.budget_type, str(exc), state=self.state)
+            raise exc from None
+
+    async def _stream_with_budget(self, source):
+        try:
+            while True:
+                try:
+                    chunk = await self._await_with_budget(source.__anext__())
+                except StopAsyncIteration:
+                    break
+                yield chunk
+        finally:
+            close = getattr(source, "aclose", None)
+            if close is not None:
+                await close()
+
+    async def _run(
         self,
         user_input: Optional[str] = None,
         system_prompt: Optional[str] = None,
@@ -283,19 +345,19 @@ class AsyncAgentLoop:
         parent_budget_token = PARENT_BUDGET.set(self._budget)
         parent_state_token = PARENT_STATE.set(self._state)
         parent_hooks_token = PARENT_HOOKS.set(self._hooks)
+        parent_todo_token = PARENT_TODO_TOOLS.set(self._builtin_todo_enabled)
 
         collected_content: list[str] = []
         response: Optional[ModelChatResponse] = None
 
         # Acquire concurrency guard
-        self._acquire_lock()
         try:
             await self._lock.acquire()
             try:
                 while True:
                     # Step 3: CHECK_BUDGET (pre-call: iterations + wall-clock)
                     try:
-                        _check_budget(self._state, self._budget, include_tokens=False)
+                        _check_budget(self._state, self._budget, include_tokens=True)
                     except AgentBudgetExceeded as exc:
                         # Fire on_budget_exceeded BEFORE exception propagates
                         _invoke_hook_safely(
@@ -319,32 +381,31 @@ class AsyncAgentLoop:
                     # sees fresh document context (e.g., updated doc JSON) each turn.
                     if self._prompt_fragment is not None:
                         pf = self._resolve_prompt_fragment(**self._generate_kwargs)
-                        if pf:
-                            iteration_system = (
-                                f"{pf}\n\n{self._base_system_prompt}".strip()
-                                if self._base_system_prompt
-                                else pf
+                        iteration_system = (
+                            f"{pf}\n\n{self._base_system_prompt}".strip()
+                            if self._base_system_prompt
+                            else pf or ""
+                        )
+                        # Find or create system message
+                        sys_idx = None
+                        for i, msg in enumerate(chat.messages):
+                            if msg.get("role") == "system":
+                                sys_idx = i
+                                break
+                        if sys_idx is not None:
+                            chat.messages[sys_idx]["content"] = iteration_system
+                        else:
+                            chat.messages.insert(
+                                0, {"role": "system", "content": iteration_system}
                             )
-                            # Find or create system message
-                            sys_idx = None
-                            for i, msg in enumerate(chat.messages):
-                                if msg.get("role") == "system":
-                                    sys_idx = i
-                                    break
-                            if sys_idx is not None:
-                                chat.messages[sys_idx]["content"] = iteration_system
-                            else:
-                                chat.messages.insert(
-                                    0, {"role": "system", "content": iteration_system}
-                                )
 
                     # Step 2: LLM_CALL (async) — pass raw tools to engine/core tooling.
-                    response = await self._client.llm.async_generate(
+                    response = await self._await_with_budget(self._client.llm.async_generate(
                         chat,
                         tools=self._tools,
                         tool_choice=self._tool_choice,
                         **self._generate_kwargs,
-                    )
+                    ))
 
                     # Update token counts from response usage
                     if response.usage is not None:
@@ -423,7 +484,7 @@ class AsyncAgentLoop:
                         )
 
                     # Step 9: EXECUTE — run tools in parallel (async)
-                    results = await self._executor.execute_parallel_async(tool_calls)
+                    results = await self._await_with_budget(self._executor.execute_parallel_async(tool_calls))
 
                     # Hook: on_tool_complete — invoke AFTER execution for each result
                     for result in results:
@@ -447,12 +508,12 @@ class AsyncAgentLoop:
                 self._lock.release()
 
         finally:
-            self._release_lock()
             # Reset parent context ContextVars (prevent cross-run contamination)
             # Use tokens captured at set() to restore previous values
             PARENT_BUDGET.reset(parent_budget_token)
             PARENT_STATE.reset(parent_state_token)
             PARENT_HOOKS.reset(parent_hooks_token)
+            PARENT_TODO_TOOLS.reset(parent_todo_token)
 
         # Finalize response
         if response is not None:
@@ -471,7 +532,7 @@ class AsyncAgentLoop:
 
         return response
 
-    async def stream(
+    async def _stream(
         self,
         user_input: Optional[str] = None,
         system_prompt: Optional[str] = None,
@@ -544,19 +605,20 @@ class AsyncAgentLoop:
         parent_budget_token = PARENT_BUDGET.set(self._budget)
         parent_state_token = PARENT_STATE.set(self._state)
         parent_hooks_token = PARENT_HOOKS.set(self._hooks)
+        parent_todo_token = PARENT_TODO_TOOLS.set(self._builtin_todo_enabled)
 
         # Acquire concurrency guard
-        self._acquire_lock()
         try:
             await self._lock.acquire()
             # Track whether budget was exceeded — if so, skip on_loop_complete
             # in the finally block (budget-exceeded uses on_budget_exceeded instead)
             _budget_exceeded = False
+            _completed = False
             try:
                 while True:
                     # Pre-call budget check (iterations + wall-clock)
                     try:
-                        _check_budget(self._state, self._budget, include_tokens=False)
+                        _check_budget(self._state, self._budget, include_tokens=True)
                     except AgentBudgetExceeded as exc:
                         _budget_exceeded = True
                         # Fire on_budget_exceeded BEFORE exception propagates
@@ -579,39 +641,53 @@ class AsyncAgentLoop:
                     # Resolve prompt_fragment per-iteration and inject into system message
                     if self._prompt_fragment is not None:
                         pf = self._resolve_prompt_fragment(**self._generate_kwargs)
-                        if pf:
-                            iteration_system = (
-                                f"{pf}\n\n{self._base_system_prompt}".strip()
-                                if self._base_system_prompt
-                                else pf
+                        iteration_system = (
+                            f"{pf}\n\n{self._base_system_prompt}".strip()
+                            if self._base_system_prompt
+                            else pf or ""
+                        )
+                        # Update the system message (search for existing system msg)
+                        sys_idx = None
+                        for i, msg in enumerate(chat.messages):
+                            if msg.get("role") == "system":
+                                sys_idx = i
+                                break
+                        if sys_idx is not None:
+                            chat.messages[sys_idx]["content"] = iteration_system
+                        else:
+                            chat.messages.insert(
+                                0, {"role": "system", "content": iteration_system}
                             )
-                            # Update the system message (search for existing system msg)
-                            sys_idx = None
-                            for i, msg in enumerate(chat.messages):
-                                if msg.get("role") == "system":
-                                    sys_idx = i
-                                    break
-                            if sys_idx is not None:
-                                chat.messages[sys_idx]["content"] = iteration_system
-                            else:
-                                chat.messages.insert(
-                                    0, {"role": "system", "content": iteration_system}
-                                )
 
                     # Stream from LLM (async). Engine/provider chunks are already
                     # normalized; the loop accumulates via engine/core summary only.
                     summary = StreamIterationSummary()
                     last_chunk: Optional[ChatCompletionModel] = None
 
-                    async for chunk in self._client.llm.async_stream_generate(
+                    source = self._stream_with_budget(self._client.llm.async_stream_generate(
                         chat,
                         tools=self._tools,
                         tool_choice=self._tool_choice,
                         **self._generate_kwargs,
-                    ):
-                        accumulate_stream_chunk(summary, chunk)
-                        yield chunk
-                        last_chunk = chunk
+                    ))
+                    try:
+                        async for chunk in source:
+                            before_input = getattr(summary.usage, "prompt_tokens", 0) or 0
+                            before_output = getattr(summary.usage, "completion_tokens", 0) or 0
+                            accumulate_stream_chunk(summary, chunk)
+                            self._state.total_input_tokens += (getattr(summary.usage, "prompt_tokens", 0) or 0) - before_input
+                            self._state.total_output_tokens += (getattr(summary.usage, "completion_tokens", 0) or 0) - before_output
+                            try:
+                                _check_budget(self._state, self._budget, include_tokens=True)
+                            except AgentBudgetExceeded as exc:
+                                _budget_exceeded = True
+                                _invoke_hook_safely(getattr(self._hooks, "on_budget_exceeded", None),
+                                                    exc.budget_type, str(exc), state=self.state)
+                                raise
+                            last_chunk = chunk
+                            yield chunk
+                    finally:
+                        await source.aclose()
 
                     # Build a synthetic response from normalized engine/core stream summary.
                     if last_chunk is not None:
@@ -632,15 +708,6 @@ class AsyncAgentLoop:
                                 )
                             ],
                         )
-
-                        # Update token counts
-                        if last_chunk.usage is not None:
-                            self._state.total_input_tokens += getattr(
-                                last_chunk.usage, "prompt_tokens", 0
-                            ) or 0
-                            self._state.total_output_tokens += getattr(
-                                last_chunk.usage, "completion_tokens", 0
-                            ) or 0
 
                         # Post-call budget check (tokens)
                         try:
@@ -675,6 +742,7 @@ class AsyncAgentLoop:
 
                         # Check done — AFTER content recording
                         if not tool_calls or is_finished(self._provider, response):
+                            _completed = True
                             break
 
                         # Add tool_call message (no speculative content)
@@ -720,7 +788,7 @@ class AsyncAgentLoop:
 
                                 heartbeat_task = asyncio.create_task(_heartbeat_loop())
 
-                            results = await self._executor.execute_parallel_async(tool_calls)
+                            results = await self._await_with_budget(self._executor.execute_parallel_async(tool_calls))
 
                             # INVARIANT: inject results immediately — even partial results are valid
                             append_tool_results(self._provider, chat, results)
@@ -764,7 +832,7 @@ class AsyncAgentLoop:
                 # Does NOT fire on budget-exceeded — that path uses on_budget_exceeded instead.
                 if response is not None:
                     _finalize_response(response, collected_content, self._content_separator)
-                if not _budget_exceeded:
+                if _completed and not _budget_exceeded:
                     _invoke_hook_safely(
                         getattr(self._hooks, "on_loop_complete", None),
                         response,
@@ -774,9 +842,9 @@ class AsyncAgentLoop:
                 self._lock.release()
 
         finally:
-            self._release_lock()
             # Reset parent context ContextVars (prevent cross-run contamination)
             # Use tokens captured at set() to restore previous values
             PARENT_BUDGET.reset(parent_budget_token)
             PARENT_STATE.reset(parent_state_token)
             PARENT_HOOKS.reset(parent_hooks_token)
+            PARENT_TODO_TOOLS.reset(parent_todo_token)

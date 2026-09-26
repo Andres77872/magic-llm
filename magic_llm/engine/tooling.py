@@ -44,6 +44,7 @@ class StreamIterationSummary:
     tool_calls: list[Any] = field(default_factory=list)
     finish_reason: str | None = None
     last_chunk: Any | None = None
+    usage: Any | None = None
 
 
 @dataclass
@@ -636,6 +637,15 @@ def infer_provider_from_client(client: Any) -> str:
 def accumulate_stream_chunk(summary: StreamIterationSummary, chunk: Any) -> StreamIterationSummary:
     """Accumulate normalized stream chunks into a provider-agnostic summary."""
     summary.last_chunk = chunk
+    if getattr(chunk, "usage", None) is not None:
+        # Providers can send usage before the final content chunk, whose model
+        # defaults usage to zeros. Preserve cumulative counts across both.
+        usage = copy.deepcopy(chunk.usage)
+        if summary.usage is not None:
+            for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                setattr(usage, field, max(getattr(usage, field, 0) or 0,
+                                          getattr(summary.usage, field, 0) or 0))
+        summary.usage = usage
     if not getattr(chunk, "choices", None):
         return summary
     choice = chunk.choices[0]

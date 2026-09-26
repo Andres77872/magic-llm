@@ -26,12 +26,18 @@ import time
 import uuid
 from typing import Any, Callable, Optional
 
+from jsonschema import Draft202012Validator, ValidationError
+from referencing import Registry
+from magic_llm.util import is_async_callable
+from magic_llm.util.async_bridge import run_sync_in_thread
+
 # Global depth helpers and budget cascade helper
 from magic_llm.agent._loop_shared import (
     DEPTH,
     PARENT_BUDGET,
     PARENT_HOOKS,
     PARENT_STATE,
+    PARENT_TODO_TOOLS,
     get_global_depth,
     increment_global_depth,
     decrement_global_depth,
@@ -94,14 +100,34 @@ class TaskExecutor(ToolExecutor):
         client: Optional[Any] = None,
         per_tool_timeout: float = 30.0,
         enable_dedup: bool = False,
+        nested_llm_nodes: Optional[bool] = None,
+        **executor_options: Any,
     ) -> None:
-        super().__init__(per_tool_timeout=per_tool_timeout, enable_dedup=enable_dedup)
+        super().__init__(per_tool_timeout=per_tool_timeout, enable_dedup=enable_dedup, **executor_options)
+        self._nested_llm_nodes = nested_llm_nodes
         # Client reference for nested LLM node execution (same MagicLLM instance reuse)
         self._client = client
         # Task-specific registry (manifest + wrapped callable)
         self._task_registry: dict[str, TaskManifest] = {}
         # Per-task semaphores for concurrency control
         self._task_semaphores: dict[str, asyncio.Semaphore] = {}
+
+    def register(self, name: str, fn: Callable[..., Any]) -> None:
+        """Keep task safeguards when a loop also supplies its raw callable."""
+        if name in self._task_registry:
+            manifest = self._task_registry[name]
+            # Keep the existing semaphore: a new binding must not bypass active
+            # concurrency limits on other runs using this task executor.
+            super().register(name, self._wrap_task_callable(manifest, fn))
+        else:
+            super().register(name, fn)
+
+    def fork(self):
+        """Isolate per-run tools/cache while sharing registered task capacity."""
+        clone = super().fork()
+        clone._task_registry = dict(self._task_registry)
+        clone._task_semaphores = dict(self._task_semaphores)
+        return clone
 
     def register_task(
         self,
@@ -135,6 +161,8 @@ class TaskExecutor(ToolExecutor):
             ...     return {"results": [...]}
             >>> executor.register_task(manifest, search)
         """
+        Draft202012Validator.check_schema(manifest.input_schema)
+        manifest = manifest.model_copy(deep=True)
         # Create per-task semaphore for concurrency control
         semaphore = asyncio.Semaphore(manifest.max_concurrency)
         self._task_semaphores[manifest.id] = semaphore
@@ -164,6 +192,9 @@ class TaskExecutor(ToolExecutor):
         Returns:
             ToolResult with content as TaskResult JSON (for tasks) or plain string (for ordinary tools).
         """
+        malformed = self._malformed_arguments_result(tool_call)
+        if malformed is not None:
+            return malformed
         if tool_call.name in self._task_registry:
             # Task tool — use wrapped callable (safeguards already applied in registration)
             start = time.monotonic()
@@ -172,12 +203,15 @@ class TaskExecutor(ToolExecutor):
                 # The wrapped callable returns TaskResult JSON string
                 result_content = await self._registry[tool_call.name](**tool_call.arguments)
                 duration_ms = (time.monotonic() - start) * 1000
+                envelope = TaskResult.model_validate_json(result_content)
 
                 return ToolResult(
                     tool_call_id=tool_call.id,
                     name=tool_call.name,
                     content=result_content,
-                    is_error=False,
+                    is_error=envelope.status != "ok",
+                    error=envelope.error.message if envelope.error else None,
+                    error_type=envelope.error.error_type if envelope.error else None,
                     duration_ms=duration_ms,
                 )
             except Exception as exc:
@@ -227,8 +261,23 @@ class TaskExecutor(ToolExecutor):
             Wrapped async callable that returns TaskResult JSON string.
         """
 
-        async def wrapped(**kwargs: Any) -> str:
-            task_id = uuid.uuid4().hex[:8]
+        validator = Draft202012Validator(manifest.input_schema, registry=Registry())
+        semaphore = self._task_semaphores[manifest.id]
+
+        async def invoke(**kwargs: Any) -> Any:
+            if is_async_callable(callable):
+                return await callable(**kwargs)
+            return await run_sync_in_thread(callable, **kwargs)
+
+        async def execute_task(task_id: str, **kwargs: Any) -> str:
+            try:
+                validator.validate(kwargs)
+            except ValidationError as exc:
+                return TaskResult(
+                    task_id=task_id, task_type=manifest.id, status="failed",
+                    summary="Task input does not match its declared schema.",
+                    error=TaskError(error_type=TaskError.VALIDATION, message=exc.message),
+                ).to_tool_result_json()
 
             # Step 1: Check TASK_DEPTH limit (per-task-id depth tracking)
             # This prevents recursion for a specific task ID (applies to ALL tasks)
@@ -275,7 +324,15 @@ class TaskExecutor(ToolExecutor):
                     return result.to_tool_result_json()
 
             # Step 3: Acquire semaphore (queues if limit reached)
-            async with self._task_semaphores[manifest.id]:
+            # Recursive execution must not wait on a slot held by its own ancestor.
+            if current_depth and semaphore.locked():
+                return TaskResult(
+                    task_id=task_id, task_type=manifest.id, status="cancelled",
+                    summary="Recursive task would deadlock waiting for its ancestor.",
+                    error=TaskError(error_type=TaskError.DEPTH_LIMIT,
+                                    message="Recursive task has no available concurrency slot"),
+                ).to_tool_result_json()
+            async with semaphore:
                 # Step 4: Increment depth counters (before execution)
                 # NOTE: GLOBAL_DEPTH only increments for nested LLM nodes
                 # Legacy tasks (nested_tools=None) use per-task depth only (backward compatibility)
@@ -285,29 +342,25 @@ class TaskExecutor(ToolExecutor):
 
                 try:
                     # Step 5: Detect nested LLM node configuration
-                    if manifest.nested_tools is not None and is_nested_llm_nodes_enabled():
+                    nested_enabled = (is_nested_llm_nodes_enabled() if self._nested_llm_nodes is None
+                                      else self._nested_llm_nodes)
+                    if manifest.nested_tools is not None and nested_enabled:
                         # Nested LLM node: instantiate child AsyncAgentLoop
                         raw_output = await self._execute_nested_llm_node(
                             manifest=manifest,
                             kwargs=kwargs,
                             task_id=task_id,
                         )
-                    elif manifest.nested_tools is not None and not is_nested_llm_nodes_enabled():
+                    elif manifest.nested_tools is not None and not nested_enabled:
                         # Feature disabled: log warning and fall back to legacy callable
                         logger.warning(
                             f"Task '{manifest.id}' has nested_tools config but "
                             f"ENABLE_NESTED_LLM_NODES=False. Falling back to legacy callable."
                         )
-                        raw_output = await asyncio.wait_for(
-                            callable(**kwargs),
-                            timeout=manifest.timeout_seconds,
-                        )
+                        raw_output = await invoke(**kwargs)
                     else:
                         # Legacy callable pattern (no nested config)
-                        raw_output = await asyncio.wait_for(
-                            callable(**kwargs),
-                            timeout=manifest.timeout_seconds,
-                        )
+                        raw_output = await invoke(**kwargs)
 
                     # Step 6: Normalize result
                     result = ResultNormalizer.normalize(
@@ -317,7 +370,7 @@ class TaskExecutor(ToolExecutor):
                         status="ok",
                     )
 
-                except asyncio.TimeoutError:
+                except asyncio.TimeoutError as exc:
                     result = TaskResult(
                         task_id=task_id,
                         task_type=manifest.id,
@@ -328,7 +381,7 @@ class TaskExecutor(ToolExecutor):
                         ),
                         error=TaskError(
                             error_type=TaskError.TIMEOUT,
-                            message=f"Timeout after {manifest.timeout_seconds}s",
+                            message=str(exc) or "Task reported a timeout",
                             retryable=True,
                         ),
                     )
@@ -381,7 +434,7 @@ class TaskExecutor(ToolExecutor):
                         error=TaskError(
                             error_type=TaskError.EXECUTION,
                             message=error_msg,
-                            retryable=True,  # Most execution errors are retryable
+                            retryable=False,  # The host must classify retry-safe failures explicitly
                         ),
                     )
 
@@ -393,6 +446,18 @@ class TaskExecutor(ToolExecutor):
                     _decrement_depth(manifest.id)
 
                 return result.to_tool_result_json()
+
+        async def wrapped(**kwargs: Any) -> str:
+            task_id = uuid.uuid4().hex[:8]
+            try:
+                return await asyncio.wait_for(execute_task(task_id, **kwargs), manifest.timeout_seconds)
+            except asyncio.TimeoutError:
+                return TaskResult(
+                    task_id=task_id, task_type=manifest.id, status="timeout",
+                    summary=f"Task '{manifest.name}' exceeded its {manifest.timeout_seconds}s deadline (including queue wait).",
+                    error=TaskError(error_type=TaskError.TIMEOUT,
+                                    message=f"Timeout after {manifest.timeout_seconds}s", retryable=True),
+                ).to_tool_result_json()
 
         return wrapped
 
@@ -455,6 +520,7 @@ class TaskExecutor(ToolExecutor):
             "budget": child_budget,
             "tool_executor": child_executor,
             "hooks": parent_hooks,  # Propagated from parent context (was None)
+            "builtin_todo_tools": PARENT_TODO_TOOLS.get(),
         }
 
         # Add model override if specified
@@ -477,10 +543,18 @@ class TaskExecutor(ToolExecutor):
         depth_token = DEPTH.set(DEPTH.get() + 1)
         try:
             # Run child loop to completion (buffered)
-            child_response = await child_loop.run(user_input=user_input)
+            run_kwargs = {"user_input": user_input}
+            if manifest.nested_system_prompt is not None:
+                run_kwargs["system_prompt"] = manifest.nested_system_prompt
+            child_response = await child_loop.run(**run_kwargs)
         finally:
             # Reset DEPTH ContextVar (prevent cross-nesting contamination)
             DEPTH.reset(depth_token)
+            # Include completed/partial child usage, even on timeout or cancellation.
+            if manifest.budget_cascade and parent_state is not None:
+                child_state = child_loop.state
+                parent_state.total_input_tokens += child_state.total_input_tokens
+                parent_state.total_output_tokens += child_state.total_output_tokens
 
         # Extract content from response
         raw_output = child_response.content or ""

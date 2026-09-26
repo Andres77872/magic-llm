@@ -73,6 +73,10 @@ PARENT_STATE: contextvars.ContextVar[Optional[AgentState]] = contextvars.Context
     default=None
 )
 
+PARENT_TODO_TOOLS: contextvars.ContextVar[Optional[bool]] = contextvars.ContextVar(
+    'parent_todo_tools', default=None
+)
+
 PARENT_HOOKS: contextvars.ContextVar[Optional[Any]] = contextvars.ContextVar(
     'parent_hooks',
     default=None
@@ -295,6 +299,7 @@ def _register_tools_with_executor(
     """
     if builtin_tool_functions:
         executor.exclude_from_dedup(*TODO_TOOL_NAMES)
+        executor.serialize_tools(*TODO_TOOL_NAMES)
         for name, fn in builtin_tool_functions.items():
             if callable(fn):
                 executor.register(name, fn)
@@ -436,7 +441,7 @@ def _compute_child_budget(
         4. budget_cascade=False + nested_budget=None → return AgentBudget() (default)
 
     Parent remaining computation:
-        - max_iterations: parent_budget.max_iterations - parent_state.step
+        - max_iterations: max(0, parent_budget.max_iterations - parent_state.step)
         - wall_clock_timeout: parent_budget.wall_clock_timeout - elapsed_time
         - max_input_tokens: parent_budget.max_input_tokens - parent_state.total_input_tokens
         - max_output_tokens: parent_budget.max_output_tokens - parent_state.total_output_tokens
@@ -461,7 +466,7 @@ def _compute_child_budget(
         return AgentBudget()
 
     # Compute parent remaining budget
-    parent_iterations_remaining = parent_budget.max_iterations - parent_state.step
+    parent_iterations_remaining = max(0, parent_budget.max_iterations - parent_state.step)
 
     parent_wall_clock_remaining = None
     if parent_budget.wall_clock_timeout is not None and parent_state.start_time is not None:
@@ -486,17 +491,17 @@ def _compute_child_budget(
                 max_input_tokens=(
                     min(manifest.nested_budget.max_input_tokens or 0, parent_input_tokens_remaining or 0)
                     if manifest.nested_budget.max_input_tokens is not None and parent_input_tokens_remaining is not None
-                    else manifest.nested_budget.max_input_tokens
+                    else (manifest.nested_budget.max_input_tokens if manifest.nested_budget.max_input_tokens is not None else parent_input_tokens_remaining)
                 ),
                 max_output_tokens=(
                     min(manifest.nested_budget.max_output_tokens or 0, parent_output_tokens_remaining or 0)
                     if manifest.nested_budget.max_output_tokens is not None and parent_output_tokens_remaining is not None
-                    else manifest.nested_budget.max_output_tokens
+                    else (manifest.nested_budget.max_output_tokens if manifest.nested_budget.max_output_tokens is not None else parent_output_tokens_remaining)
                 ),
                 wall_clock_timeout=(
                     min(manifest.nested_budget.wall_clock_timeout or 0.0, parent_wall_clock_remaining or 0.0)
                     if manifest.nested_budget.wall_clock_timeout is not None and parent_wall_clock_remaining is not None
-                    else manifest.nested_budget.wall_clock_timeout
+                    else (manifest.nested_budget.wall_clock_timeout if manifest.nested_budget.wall_clock_timeout is not None else parent_wall_clock_remaining)
                 ),
             )
         else:

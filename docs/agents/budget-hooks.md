@@ -51,7 +51,7 @@ response = client.run_agent(
 )
 ```
 
-Hooks are observers. Do not mutate loop state inside hooks. Exceptions raised by hooks propagate and terminate the loop.
+Hooks are observers. Do not mutate loop state inside hooks. Hook exceptions are logged and isolated; they do not terminate the loop. Use synchronous callbacks that enqueue events without blocking.
 
 ## Deduplication
 

@@ -202,6 +202,7 @@ class TaskManifest(BaseModel):
     # When nested_tools is None, the task behaves as a wrapped callable (current behavior)
     nested_tools: Optional[list[Any]] = None  # Child's own tools (explicit, no inheritance)
     nested_budget: Optional[AgentBudget] = None  # Child's token/iteration limits
+    nested_system_prompt: Optional[str] = None
     nested_model_override: Optional[str] = None  # Child's model name (else parent model)
     budget_cascade: bool = False  # Child inherits remaining parent budget when True
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from concurrent.futures import Future
 from threading import Thread
 from typing import Any, Callable
@@ -13,12 +14,13 @@ def submit_in_daemon_thread(
 ) -> Future[Any]:
     """Start a blocking callable without attaching it to an event-loop executor."""
     future: Future[Any] = Future()
+    context = contextvars.copy_context()
 
     def invoke() -> None:
         if not future.set_running_or_notify_cancel():
             return
         try:
-            result = fn(*args, **kwargs)
+            result = context.run(fn, *args, **kwargs)
         except BaseException as exc:
             future.set_exception(exc)
         else:

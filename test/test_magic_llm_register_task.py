@@ -229,7 +229,10 @@ class TestMagicLLMRegisterTaskIntegration:
 
             # Verify executor was passed
             call_kwargs = mock_loop.call_args[1]
-            assert call_kwargs["tool_executor"] is client._task_executor
+            assert call_kwargs["tool_executor"] is not client._task_executor
+            assert call_kwargs["tool_executor"].get_registered_tasks() == ["my_task"]
+            assert (call_kwargs["tool_executor"]._task_semaphores["my_task"]
+                    is client._task_executor._task_semaphores["my_task"])
 
     @pytest.mark.asyncio
     async def test_explicit_executor_overrides_internal(self):

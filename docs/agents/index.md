@@ -45,4 +45,4 @@ Tool calling is supported for OpenAI, Anthropic, Google, and many OpenAI-compati
 - `deduplicate=True` avoids repeated tool-call fingerprints.
 - Agent loop instances are guarded against concurrent `.run()` / `.stream()` calls.
 
-Read next: [tool calling](tool-calling.md), [budgets and hooks](budget-hooks.md), [subagents](subagents.md).
+Read next: [production integration](production-integration.md), [tool calling](tool-calling.md), [budgets and hooks](budget-hooks.md), [subagents](subagents.md).

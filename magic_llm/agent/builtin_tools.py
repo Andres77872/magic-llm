@@ -9,6 +9,8 @@ from typing import Any, Callable
 
 TODO_STATUSES = {"pending", "in_progress", "completed", "cancelled"}
 TODO_PRIORITIES = {"high", "medium", "low"}
+MAX_TODO_ITEMS = 100
+MAX_TODO_CONTENT_LENGTH = 2000
 TODO_TOOL_NAMES = {"todowrite", "todoread"}
 
 
@@ -44,6 +46,9 @@ def _validate_todos(todos: Any) -> list[TodoItem]:
     if not isinstance(todos, list):
         raise ValueError("todos must be an array")
 
+    if len(todos) > MAX_TODO_ITEMS:
+        raise ValueError(f"todos may contain at most {MAX_TODO_ITEMS} items")
+
     validated: list[TodoItem] = []
     seen_ids: set[int] = set()
     in_progress_count = 0
@@ -52,6 +57,9 @@ def _validate_todos(todos: Any) -> list[TodoItem]:
         if not isinstance(item, dict):
             raise ValueError(f"todo at index {index} must be an object")
 
+        extra = set(item) - {"id", "content", "status", "priority"}
+        if extra:
+            raise ValueError(f"todo at index {index} has unexpected fields: {sorted(extra)}")
         missing = {"id", "content", "status", "priority"} - set(item)
         if missing:
             raise ValueError(
@@ -70,8 +78,11 @@ def _validate_todos(todos: Any) -> list[TodoItem]:
         if not isinstance(content, str) or not content.strip():
             raise ValueError(f"todo at index {index} content must be a non-empty string")
 
+        if len(content) > MAX_TODO_CONTENT_LENGTH:
+            raise ValueError(f"todo content exceeds {MAX_TODO_CONTENT_LENGTH} characters")
+
         status = item["status"]
-        if status not in TODO_STATUSES:
+        if not isinstance(status, str) or status not in TODO_STATUSES:
             raise ValueError(
                 f"todo at index {index} status must be one of "
                 f"{', '.join(sorted(TODO_STATUSES))}"
@@ -80,7 +91,7 @@ def _validate_todos(todos: Any) -> list[TodoItem]:
             in_progress_count += 1
 
         priority = item["priority"]
-        if priority not in TODO_PRIORITIES:
+        if not isinstance(priority, str) or priority not in TODO_PRIORITIES:
             raise ValueError(
                 f"todo at index {index} priority must be one of "
                 f"{', '.join(sorted(TODO_PRIORITIES))}"
@@ -114,6 +125,7 @@ TODOWRITE_TOOL_SCHEMA: dict[str, Any] = {
             "properties": {
                 "todos": {
                     "type": "array",
+                    "maxItems": MAX_TODO_ITEMS,
                     "description": "The complete updated todo list for this run.",
                     "items": {
                         "type": "object",
@@ -122,6 +134,8 @@ TODOWRITE_TOOL_SCHEMA: dict[str, Any] = {
                             "content": {
                                 "type": "string",
                                 "description": "Specific actionable task description.",
+                                "minLength": 1,
+                                "maxLength": MAX_TODO_CONTENT_LENGTH,
                             },
                             "status": {
                                 "type": "string",

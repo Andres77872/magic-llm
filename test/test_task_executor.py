@@ -399,7 +399,7 @@ class TestTaskExecutorErrors:
         assert parsed["status"] == "failed"
         assert parsed["error"]["error_type"] == TaskError.EXECUTION
         assert "Something went wrong" in parsed["error"]["message"]
-        assert parsed["error"]["retryable"] is True
+        assert parsed["error"]["retryable"] is False
 
 
 # ─── Result Normalization Tests ───────────────────────────────────────────────
