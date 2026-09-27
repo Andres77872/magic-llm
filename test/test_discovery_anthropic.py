@@ -151,7 +151,7 @@ class TestAnthropicDiscover:
         adapter.discover()
         mock_client.return_value.request.assert_called_once_with(
             "GET",
-            "https://api.anthropic.com/v1/models",
+            "https://api.anthropic.com/v1/models?limit=1000",
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",

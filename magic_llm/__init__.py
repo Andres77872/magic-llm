@@ -322,6 +322,8 @@ class MagicLLM(MagicLlmBase):
         content_separator: str = "\n\n",
         deduplicate: bool = False,
         prompt_fragment: str | Callable[..., str] | None = None,
+        initial_chat: Optional["ModelChat"] = None,
+        tool_executor_options: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> "ModelChatResponse":
         """Execute a ReAct-style agent loop synchronously using AgentLoop.
@@ -351,6 +353,8 @@ class MagicLLM(MagicLlmBase):
             extra_messages: Optional pre-existing messages before user_input.
             content_separator: String to join content between iterations.
             deduplicate: Enable fingerprint-based tool deduplication.
+            initial_chat: Prebuilt conversation, preserving completed tool exchanges.
+            tool_executor_options: Run-local timeout, parallelism, output-size and dedup limits.
             **kwargs: Extra args passed through to the engine's generate().
 
         Returns:
@@ -391,6 +395,7 @@ class MagicLLM(MagicLlmBase):
             tool_choice=tool_choice,
             deduplicate=deduplicate,
             prompt_fragment=prompt_fragment,
+            tool_executor_options=tool_executor_options,
             **loop_kwargs,
         )
 
@@ -398,6 +403,7 @@ class MagicLLM(MagicLlmBase):
             user_input=user_input,
             system_prompt=system_prompt,
             extra_messages=extra_messages,
+            initial_chat=initial_chat,
         )
 
     def run_agent_stream(
@@ -415,6 +421,8 @@ class MagicLLM(MagicLlmBase):
         content_separator: str = "\n\n",
         deduplicate: bool = False,
         prompt_fragment: str | Callable[..., str] | None = None,
+        initial_chat: Optional["ModelChat"] = None,
+        tool_executor_options: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Iterator["ChatCompletionModel"]:
         """Stream chunks from a ReAct-style agent loop synchronously.
@@ -438,6 +446,8 @@ class MagicLLM(MagicLlmBase):
             extra_messages: Optional pre-existing messages.
             content_separator: String to join content between iterations.
             deduplicate: Enable tool deduplication.
+            initial_chat: Prebuilt conversation, preserving completed tool exchanges.
+            tool_executor_options: Run-local timeout, parallelism, output-size and dedup limits.
             **kwargs: Extra args passed to stream_generate.
 
         Yields:
@@ -472,6 +482,7 @@ class MagicLLM(MagicLlmBase):
             tool_choice=tool_choice,
             deduplicate=deduplicate,
             prompt_fragment=prompt_fragment,
+            tool_executor_options=tool_executor_options,
             **loop_kwargs,
         )
 
@@ -479,6 +490,7 @@ class MagicLLM(MagicLlmBase):
             user_input=user_input,
             system_prompt=system_prompt,
             extra_messages=extra_messages,
+            initial_chat=initial_chat,
         )
 
     async def run_agent_async(
@@ -497,6 +509,8 @@ class MagicLLM(MagicLlmBase):
         deduplicate: bool = False,
         task_executor: Optional["TaskExecutor"] = None,
         prompt_fragment: str | Callable[..., str] | None = None,
+        initial_chat: Optional["ModelChat"] = None,
+        tool_executor_options: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> "ModelChatResponse":
         """Execute a ReAct-style agent loop asynchronously using AsyncAgentLoop.
@@ -528,6 +542,8 @@ class MagicLLM(MagicLlmBase):
             deduplicate: Enable tool deduplication.
             task_executor: Optional TaskExecutor override. If None and tasks were
                 registered via register_task(), uses the internal TaskExecutor.
+            initial_chat: Prebuilt conversation, preserving completed tool exchanges.
+            tool_executor_options: Run-local timeout, parallelism, output-size and dedup limits.
             **kwargs: Extra args passed to async_generate.
 
         Returns:
@@ -572,6 +588,7 @@ class MagicLLM(MagicLlmBase):
             deduplicate=deduplicate,
             tool_executor=executor,
             prompt_fragment=prompt_fragment,
+            tool_executor_options=tool_executor_options,
             **loop_kwargs,
         )
 
@@ -579,6 +596,7 @@ class MagicLLM(MagicLlmBase):
             user_input=user_input,
             system_prompt=system_prompt,
             extra_messages=extra_messages,
+            initial_chat=initial_chat,
         )
 
     async def run_agent_stream_async(
@@ -597,6 +615,8 @@ class MagicLLM(MagicLlmBase):
         content_separator: str = "\n\n",
         deduplicate: bool = False,
         prompt_fragment: str | Callable[..., str] | None = None,
+        initial_chat: Optional["ModelChat"] = None,
+        tool_executor_options: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> AsyncIterator["ChatCompletionModel"]:
         """Stream chunks from a ReAct-style agent loop asynchronously.
@@ -622,6 +642,8 @@ class MagicLLM(MagicLlmBase):
             extra_messages: Optional pre-existing messages.
             content_separator: String to join content between iterations.
             deduplicate: Enable tool deduplication.
+            initial_chat: Prebuilt conversation, preserving completed tool exchanges.
+            tool_executor_options: Run-local timeout, parallelism, output-size and dedup limits.
             **kwargs: Extra args passed to async_stream_generate.
 
         Yields:
@@ -660,12 +682,18 @@ class MagicLLM(MagicLlmBase):
             deduplicate=deduplicate,
             tool_executor=executor,
             prompt_fragment=prompt_fragment,
+            tool_executor_options=tool_executor_options,
             **loop_kwargs,
         )
 
-        async for chunk in loop.stream(
+        source = loop.stream(
             user_input=user_input,
             system_prompt=system_prompt,
             extra_messages=extra_messages,
-        ):
-            yield chunk
+            initial_chat=initial_chat,
+        )
+        try:
+            async for chunk in source:
+                yield chunk
+        finally:
+            await source.aclose()

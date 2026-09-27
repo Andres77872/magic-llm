@@ -9,6 +9,7 @@ from magic_llm.engine.discovery.openai_compatible.base import (
 class HyperbolicDiscoveryAdapter(OpenAICompatibleAdapter):
     PROVIDER = "hyperbolic"
     DEFAULT_BASE_URL = "https://api.hyperbolic.xyz/v1/models"
+    HOSTS = ('api.hyperbolic.xyz',)
 
 
 register_adapter("hyperbolic", HyperbolicDiscoveryAdapter)

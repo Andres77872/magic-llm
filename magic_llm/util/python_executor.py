@@ -1,5 +1,8 @@
+import asyncio
 import json
 import logging
+import os
+import signal
 import subprocess
 import sys
 
@@ -87,6 +90,57 @@ class PythonExecutor:
         else:
             return self._exec_in_process(code)
 
+    async def execute_async(self, code: str) -> str:
+        """Execute as a tool, raising failures and reaping cancelled subprocesses.
+
+        The synchronous API keeps its historical JSON-error return value.
+        Explicit in-process modes run in a thread and cannot forcibly stop
+        arbitrary Python code; subprocess is the cancellable default.
+        """
+        if self.safety_mode != "subprocess":
+            execute = self._exec_restricted if self.safety_mode == "restricted_builtins" else self._exec_in_process
+            return await asyncio.to_thread(execute, code, raise_errors=True)
+
+        # Shield creation so cancellation cannot lose ownership of a child
+        # between OS spawn and asyncio returning its Process object.
+        spawn = asyncio.create_task(asyncio.create_subprocess_exec(
+            sys.executable, "-u", "-c", code,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            start_new_session=(os.name == "posix"),
+        ))
+        try:
+            process = await asyncio.shield(spawn)
+        except asyncio.CancelledError:
+            process = await spawn
+            await self._terminate_subprocess(process)
+            raise
+
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
+        except TimeoutError as exc:
+            await self._terminate_subprocess(process)
+            raise TimeoutError(f"Execution timed out after {self.timeout}s") from exc
+        except BaseException:
+            await self._terminate_subprocess(process)
+            raise
+        if process.returncode != 0:
+            raise RuntimeError(stderr.decode(errors="replace").strip() or "Unknown error")
+        return self._truncate(stdout.decode(errors="replace"))
+
+    @staticmethod
+    async def _terminate_subprocess(process) -> None:
+        # A grandchild can retain the parent's stdout/stderr pipes after the
+        # parent exits. Terminate the owned group, even with a returncode set,
+        # before waiting for communication to finish.
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            elif process.returncode is None:
+                process.kill()
+        except ProcessLookupError:
+            pass
+        await process.communicate()
+
     def _exec_subprocess(self, code: str) -> str:
         """Execute code in a separate subprocess with timeout."""
         # Use -u for unbuffered output, -c to run code string
@@ -110,7 +164,7 @@ class PythonExecutor:
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    def _exec_restricted(self, code: str) -> str:
+    def _exec_restricted(self, code: str, *, raise_errors: bool = False) -> str:
         """Execute code in-process with restricted builtins.
 
         NOTE: This is NOT a security boundary. Determined users can escape
@@ -142,9 +196,11 @@ class PythonExecutor:
                 exec(code, globals_dict)  # noqa: S102
             return self._truncate(buf.getvalue())
         except Exception as e:
+            if raise_errors:
+                raise
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
-    def _exec_in_process(self, code: str) -> str:
+    def _exec_in_process(self, code: str, *, raise_errors: bool = False) -> str:
         """Execute code in-process with full builtins access.
 
         WARNING: This allows arbitrary code execution. Only use with trusted code.
@@ -158,6 +214,8 @@ class PythonExecutor:
                 exec(code, {})  # noqa: S102
             return self._truncate(buf.getvalue())
         except Exception as e:
+            if raise_errors:
+                raise
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
     def _truncate(self, output: str) -> str:

@@ -9,6 +9,7 @@ from magic_llm.engine.discovery.openai_compatible.base import (
 class XAIDiscoveryAdapter(OpenAICompatibleAdapter):
     PROVIDER = "xai"
     DEFAULT_BASE_URL = "https://api.x.ai/v1/models"
+    HOSTS = ('api.x.ai',)
 
 
 register_adapter("xai", XAIDiscoveryAdapter)

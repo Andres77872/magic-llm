@@ -16,6 +16,7 @@ from magic_llm.engine.discovery.openai_compatible.base import (
 class TogetherDiscoveryAdapter(OpenAICompatibleAdapter):
     PROVIDER = "together"
     DEFAULT_BASE_URL = "https://api.together.xyz/v1/models"
+    HOSTS = ('api.together.xyz', 'api.together.ai')
 
     def _extract_raw_models(
         self, raw_response: Dict[str, Any] | List[Dict[str, Any]]

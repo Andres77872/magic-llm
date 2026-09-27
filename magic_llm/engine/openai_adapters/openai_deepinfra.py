@@ -3,7 +3,7 @@ import json
 import logging
 import os
 
-from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider, _dump_payload, _dump_payload_full
+from magic_llm.engine.openai_adapters.base_provider import OpenAiBaseProvider, _dump_payload, _dump_payload_full, _messages_for_wire
 
 logger = logging.getLogger(__name__)
 from magic_llm.engine.tooling import map_request_tools
@@ -28,16 +28,7 @@ class ProviderDeepInfra(OpenAiBaseProvider):
                      ModelChat,
                      **kwargs) -> tuple[bytes, dict[str, str]]:
         # Construct the header and data to be sent in the request.
-        messages = chat.get_messages()
-
-        # Strip non-standard is_error field from tool messages.
-        # is_error is stored in ModelChat for internal debugging/tracing but is NOT
-        # part of the OpenAI-compatible spec — strict providers may reject it.
-        messages = [
-            {k: v for k, v in msg.items() if k != 'is_error'}
-            if msg.get('role') == 'tool' else msg
-            for msg in messages
-        ]
+        messages = _messages_for_wire(chat.get_messages())
 
         for message in messages:
             if message['role'] == 'user' and isinstance(message['content'], list):

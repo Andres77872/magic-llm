@@ -19,6 +19,8 @@ from magic_llm.engine.discovery.base_discovery import (
     DiscoveryRateLimitError,
     DiscoveryAuthError,
     DiscoveryNotFoundError,
+    DiscoveryPolicy,
+    host_of,
 )
 from magic_llm.model.discovery import NormalizedDiscoveredModel
 
@@ -74,6 +76,33 @@ def list_supported_engines() -> List[str]:
     return sorted(_ADAPTER_REGISTRY.keys())
 
 
+def resolve_discovery_engine(engine: str, base_url: Optional[str] = None) -> Optional[str]:
+    """Pick the discovery adapter for a provider's chat engine and API base URL.
+
+    Chat engines and discovery adapters are different axes: most hosts
+    (DeepInfra, Groq, OpenRouter, Together, ...) are configured with the
+    generic ``"openai"`` chat engine plus their own base URL. For those, the
+    adapter is chosen by matching the base URL host against each adapter's
+    ``HOSTS`` so provider-specific listing quirks, metadata and pricing are
+    applied. Unknown OpenAI-compatible hosts fall back to the generic
+    ``"openai"`` adapter.
+
+    Args:
+        engine: Provider chat engine (case-insensitive).
+        base_url: The API base URL the provider actually calls, if any.
+
+    Returns:
+        Registered adapter name, or ``None`` when the engine has no adapter.
+    """
+    name = (engine or "").strip().lower()
+    host = host_of(base_url)
+    if host and name == "openai":
+        for adapter_name, adapter_cls in _ADAPTER_REGISTRY.items():
+            if any(host == h or host.endswith("." + h) for h in adapter_cls.HOSTS):
+                return adapter_name
+    return name if name in _ADAPTER_REGISTRY else None
+
+
 # Engine types supported for discovery in v1
 # Each provider now has its own concrete adapter — see openai_compatible/ and
 # individual adapter files for registration calls.
@@ -119,11 +148,13 @@ __all__ = [
     "DiscoveryRateLimitError",
     "DiscoveryAuthError",
     "DiscoveryNotFoundError",
+    "DiscoveryPolicy",
     # Registry functions
     "register_adapter",
     "get_adapter",
     "supports_discovery",
     "list_supported_engines",
+    "resolve_discovery_engine",
     # Constants
     "DISCOVERY_SUPPORTED_ENGINES",
     "DISCOVERY_UNSUPPORTED_ENGINES",

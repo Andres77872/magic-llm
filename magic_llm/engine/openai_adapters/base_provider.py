@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 import logging
 import os
 from abc import ABC
@@ -69,6 +70,23 @@ def _dump_payload_full(provider: "OpenAiBaseProvider", data: dict) -> str:
         "tools": data.get("tools"),
     }
     return json.dumps(payload, default=str)
+
+
+def _messages_for_wire(messages: list[dict]) -> list[dict]:
+    """Keep UI/runtime tool metadata in history, never in provider requests."""
+    result = deepcopy(messages)
+    for message in result:
+        if message.get("role") == "tool":
+            for key in list(message):
+                if key not in {"role", "content", "tool_call_id"}:
+                    del message[key]
+        elif message.get("role") == "assistant" and message.get("tool_calls"):
+            message["tool_calls"] = [
+                {key: value for key, value in call.items()
+                 if key in {"id", "type", "function", "custom"}}
+                for call in message["tool_calls"]
+            ]
+    return result
 
 
 def _has_image_content(messages: list[dict]) -> bool:
@@ -148,16 +166,7 @@ class OpenAiBaseProvider(ABC):
         passes through image_url content types. Providers that don't support
         images can override this method to filter or transform image content.
         """
-        messages = chat.get_messages()
-
-        # Strip non-standard is_error field from tool messages.
-        # is_error is stored in ModelChat for internal debugging/tracing but is NOT
-        # part of the OpenAI-compatible spec — strict providers may reject it.
-        messages = [
-            {k: v for k, v in msg.items() if k != 'is_error'}
-            if msg.get('role') == 'tool' else msg
-            for msg in messages
-        ]
+        messages = _messages_for_wire(chat.get_messages())
 
         if _has_image_content(messages) and not self.supports_vision:
             raise ChatException(
@@ -280,7 +289,22 @@ class OpenAiBaseProvider(ABC):
                 raise ValueError(f'no choices, {chunk}')
             chunk['usage'] = usage_from_openai_payload(chunk) if chunk.get('usage') else {}
             if len(chunk['choices']) == 0:
-                return None
+                if not chunk['usage']:
+                    return None
+                # OpenAI sends include_usage totals after the final choice, in
+                # a frame with choices=[]. Keep them visible to stream consumers
+                # and callbacks while preserving their single-choice contract.
+                # Never copy the prior delta: text/tool calls must not replay.
+                previous_choice = (
+                    last_chunk.choices[0]
+                    if isinstance(last_chunk, ChatCompletionModel) and last_chunk.choices
+                    else None
+                )
+                chunk['choices'] = [{
+                    'index': previous_choice.index if previous_choice else 0,
+                    'delta': {'content': ''},
+                    'finish_reason': previous_choice.finish_reason if previous_choice else None,
+                }]
             chunk = ChatCompletionModel(**chunk)
             return chunk
         else:

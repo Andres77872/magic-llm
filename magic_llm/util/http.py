@@ -95,6 +95,11 @@ class AsyncHttpClient:
         except aiohttp.ClientError as e:
             logger.error(f"Request to {url} failed with aiohttp error: {str(e)}")
             raise HttpError(f"aiohttp error: {str(e)}")
+        except asyncio.TimeoutError as e:
+            # aiohttp raises a bare asyncio.TimeoutError (not a ClientError) when
+            # the total timeout elapses; normalize it so callers only see HttpError.
+            logger.error(f"Request to {url} timed out after {timeout.total}s")
+            raise HttpError(f"Request timed out after {timeout.total}s") from e
 
     async def post_json(self, url: str, **kwargs) -> Any:
         """

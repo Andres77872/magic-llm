@@ -13,7 +13,7 @@ import logging
 from typing import Dict, Any, Optional
 
 from magic_llm.engine.discovery import register_adapter
-from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
+from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter, versioned_endpoint
 from magic_llm.engine.discovery.capabilities import (
     CompositeCapabilityInference,
     ProviderFieldStrategy,
@@ -69,8 +69,21 @@ class AnthropicDiscoveryAdapter(BaseDiscoveryAdapter):
 
         Per spec.md:
         - GET https://api.anthropic.com/v1/models
+
+        Accepts a bare host or a base URL that already ends in ``/v1``.
         """
-        return f"{self.base_url}/v1/models"
+        return versioned_endpoint(self.base_url, "v1")
+
+    # Anthropic pages with ``limit`` (default 20, max 1000) and ``after_id``.
+    _PAGE_LIMIT = 1000
+
+    def _first_page_url(self) -> str:
+        return f"{self._get_endpoint_url()}?limit={self._PAGE_LIMIT}"
+
+    def _next_page_url(self, raw_response: Any, current_url: str) -> Optional[str]:
+        if isinstance(raw_response, dict) and raw_response.get("has_more") and raw_response.get("last_id"):
+            return f"{self._get_endpoint_url()}?limit={self._PAGE_LIMIT}&after_id={raw_response['last_id']}"
+        return None
 
     def _get_headers(self) -> Dict[str, str]:
         """Get Anthropic auth headers.
@@ -100,16 +113,15 @@ class AnthropicDiscoveryAdapter(BaseDiscoveryAdapter):
         - Claude 3.5 and Claude 3: 200K
         - Claude 2: 100K
 
-        For unknown model names (e.g., Claude 4.x, Claude Opus), returns
-        ``None`` — the alias chain will pick up ``max_input_tokens`` instead.
+        Only consulted when the listing carries no ``max_input_tokens``.
+        Every Claude generation since 3 (3.x, 4.x, Opus/Sonnet/Haiku) ships a
+        200K standard window; Claude 2 was 100K.
         """
         model_id = raw_model.get("id", "")
-        if "claude-3-5" in model_id or "claude-3.5" in model_id:
-            return 200000
-        elif "claude-3" in model_id:
-            return 200000
-        elif "claude-2" in model_id:
+        if "claude-2" in model_id:
             return 100000
+        if model_id.startswith("claude-"):
+            return 200000
         return None
 
     _context_window_hook = _claude_name_heuristic

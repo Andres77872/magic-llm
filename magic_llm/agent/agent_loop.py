@@ -25,6 +25,8 @@ from magic_llm.agent._loop_shared import (
     _finalize_response,
     _invoke_hook_safely,
     _register_tools_with_executor,
+    _initial_tool_call_ids,
+    _reserve_tool_call_ids,
 )
 from magic_llm.agent.builtin_tools import create_builtin_todo_bundle
 from magic_llm.agent.hooks import AgentHooks
@@ -89,6 +91,7 @@ class AgentLoop:
         tool_choice: str | dict[str, Any] | None = "auto",
         prompt_fragment: str | Callable[..., str] | None = None,
         builtin_todo_tools: Optional[bool] = None,
+        tool_executor_options: Optional[dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         self._client = client
@@ -121,6 +124,9 @@ class AgentLoop:
             self._executor = tool_executor
         else:
             self._executor = ToolExecutor(enable_dedup=deduplicate)
+
+        if tool_executor_options is not None:
+            self._executor = self._executor.with_options(tool_executor_options)
 
         self._deduplicate = deduplicate
         self._content_separator = content_separator
@@ -193,6 +199,7 @@ class AgentLoop:
         user_input: str,
         system_prompt: Optional[str] = None,
         extra_messages: Optional[list[dict[str, Any]]] = None,
+        initial_chat: Optional[ModelChat] = None,
     ) -> ModelChatResponse:
         """Execute the full ReAct loop synchronously.
 
@@ -229,7 +236,9 @@ class AgentLoop:
                 user_input=user_input,
                 system_prompt=system_prompt,
                 extra_messages=extra_messages,
+                initial_chat=initial_chat,
             )
+            seen_tool_call_ids = _initial_tool_call_ids(chat)
 
             # Register tools
             if self._builtin_todo_enabled:
@@ -317,6 +326,7 @@ class AgentLoop:
 
                 # Step 5: EXTRACT — consume normalized engine response tool calls.
                 tool_calls: list[CanonicalToolCall] = extract_tool_calls(response)
+                _reserve_tool_call_ids(tool_calls, seen_tool_call_ids)
 
                 # Step 6: RECORD content BEFORE checking done/break
                 content = response.content
@@ -410,6 +420,7 @@ class AgentLoop:
         user_input: str,
         system_prompt: Optional[str] = None,
         extra_messages: Optional[list[dict[str, Any]]] = None,
+        initial_chat: Optional[ModelChat] = None,
     ) -> Iterator[ChatCompletionModel]:
         """Stream chunks from the LLM, executing tools between iterations.
 
@@ -448,7 +459,9 @@ class AgentLoop:
                 user_input=user_input,
                 system_prompt=system_prompt,
                 extra_messages=extra_messages,
+                initial_chat=initial_chat,
             )
+            seen_tool_call_ids = _initial_tool_call_ids(chat)
 
             # Register tools
             if self._builtin_todo_enabled:
@@ -575,6 +588,7 @@ class AgentLoop:
                     )
 
                     tool_calls = stream_summary_tool_calls(summary)
+                    _reserve_tool_call_ids(tool_calls, seen_tool_call_ids)
 
                     # Record content — runs for EVERY iteration (including final no-tool answer)
                     # INVARIANT: When tool_calls are present, pre-tool content is

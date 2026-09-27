@@ -273,12 +273,37 @@ def _build_initial_chat(
     # Add extra messages before the user input
     if extra_messages:
         for msg in extra_messages:
-            chat.add_message(msg.get("role", "user"), msg.get("content", ""))
+            # Preserve assistant tool calls, result IDs, names and multimodal
+            # fields instead of reducing history to role/content pairs.
+            chat.messages.append(copy.deepcopy(msg))
 
     # Add the user input
     chat.add_user_message(user_input)
 
     return chat
+
+
+def _initial_tool_call_ids(chat: ModelChat) -> set[str]:
+    """Validate and reserve canonical IDs from the replayed conversation."""
+    seen: set[str] = set()
+    for message in chat.messages:
+        if message.get('role') != 'assistant':
+            continue
+        _reserve_tool_call_ids(message.get('tool_calls') or [], seen)
+    return seen
+
+
+def _reserve_tool_call_ids(calls: list[Any], seen: set[str]) -> None:
+    """Reject ambiguous batches before any tool can execute a side effect."""
+    batch: set[str] = set()
+    for call in calls:
+        identifier = call.get('id') if isinstance(call, dict) else getattr(call, 'id', None)
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise ValueError('Tool call ID must be a non-empty string')
+        if identifier in seen or identifier in batch:
+            raise ValueError(f'Duplicate tool call ID: {identifier!r}')
+        batch.add(identifier)
+    seen.update(batch)
 
 
 def _register_tools_with_executor(

@@ -1101,11 +1101,11 @@ class TestAgentLoopBudgetErrors:
     def test_run_budget_exceeded_max_iterations(self):
         client = MagicMock()
         client.llm = MagicMock()
-        tc = _make_tool_call()
-        # Always returns tool_calls
-        client.llm.generate.return_value = _make_response(
-            content=None, tool_calls=[tc], finish_reason="tool_calls"
-        )
+        # Each provider response has a distinct invocation ID.
+        client.llm.generate.side_effect = [
+            _make_response(content=None, tool_calls=[_make_tool_call(id=f"call_{i}")], finish_reason="tool_calls")
+            for i in range(2)
+        ]
 
         from magic_llm.agent.agent_loop import AgentLoop
         loop = AgentLoop(
@@ -1368,7 +1368,7 @@ class TestAgentLoopDedupAndState:
         # First iteration: tool_call, second: done
         client.llm.generate.side_effect = [
             _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls"),
-            _make_response(content=None, tool_calls=[tc], finish_reason="tool_calls"),
+            _make_response(content=None, tool_calls=[_make_tool_call(id="call_2", name="counter", arguments="{}")], finish_reason="tool_calls"),
             _make_response(content="done", finish_reason="stop"),
         ]
 

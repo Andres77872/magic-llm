@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import contextvars
 import hashlib
 import json
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any, Callable
@@ -22,6 +24,12 @@ from typing import Any, Callable
 from magic_llm.agent.types import CanonicalToolCall, ToolResult
 from magic_llm.util import is_async_callable
 from magic_llm.util.async_bridge import await_thread_future, submit_in_daemon_thread
+
+
+CURRENT_TOOL_CALL: contextvars.ContextVar[CanonicalToolCall | None] = contextvars.ContextVar(
+    'magic_llm_current_tool_call', default=None
+)
+"""Current invocation identity, isolated across concurrent tool tasks/threads."""
 
 
 class ToolExecutor:
@@ -72,6 +80,46 @@ class ToolExecutor:
         clone._max_content_sizes = dict(self._max_content_sizes)
         clone._tool_timeouts = dict(self._tool_timeouts)
         return clone
+
+    def with_options(self, options: dict[str, Any]):
+        """Return a run-local executor with validated execution limit overrides.
+
+        Forking preserves TaskExecutor manifests and shared task semaphores,
+        while changes to ordinary tool limits never mutate the parent client.
+        """
+        allowed = {'per_tool_timeout', 'max_parallel_tools', 'max_content_size', 'enable_dedup'}
+        unknown = set(options) - allowed
+        if unknown:
+            raise ValueError(f"Unknown tool executor options: {sorted(unknown)}")
+        for name, value in options.items():
+            if name == 'enable_dedup':
+                valid = isinstance(value, bool)
+            elif name in {'max_parallel_tools', 'max_content_size'}:
+                valid = isinstance(value, int) and not isinstance(value, bool) and value > 0
+            else:
+                valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+            if not valid:
+                raise ValueError(f"Invalid tool executor option {name}: {value!r}")
+        clone = self.fork()
+        for name, value in options.items():
+            setattr(clone, '_' + name, value)
+        return clone
+
+    @staticmethod
+    def _invoke_sync(fn: Callable[..., Any], tool_call: CanonicalToolCall) -> Any:
+        token = CURRENT_TOOL_CALL.set(tool_call)
+        try:
+            return fn(**tool_call.arguments)
+        finally:
+            CURRENT_TOOL_CALL.reset(token)
+
+    @staticmethod
+    async def _invoke_async(fn: Callable[..., Any], tool_call: CanonicalToolCall) -> Any:
+        token = CURRENT_TOOL_CALL.set(tool_call)
+        try:
+            return await fn(**tool_call.arguments)
+        finally:
+            CURRENT_TOOL_CALL.reset(token)
 
     def exclude_from_dedup(self, *names: str) -> None:
         """Exclude stateful tools from fingerprint deduplication."""
@@ -157,7 +205,7 @@ class ToolExecutor:
 
         # Execute with timeout (per-tool override supported)
         effective_timeout = self._resolve_timeout(tool_call.name)
-        future = submit_in_daemon_thread(fn, **tool_call.arguments)
+        future = submit_in_daemon_thread(self._invoke_sync, fn, tool_call)
         try:
             output = future.result(timeout=effective_timeout)
         except FuturesTimeoutError as exc:
@@ -263,12 +311,12 @@ class ToolExecutor:
         invocation: Any = None
         try:
             if is_async_callable(fn):
-                invocation = asyncio.ensure_future(fn(**tool_call.arguments))
+                invocation = asyncio.ensure_future(self._invoke_async(fn, tool_call))
                 output = await asyncio.wait_for(
                     invocation, timeout=effective_timeout
                 )
             else:
-                invocation = submit_in_daemon_thread(fn, **tool_call.arguments)
+                invocation = submit_in_daemon_thread(self._invoke_sync, fn, tool_call)
                 output = await await_thread_future(
                     invocation, timeout=effective_timeout
                 )

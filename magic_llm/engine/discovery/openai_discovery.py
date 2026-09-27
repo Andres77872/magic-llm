@@ -23,6 +23,7 @@ class OpenAIDiscoveryAdapter(OpenAICompatibleAdapter):
 
     PROVIDER = "openai"
     DEFAULT_BASE_URL = "https://api.openai.com/v1/models"
+    HOSTS = ('api.openai.com',)
 
 
 register_adapter("openai", OpenAIDiscoveryAdapter)

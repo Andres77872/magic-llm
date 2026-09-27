@@ -9,7 +9,9 @@ Per spec.md Section "Google AI Studio provider discovery":
 from __future__ import annotations
 
 import logging
+import re
 from typing import Dict, Any, List, Optional
+from urllib.parse import quote
 
 from magic_llm.engine.discovery import register_adapter
 from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
@@ -67,8 +69,28 @@ class GoogleDiscoveryAdapter(BaseDiscoveryAdapter):
 
         Per spec.md:
         - GET https://generativelanguage.googleapis.com/v1beta/models
+
+        Accepts a bare host or a base URL that already carries an API
+        version (``/v1beta`` or ``/v1``).
         """
-        return f"{self.base_url}/v1beta/models"
+        url = self.base_url.rstrip("/")
+        if url.endswith("/models"):
+            return url
+        if re.search(r"/v1(beta\d*)?$", url):
+            return f"{url}/models"
+        return f"{url}/v1beta/models"
+
+    # Google pages with ``pageSize`` (default 50, max 1000) and ``pageToken``.
+    _PAGE_SIZE = 1000
+
+    def _first_page_url(self) -> str:
+        return f"{self._get_endpoint_url()}?pageSize={self._PAGE_SIZE}"
+
+    def _next_page_url(self, raw_response: Any, current_url: str) -> Optional[str]:
+        token = raw_response.get("nextPageToken") if isinstance(raw_response, dict) else None
+        if token:
+            return f"{self._get_endpoint_url()}?pageSize={self._PAGE_SIZE}&pageToken={quote(str(token), safe='')}"
+        return None
 
     def _get_headers(self) -> Dict[str, str]:
         """Get Google auth headers.
@@ -122,7 +144,8 @@ class GoogleDiscoveryAdapter(BaseDiscoveryAdapter):
         # Gemini Pro Vision and Gemini 1.5+ support images
         if "vision" in model_name.lower() or "vision" in display_name.lower():
             return True
-        if "gemini-1.5" in model_name.lower() or "gemini-2" in model_name.lower():
+        # Every Gemini generation from 1.5 on (2.x, 2.5, 3.x, ...) accepts images.
+        if re.search(r"gemini-(1\.5|[2-9])", model_name.lower()):
             return True
         if "gemini-pro-vision" in model_name.lower():
             return True

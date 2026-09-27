@@ -22,12 +22,64 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urlsplit
 
 from magic_llm.engine.discovery.alias_resolver import TokenAliasResolver
 from magic_llm.model.discovery import NormalizedDiscoveredModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient, HttpError
 
 logger = logging.getLogger(__name__)
+
+# Some providers reject a bad key with HTTP 400 instead of 401/403 (Google
+# answers ``400 API_KEY_INVALID``). These body markers classify such a 400 as
+# an authentication failure rather than a generic upstream error.
+_AUTH_ERROR_BODY_MARKERS = (
+    "api_key_invalid",
+    "api key not valid",
+    "invalid api key",
+    "invalid_api_key",
+    "incorrect api key",
+    "unauthenticated",
+    "permission_denied",
+)
+
+
+def _body_preview(body: Optional[str], limit: int = 160) -> str:
+    """Collapse whitespace and truncate a provider error body for messages."""
+    if not body:
+        return ""
+    preview = " ".join(body.split())
+    return preview if len(preview) <= limit else preview[:limit] + "…"
+
+
+def versioned_endpoint(base_url: str, version: str, suffix: str = "models") -> str:
+    """Join a listing path onto a base URL without duplicating the version.
+
+    Providers store either a bare host (``https://api.anthropic.com``) or the
+    chat base URL that already carries the API version
+    (``https://openrouter.ai/api/v1``). Both must resolve to the same listing
+    endpoint, and a URL that already targets the listing is returned as-is::
+
+        versioned_endpoint("https://api.sambanova.ai", "v1")    -> .../v1/models
+        versioned_endpoint("https://api.sambanova.ai/v1", "v1") -> .../v1/models
+        versioned_endpoint("https://x.test/v1/models", "v1")    -> unchanged
+    """
+    url = (base_url or "").rstrip("/")
+    if url.endswith(f"/{suffix}"):
+        return url
+    if url.endswith(f"/{version}"):
+        return f"{url}/{suffix}"
+    return f"{url}/{version}/{suffix}"
+
+
+def host_of(url: Optional[str]) -> str:
+    """Lower-cased hostname of ``url`` ('' when it cannot be parsed)."""
+    if not url:
+        return ""
+    try:
+        return (urlsplit(url if "://" in url else f"https://{url}").hostname or "").lower()
+    except ValueError:
+        return ""
 
 
 # =============================================================================
@@ -173,6 +225,14 @@ class BaseDiscoveryAdapter(abc.ABC):
     # Error handling policy — default is Error Policy B
     _discovery_policy: DiscoveryPolicy = DiscoveryPolicy()
 
+    # API hostnames served by this provider. ``resolve_discovery_engine()``
+    # uses them to pick the provider-specific adapter when a provider is
+    # configured with the generic OpenAI-compatible chat engine.
+    HOSTS: tuple[str, ...] = ()
+
+    # Upper bound on followed pages for paginated listings (see _next_page_url).
+    _max_pages: int = 20
+
     # ── Token alias profiles (override per adapter) ───────────────────────
     # Custom alias prefixes for each field.  None = use default chain.
     _context_window_aliases: Optional[List[str]] = None
@@ -197,10 +257,14 @@ class BaseDiscoveryAdapter(abc.ABC):
         Args:
             provider: Engine identifier (openai, anthropic, etc.)
             base_url: Provider API base URL
-            **kwargs: Additional credentials (api_key, etc.)
+            **kwargs: Additional credentials (api_key, etc.). ``extra_headers``
+                (the provider's configured custom headers, e.g. an OpenAI
+                organization) is sent with every listing request; the
+                adapter's own auth headers take precedence over it.
         """
         self.provider = provider
         self.base_url = base_url.rstrip('/')
+        self.extra_headers: Dict[str, str] = dict(kwargs.pop("extra_headers", None) or {})
         self.kwargs = kwargs
 
     # ── Credential Resolution (Phase 4) ───────────────────────────────────
@@ -399,6 +463,27 @@ class BaseDiscoveryAdapter(abc.ABC):
             except Exception:
                 response_body = str(error.response_content)
 
+        if error.status_code is None:
+            # Transport failure (DNS, refused connection, TLS, timeout): there is
+            # no HTTP status to compare, so never fall through to the numeric
+            # branches below.
+            if policy.graceful_on_other:
+                if policy.warn_on_graceful:
+                    logger.warning("[%s] Discovery transport error — returning empty list: %s",
+                                   self.provider, error)
+                return None
+            raise DiscoveryError(
+                message=f"Provider '{self.provider}' is unreachable at {self._get_endpoint_url()}: {error}",
+                provider=self.provider,
+                status_code=None,
+                response_body=response_body,
+            )
+
+        if error.status_code == 400 and response_body and any(
+            marker in response_body.lower() for marker in _AUTH_ERROR_BODY_MARKERS
+        ):
+            raise DiscoveryAuthError(provider=self.provider, response_body=response_body)
+
         if error.status_code == 429:
             # ALWAYS propagate — no graceful flag for rate limits
             retry_after = None
@@ -414,8 +499,9 @@ class BaseDiscoveryAdapter(abc.ABC):
                 response_body=response_body,
             )
 
-        if error.status_code == 401:
-            # ALWAYS propagate — no graceful flag for auth errors
+        if error.status_code in (401, 403):
+            # ALWAYS propagate — no graceful flag for auth errors. 403 is how
+            # several providers reject a revoked or under-scoped key.
             raise DiscoveryAuthError(
                 provider=self.provider,
                 response_body=response_body,
@@ -455,7 +541,7 @@ class BaseDiscoveryAdapter(abc.ABC):
                 response_body=response_body,
             )
 
-        # Other errors (timeout, connection, etc.)
+        # Other HTTP errors (400, 405, 422, ...)
         if policy.graceful_on_other:
             if policy.warn_on_graceful:
                 logger.warning(
@@ -464,19 +550,39 @@ class BaseDiscoveryAdapter(abc.ABC):
                     error.status_code,
                 )
             return None
+        preview = _body_preview(response_body)
         raise DiscoveryError(
-            message=f"Provider '{self.provider}' discovery failed: HTTP {error.status_code}",
+            message=(
+                f"Provider '{self.provider}' discovery failed: HTTP {error.status_code}"
+                + (f" — {preview}" if preview else "")
+            ),
             provider=self.provider,
             status_code=error.status_code,
             response_body=response_body,
         )
 
-    def _parse_bytes(self, response_bytes: bytes) -> List[NormalizedDiscoveredModel]:
-        """Parse raw response bytes into normalized models.
+    def _decode_json(self, response_bytes: bytes) -> Any:
+        """Decode a listing response body, raising DiscoveryError on invalid JSON."""
+        try:
+            return json.loads(response_bytes.decode('utf-8'))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            # Include a preview of the actual response body so callers can
+            # diagnose what the provider returned (HTML error page, plain
+            # text, redirect body, etc.) instead of a blind "invalid JSON".
+            preview = response_bytes[:200].decode('utf-8', errors='replace').strip()
+            preview = ' '.join(preview.split())  # collapse whitespace
+            detail = f"{e.msg} at pos {e.pos}" if isinstance(e, json.JSONDecodeError) else str(e)
+            raise DiscoveryError(
+                message=(
+                    f"Provider '{self.provider}' returned invalid JSON "
+                    f"({detail}). Response preview: {preview!r}"
+                ),
+                provider=self.provider,
+                response_body=response_bytes[:1024].decode('utf-8', errors='replace'),
+            )
 
-        Shared by sync ``discover()`` and async ``async_discover()`` to
-        avoid duplicating JSON-parse and error-handling logic (~25 lines
-        removed from each transport path).
+    def _parse_bytes(self, response_bytes: bytes) -> List[NormalizedDiscoveredModel]:
+        """Parse one raw response body into normalized models.
 
         Args:
             response_bytes: Raw HTTP response body.
@@ -487,28 +593,41 @@ class BaseDiscoveryAdapter(abc.ABC):
         Raises:
             DiscoveryError: Invalid JSON in response body.
         """
-        try:
-            raw_response = json.loads(response_bytes.decode('utf-8'))
-        except json.JSONDecodeError as e:
-            # Include a preview of the actual response body so callers can
-            # diagnose what the provider returned (HTML error page, plain
-            # text, redirect body, etc.) instead of a blind "invalid JSON".
-            preview = response_bytes[:200].decode('utf-8', errors='replace').strip()
-            preview = ' '.join(preview.split())  # collapse whitespace
-            raise DiscoveryError(
-                message=(
-                    f"Provider '{self.provider}' returned invalid JSON "
-                    f"({e.msg} at pos {e.pos}). Response preview: {preview!r}"
-                ),
-                provider=self.provider,
-                response_body=response_bytes[:1024].decode('utf-8', errors='replace'),
-            )
-        return self._normalize_response(raw_response)
+        return self._normalize_response(self._decode_json(response_bytes))
+
+    # ── Request shaping & pagination hooks ────────────────────────────────
+
+    def _request_headers(self) -> Dict[str, str]:
+        """Provider custom headers merged under the adapter's own auth headers."""
+        return {**self.extra_headers, **self._get_headers()}
+
+    def _first_page_url(self) -> str:
+        """URL of the first listing page. Paginated adapters add a page size here."""
+        return self._get_endpoint_url()
+
+    def _next_page_url(self, raw_response: Any, current_url: str) -> Optional[str]:
+        """URL of the next listing page, or None when the listing is complete.
+
+        Default: single-page listing. Adapters for providers that paginate
+        (Google, Cohere, Anthropic) override this so large catalogs are not
+        silently truncated to the first page.
+        """
+        return None
+
+    @staticmethod
+    def _dedupe(models: List[NormalizedDiscoveredModel]) -> List[NormalizedDiscoveredModel]:
+        seen: set[str] = set()
+        unique: List[NormalizedDiscoveredModel] = []
+        for model in models:
+            if model.external_id and model.external_id not in seen:
+                seen.add(model.external_id)
+                unique.append(model)
+        return unique
 
     # ── Sync discover() template ──────────────────────────────────────────
 
     def discover(self) -> List[NormalizedDiscoveredModel]:
-        """Synchronous discovery of provider models.
+        """Synchronous discovery of provider models (all pages).
 
         Returns:
             List of NormalizedDiscoveredModel objects
@@ -518,23 +637,29 @@ class BaseDiscoveryAdapter(abc.ABC):
             DiscoveryRateLimitError: Rate limited
             DiscoveryAuthError: Invalid credentials
         """
-        endpoint = self._get_endpoint_url()
-        headers = self._get_headers()
+        headers = self._request_headers()
+        url: Optional[str] = self._first_page_url()
+        models: List[NormalizedDiscoveredModel] = []
 
         try:
             with HttpClient() as client:
-                response_bytes = client.request("GET", endpoint, headers=headers)
-            return self._parse_bytes(response_bytes)
+                for _ in range(self._max_pages):
+                    raw_response = self._decode_json(client.request("GET", url, headers=headers))
+                    models.extend(self._normalize_response(raw_response))
+                    url = self._next_page_url(raw_response, url)
+                    if not url:
+                        break
+            return self._dedupe(models)
 
         except HttpError as e:
             # _handle_http_error may raise (propagate) or return None (graceful)
             self._handle_http_error(e)
-            return []
+            return self._dedupe(models)
 
     # ── Async discover() template ─────────────────────────────────────────
 
     async def async_discover(self) -> List[NormalizedDiscoveredModel]:
-        """Asynchronous discovery of provider models.
+        """Asynchronous discovery of provider models (all pages).
 
         Returns:
             List of NormalizedDiscoveredModel objects
@@ -544,19 +669,25 @@ class BaseDiscoveryAdapter(abc.ABC):
             DiscoveryRateLimitError: Rate limited
             DiscoveryAuthError: Invalid credentials
         """
-        endpoint = self._get_endpoint_url()
-        headers = self._get_headers()
+        headers = self._request_headers()
+        url: Optional[str] = self._first_page_url()
+        models: List[NormalizedDiscoveredModel] = []
 
         logger.debug(
-            "[%s] async discovery GET %s", self.provider, endpoint
+            "[%s] async discovery GET %s", self.provider, url
         )
 
         try:
             async with AsyncHttpClient() as client:
-                response_bytes = await client.request("GET", endpoint, headers=headers)
-            return self._parse_bytes(response_bytes)
+                for _ in range(self._max_pages):
+                    raw_response = self._decode_json(await client.request("GET", url, headers=headers))
+                    models.extend(self._normalize_response(raw_response))
+                    url = self._next_page_url(raw_response, url)
+                    if not url:
+                        break
+            return self._dedupe(models)
 
         except HttpError as e:
             # _handle_http_error may raise (propagate) or return None (graceful)
             self._handle_http_error(e)
-            return []
+            return self._dedupe(models)

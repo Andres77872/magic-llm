@@ -8,7 +8,9 @@ Per spec.md Section "Cohere provider discovery":
 from __future__ import annotations
 
 import logging
-from typing import Dict, Any, List
+import re
+from typing import Dict, Any, List, Optional
+from urllib.parse import quote
 
 from magic_llm.engine.discovery import register_adapter
 from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
@@ -59,9 +61,31 @@ class CohereDiscoveryAdapter(BaseDiscoveryAdapter):
         )
         self.api_key = api_key
 
+    HOSTS = ("api.cohere.com", "api.cohere.ai")
+
+    # Cohere pages with ``page_size`` (default 20, max 1000) and ``page_token``.
+    _PAGE_SIZE = 1000
+
     def _get_endpoint_url(self) -> str:
-        """Get Cohere models listing endpoint."""
-        return f"{self.base_url}/v1/models"
+        """Get Cohere models listing endpoint.
+
+        The listing only exists on the v1 API, but providers often store the
+        v2 chat base URL (``https://api.cohere.com/v2``); any trailing API
+        version is replaced with ``/v1``.
+        """
+        url = self.base_url.rstrip("/")
+        if url.endswith("/models"):
+            return url
+        return re.sub(r"/v\d+$", "", url) + "/v1/models"
+
+    def _first_page_url(self) -> str:
+        return f"{self._get_endpoint_url()}?page_size={self._PAGE_SIZE}"
+
+    def _next_page_url(self, raw_response: Any, current_url: str) -> Optional[str]:
+        token = raw_response.get("next_page_token") if isinstance(raw_response, dict) else None
+        if token:
+            return f"{self._get_endpoint_url()}?page_size={self._PAGE_SIZE}&page_token={quote(str(token), safe='')}"
+        return None
 
     def _get_headers(self) -> Dict[str, str]:
         """Get Cohere auth headers with Bearer token."""

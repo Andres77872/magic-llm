@@ -434,14 +434,18 @@ class TestClaudeNameHeuristic:
         val = AnthropicDiscoveryAdapter._claude_name_heuristic(raw)
         assert val == 100000
 
-    def test_claude_4_no_heuristic_match(self):
-        """Claude 4.x models don't match Claude-3/Claude-2 heuristic."""
+    def test_claude_4_uses_standard_window(self):
+        """Claude 4.x falls back to the 200K standard window.
+
+        The heuristic only runs when the listing has no max_input_tokens, so
+        an explicit API value still wins (see the alias-chain tests).
+        """
         from magic_llm.engine.discovery.anthropic_discovery import (
             AnthropicDiscoveryAdapter,
         )
         raw = {"id": "claude-opus-4-20250514"}
         val = AnthropicDiscoveryAdapter._claude_name_heuristic(raw)
-        assert val is None  # Alias chain will pick up max_input_tokens
+        assert val == 200000
 
     def test_non_claude_model(self):
         from magic_llm.engine.discovery.anthropic_discovery import (

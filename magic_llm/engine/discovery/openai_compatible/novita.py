@@ -17,6 +17,7 @@ from magic_llm.engine.discovery.openai_compatible.base import (
 class NovitaDiscoveryAdapter(OpenAICompatibleAdapter):
     PROVIDER = "novita"
     DEFAULT_BASE_URL = "https://api.novita.ai/v3/openai/models"
+    HOSTS = ('api.novita.ai',)
 
 
 register_adapter("novita", NovitaDiscoveryAdapter)

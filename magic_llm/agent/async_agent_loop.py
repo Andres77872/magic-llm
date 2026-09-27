@@ -29,6 +29,8 @@ from magic_llm.agent._loop_shared import (
     _finalize_response,
     _invoke_hook_safely,
     _register_tools_with_executor,
+    _initial_tool_call_ids,
+    _reserve_tool_call_ids,
     # Parent context ContextVars for nested LLM node execution
     PARENT_BUDGET,
     PARENT_HOOKS,
@@ -109,6 +111,7 @@ class AsyncAgentLoop:
         heartbeat_cb: Optional[Callable[[], Any]] = None,
         prompt_fragment: str | Callable[..., str] | None = None,
         builtin_todo_tools: Optional[bool] = None,
+        tool_executor_options: Optional[dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         self._client = client
@@ -146,6 +149,9 @@ class AsyncAgentLoop:
                 per_tool_timeout=30.0,
                 enable_dedup=deduplicate,
             )
+
+        if tool_executor_options is not None:
+            self._executor = self._executor.with_options(tool_executor_options)
 
         self._deduplicate = deduplicate
         self._content_separator = content_separator
@@ -307,6 +313,7 @@ class AsyncAgentLoop:
             extra_messages=extra_messages,
             initial_chat=initial_chat,
         )
+        seen_tool_call_ids = _initial_tool_call_ids(chat)
 
         # Capture the base system prompt WITHOUT prompt_fragment from the chat.
         # This covers all cases: system_prompt param, initial_chat system,
@@ -439,6 +446,7 @@ class AsyncAgentLoop:
 
                     # Step 5: EXTRACT — consume normalized engine response tool calls.
                     tool_calls: list[CanonicalToolCall] = extract_tool_calls(response)
+                    _reserve_tool_call_ids(tool_calls, seen_tool_call_ids)
 
                     # Step 6: RECORD_CONTENT — INVARIANT: suppress when tool_calls present
                     content = response.content
@@ -563,6 +571,7 @@ class AsyncAgentLoop:
             extra_messages=extra_messages,
             initial_chat=initial_chat,
         )
+        seen_tool_call_ids = _initial_tool_call_ids(chat)
 
         # Capture the base system prompt WITHOUT prompt_fragment from the chat.
         # This covers all cases: system_prompt param, initial_chat system,
@@ -732,6 +741,7 @@ class AsyncAgentLoop:
                         )
 
                         tool_calls = stream_summary_tool_calls(summary)
+                        _reserve_tool_call_ids(tool_calls, seen_tool_call_ids)
 
                         # Record content — runs for EVERY iteration (including final no-tool answer)
                         if summary.content and not tool_calls:

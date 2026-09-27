@@ -178,14 +178,16 @@ class TestOpenAiBaseProcessChunk:
         assert result.choices[0].delta.content == "some random text"
         assert result.model == "dummy"
 
-    def test_empty_choices_skipped(self):
-        """Base provider skips usage-only chunks with empty choices."""
+    def test_usage_only_choices_preserved(self):
+        """Base provider preserves usage-only chunks with an empty content choice."""
         chunk = (
             'data: {"id":"chat-1","model":"test","choices":[],'
             '"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}\n\n'
         )
         result = self.provider.process_chunk(chunk)
-        assert result is None
+        assert result is not None
+        assert result.usage.total_tokens == 8
+        assert result.choices[0].delta.content == ""
 
     def test_empty_chunk_returns_none(self):
         result = self.provider.process_chunk("")

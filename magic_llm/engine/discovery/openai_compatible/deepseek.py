@@ -9,6 +9,7 @@ from magic_llm.engine.discovery.openai_compatible.base import (
 class DeepSeekDiscoveryAdapter(OpenAICompatibleAdapter):
     PROVIDER = "deepseek"
     DEFAULT_BASE_URL = "https://api.deepseek.com/v1/models"
+    HOSTS = ('api.deepseek.com',)
 
 
 register_adapter("deepseek", DeepSeekDiscoveryAdapter)

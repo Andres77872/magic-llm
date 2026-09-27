@@ -131,7 +131,7 @@ class TestGoogleDiscover:
         adapter.discover()
         mock_client.return_value.request.assert_called_once_with(
             "GET",
-            "https://generativelanguage.googleapis.com/v1beta/models",
+            "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",

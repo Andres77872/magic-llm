@@ -47,15 +47,21 @@ AUDIO_OUTPUT_PATTERNS = [
 ]
 
 # ── Context window lookups (model → max context tokens) ───────────────
+# Keys are regexes searched (case-insensitively) against the model ID.
+# Order matters: the first match wins, so more specific families MUST come
+# before their prefixes ("gpt-4o" before "gpt-4", "gpt-4.1" before "gpt-4").
+# Only used as a fallback when the provider listing carries no limit.
 CONTEXT_WINDOW_MAP = {
-    "gpt-4": 8192,
-    "gpt-4-32k": 32768,
-    "gpt-4-turbo": 128000,
-    "gpt-4o": 128000,
-    "gpt-4o-mini": 128000,
-    "gpt-3.5-turbo": 16385,
-    "gpt-3.5-turbo-16k": 16385,
-    "o1": 200000,
-    "o1-mini": 128000,
-    "o1-preview": 128000,
+    r"gpt-5": 400000,
+    r"gpt-4\.1": 1047576,
+    r"gpt-4o-mini": 128000,
+    r"gpt-4o": 128000,
+    r"gpt-4-turbo": 128000,
+    r"gpt-4-32k": 32768,
+    r"gpt-4(?![\w.])": 8192,
+    r"gpt-3\.5-turbo-16k": 16385,
+    r"gpt-3\.5-turbo": 16385,
+    r"(?<![\w.])o[34](-mini)?(?![\w.])": 200000,
+    r"(?<![\w.])o1-(mini|preview)": 128000,
+    r"(?<![\w.])o1(?![\w.])": 200000,
 }

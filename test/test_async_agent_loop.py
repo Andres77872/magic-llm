@@ -446,12 +446,10 @@ class TestAsyncAgentLoopBuiltinTodoTools:
     def test_async_run_budget_exceeded(self):
         client = MagicMock()
         client.llm = MagicMock()
-        tc = _make_tool_call()
-        client.llm.async_generate = AsyncMock(
-            return_value=_make_response(
-                content=None, tool_calls=[tc], finish_reason="tool_calls"
-            )
-        )
+        client.llm.async_generate = AsyncMock(side_effect=[
+            _make_response(content=None, tool_calls=[_make_tool_call(id=f"call_{i}")], finish_reason="tool_calls")
+            for i in range(2)
+        ])
 
         from magic_llm.agent.async_agent_loop import AsyncAgentLoop
         loop = AsyncAgentLoop(

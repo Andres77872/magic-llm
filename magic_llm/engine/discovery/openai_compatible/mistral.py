@@ -9,6 +9,7 @@ from magic_llm.engine.discovery.openai_compatible.base import (
 class MistralDiscoveryAdapter(OpenAICompatibleAdapter):
     PROVIDER = "mistral"
     DEFAULT_BASE_URL = "https://api.mistral.ai/v1/models"
+    HOSTS = ('api.mistral.ai',)
 
 
 register_adapter("mistral", MistralDiscoveryAdapter)

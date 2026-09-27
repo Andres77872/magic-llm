@@ -12,12 +12,15 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from magic_llm.engine.discovery import register_adapter
-from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
+from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter, versioned_endpoint
 from magic_llm.engine.discovery.capabilities import (
     CompositeCapabilityInference,
+    DeclaredFieldStrategy,
     ModelNameRegexStrategy,
     ProviderDefaultsStrategy,
 )
+from magic_llm.engine.discovery.openai_compatible.base import extract_listing_pricing
+from magic_llm.model.discovery import PricingInfo
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,7 @@ class SambaNovaDiscoveryAdapter(BaseDiscoveryAdapter):
 
     # Capability inference: regex-on-name + provider defaults
     _capability_strategy = CompositeCapabilityInference([
+        DeclaredFieldStrategy(),
         ModelNameRegexStrategy(),
         ProviderDefaultsStrategy(),
     ])
@@ -52,8 +56,16 @@ class SambaNovaDiscoveryAdapter(BaseDiscoveryAdapter):
         )
         self.api_key = api_key
 
+    HOSTS = ("api.sambanova.ai",)
+
     def _get_endpoint_url(self) -> str:
-        return f"{self.base_url}/v1/models"
+        # Providers store the chat base URL (``https://api.sambanova.ai/v1``);
+        # never produce ``/v1/v1/models``.
+        return versioned_endpoint(self.base_url, "v1")
+
+    def _extract_pricing(self, raw_model: Dict[str, Any]) -> Optional[PricingInfo]:
+        # ``pricing.prompt`` / ``pricing.completion`` are USD-per-token strings.
+        return extract_listing_pricing(raw_model)
 
     def _get_headers(self) -> Dict[str, str]:
         headers = {

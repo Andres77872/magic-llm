@@ -13,6 +13,7 @@ from magic_llm.engine.discovery.openai_compatible.base import (
 class GroqDiscoveryAdapter(OpenAICompatibleAdapter):
     PROVIDER = "groq"
     DEFAULT_BASE_URL = "https://api.groq.com/openai/v1/models"
+    HOSTS = ('api.groq.com',)
 
 
 register_adapter("groq", GroqDiscoveryAdapter)

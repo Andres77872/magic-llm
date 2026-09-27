@@ -9,6 +9,7 @@ from magic_llm.engine.discovery.openai_compatible.base import (
 class CerebrasDiscoveryAdapter(OpenAICompatibleAdapter):
     PROVIDER = "cerebras"
     DEFAULT_BASE_URL = "https://api.cerebras.ai/v1/models"
+    HOSTS = ('api.cerebras.ai',)
 
 
 register_adapter("cerebras", CerebrasDiscoveryAdapter)

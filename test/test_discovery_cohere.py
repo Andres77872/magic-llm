@@ -128,7 +128,7 @@ class TestCohereDiscover:
         adapter.discover()
         mock_client.return_value.request.assert_called_once_with(
             "GET",
-            "https://api.cohere.com/v1/models",
+            "https://api.cohere.com/v1/models?page_size=1000",
             headers={
                 "Authorization": "Bearer ck-test",
                 "Accept": "application/json",

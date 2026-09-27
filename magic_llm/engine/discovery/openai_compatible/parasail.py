@@ -17,6 +17,7 @@ from magic_llm.engine.discovery.openai_compatible.base import (
 class ParasailDiscoveryAdapter(OpenAICompatibleAdapter):
     PROVIDER = "parasail"
     DEFAULT_BASE_URL = "https://api.parasail.io/v1/models"
+    HOSTS = ('api.parasail.io',)
 
 
 register_adapter("parasail", ParasailDiscoveryAdapter)

@@ -17,6 +17,7 @@ from magic_llm.engine.discovery.openai_compatible.base import (
 class DeepInfraDiscoveryAdapter(OpenAICompatibleAdapter):
     PROVIDER = "deepinfra"
     DEFAULT_BASE_URL = "https://api.deepinfra.com/v1/models"
+    HOSTS = ('api.deepinfra.com',)
 
 
 register_adapter("deepinfra", DeepInfraDiscoveryAdapter)
