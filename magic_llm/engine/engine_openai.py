@@ -15,6 +15,7 @@ from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               ProviderDeepInfra,
                                               ProviderTogether,
                                               OpenAiBaseProvider)
+from magic_llm.engine.openai_adapters.responses import OpenAIResponsesAdapter
 from magic_llm.engine._usage_factory import build_usage_model
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
@@ -43,6 +44,7 @@ class EngineOpenAI(BaseChat):
                  api_key: str,
                  openai_adapter: Optional[Callable] = None,
                  base_url: Optional[str] = None,
+                 endpoint: str = "chat_completions",
                  **kwargs) -> None:
         """
         Initialize the OpenAI engine with the appropriate provider.
@@ -53,6 +55,9 @@ class EngineOpenAI(BaseChat):
             base_url: Optional base URL for the API
             **kwargs: Additional arguments for the provider
         """
+        if endpoint not in {"chat_completions", "responses"}:
+            raise ValueError("endpoint must be chat_completions or responses")
+        self.endpoint = endpoint
         super().__init__(**kwargs)
 
         if openai_adapter is None and base_url is None:
@@ -77,6 +82,13 @@ class EngineOpenAI(BaseChat):
             # Fallback to OpenAI
             self.base = ProviderOpenAI(api_key=api_key, **kwargs)
             logger.warning(f"Unrecognized adapter type: {type(openai_adapter)}. Using default OpenAI provider.")
+
+        self._chat_provider = OpenAIResponsesAdapter(self.base) if endpoint == "responses" else self.base
+
+    @property
+    def chat_url(self):
+        path = "/responses" if self.endpoint == "responses" else "/chat/completions"
+        return self.base.base_url.rstrip("/") + path
 
     def _get_provider_for_url(self, url: str) -> Type[OpenAiBaseProvider]:
         """
@@ -114,14 +126,14 @@ class EngineOpenAI(BaseChat):
         Most OpenAI-compatible providers support images through the
         image_url content type.
         """
-        return self.base.transform_request(chat, **kwargs)
+        return self._chat_provider.transform_request(chat, **kwargs)
 
     def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
         """
         Transform OpenAI API response to ModelChatResponse.
         Delegates to the provider's transform_response method.
         """
-        return self.base.transform_response(raw)
+        return self._chat_provider.transform_response(raw)
 
     def transform_stream_chunk(
         self,
@@ -132,7 +144,7 @@ class EngineOpenAI(BaseChat):
         Transform streaming chunk to ChatCompletionModel.
         Delegates to the provider's transform_stream_chunk method.
         """
-        return self.base.transform_stream_chunk(raw, context)
+        return self._chat_provider.transform_stream_chunk(raw, context if context is not None else {})
 
     def prepare_response(self, r):
         """Backward compatible alias for transform_response."""
@@ -172,9 +184,9 @@ class EngineOpenAI(BaseChat):
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
-        json_data, headers = self.base.transform_request(chat, **kwargs)
+        json_data, headers = self._chat_provider.transform_request(chat, **kwargs)
         async with AsyncHttpClient() as client:
-            response = await client.post_json(url=self.base.base_url + '/chat/completions',
+            response = await client.post_json(url=self.chat_url,
                                               data=json_data,
                                               headers=headers,
                                               timeout=kwargs.get('timeout', 30))
@@ -183,9 +195,9 @@ class EngineOpenAI(BaseChat):
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         # Make the request and read the response.
-        data, headers = self.base.transform_request(chat, **kwargs)
+        data, headers = self._chat_provider.transform_request(chat, **kwargs)
         with HttpClient() as client:
-            response = client.post_json(url=self.base.base_url + '/chat/completions',
+            response = client.post_json(url=self.chat_url,
                                         data=data,
                                         headers=headers,
                                         timeout=kwargs.get('timeout', 30))
@@ -193,20 +205,25 @@ class EngineOpenAI(BaseChat):
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
-        data, headers = self.base.transform_request(chat, stream=True, **kwargs)
+        data, headers = self._chat_provider.transform_request(chat, stream=True, **kwargs)
         with HttpClient() as client:
             id_generation = ''
             last_chunk = ''
+            context = {}
             for chunk in client.stream_request("POST",
-                                               self.base.base_url + '/chat/completions',
+                                               self.chat_url,
                                                data=data,
                                                headers=headers,
                                                timeout=kwargs.get('timeout', 30)):
-                if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
+                if c := self.transform_stream_chunk(chunk.strip(), context):
                     if c.id:
                         id_generation = c.id
                     last_chunk = c
+                    context.update(id_generation=id_generation, last_chunk=c)
                     yield c
+
+            if self.endpoint == "responses" and not context.get("terminal"):
+                raise ValueError("Responses stream ended before a terminal event")
 
             # OpenRouter usage polling at engine level (sync path)
             if id_generation and isinstance(self.base, ProviderOpenRouter):
@@ -221,20 +238,25 @@ class EngineOpenAI(BaseChat):
 
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
-        json_data, headers = self.base.transform_request(chat, stream=True, **kwargs)
+        json_data, headers = self._chat_provider.transform_request(chat, stream=True, **kwargs)
         async with AsyncHttpClient() as client:
             id_generation = ''
             last_chunk = ''
-            async for chunk in client.post_stream(self.base.base_url + '/chat/completions',
+            context = {}
+            async for chunk in client.post_stream(self.chat_url,
                                                   data=json_data,
                                                   headers=headers,
                                                   timeout=kwargs.get('timeout', 30)):
                 chunk = chunk.decode('utf-8')
-                if c := self.base.process_chunk(chunk.strip(), id_generation, last_chunk):
+                if c := self.transform_stream_chunk(chunk.strip(), context):
                     if c.id:
                         id_generation = c.id
                     last_chunk = c
+                    context.update(id_generation=id_generation, last_chunk=c)
                     yield c
+
+            if self.endpoint == "responses" and not context.get("terminal"):
+                raise ValueError("Responses stream ended before a terminal event")
 
             # OpenRouter usage polling at engine level (non-blocking, after stream completes)
             if id_generation and isinstance(self.base, ProviderOpenRouter):

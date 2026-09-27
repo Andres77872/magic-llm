@@ -40,6 +40,7 @@ class RequestTools:
 
 @dataclass
 class StreamIterationSummary:
+    responses_output: list[dict[str, Any]] | None = None
     content: str = ""
     tool_calls: list[Any] = field(default_factory=list)
     finish_reason: str | None = None
@@ -637,6 +638,8 @@ def infer_provider_from_client(client: Any) -> str:
 def accumulate_stream_chunk(summary: StreamIterationSummary, chunk: Any) -> StreamIterationSummary:
     """Accumulate normalized stream chunks into a provider-agnostic summary."""
     summary.last_chunk = chunk
+    if getattr(chunk, "responses_output", None) is not None:
+        summary.responses_output = copy.deepcopy(chunk.responses_output)
     if getattr(chunk, "usage", None) is not None:
         # Providers can send usage before the final content chunk, whose model
         # defaults usage to zeros. Preserve cumulative counts across both.

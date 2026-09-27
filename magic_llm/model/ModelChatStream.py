@@ -72,6 +72,7 @@ class ChatCompletionModel(BaseModel):
     choices: List[ChoiceModel]
     usage: Optional[UsageModel] = Field(default_factory=UsageModel)
     extras: Optional[Any] = None
+    responses_output: Optional[List[Dict[str, Any]]] = Field(default=None, exclude=True)
 
 
 class ChatMetaModel(BaseModel):

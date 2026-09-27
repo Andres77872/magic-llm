@@ -452,7 +452,7 @@ class AsyncAgentLoop:
                     content = response.content
                     if content and not tool_calls:
                         collected_content.append(content)
-                        chat.add_assistant_message(content)
+                        chat.add_assistant_message(content, responses_output=response.responses_output)
 
                     # Step 7: CHECK_DONE — AFTER content recording (Phase 7)
                     # INVARIANT: Final content-only iteration must persist to state BEFORE break
@@ -474,6 +474,7 @@ class AsyncAgentLoop:
                         ]
                         chat.add_tool_call_message(
                             tool_calls=tool_call_dicts,
+                            responses_output=response.responses_output,
                             content=None,  # INVARIANT: no speculative content in LLM context
                         )
 
@@ -705,6 +706,7 @@ class AsyncAgentLoop:
                             object="chat.completion",
                             created=last_chunk.created or 0.0,
                             model=last_chunk.model,
+                            responses_output=summary.responses_output,
                             choices=[
                                 Choice(
                                     index=0,
@@ -746,7 +748,7 @@ class AsyncAgentLoop:
                         # Record content — runs for EVERY iteration (including final no-tool answer)
                         if summary.content and not tool_calls:
                             iter_content = summary.content
-                            chat.add_assistant_message(iter_content)
+                            chat.add_assistant_message(iter_content, responses_output=summary.responses_output)
                             collected_content.append(iter_content)
                             self._state.messages = chat.messages  # State sync BEFORE break
 
@@ -770,6 +772,7 @@ class AsyncAgentLoop:
                             ]
                             chat.add_tool_call_message(
                                 tool_calls=tool_call_dicts,
+                                responses_output=response.responses_output,
                                 content=None,  # INVARIANT: no speculative content in LLM context
                             )
 

@@ -108,11 +108,14 @@ class ModelChat:
             "content": _content
         })
 
-    def add_assistant_message(self, content: str):
+    def add_assistant_message(self, content: str, responses_output: list[dict] | None = None):
         self.messages.append({
             "role": "assistant",
             "content": content
         })
+
+        if responses_output:
+            self.messages[-1]['responses_output'] = responses_output
 
     def add_system_message(self, content: str):
         self.messages.append({
@@ -368,6 +371,7 @@ class ModelChat:
         self,
         tool_calls: list[dict[str, Any]],
         content: str | None = None,
+        responses_output: list[dict] | None = None,
     ) -> None:
         """Append an assistant message with tool_calls to the conversation history.
 
@@ -380,6 +384,9 @@ class ModelChat:
             "content": content,
             "tool_calls": tool_calls,
         })
+
+        if responses_output:
+            self.messages[-1]['responses_output'] = responses_output
 
     def add_tool_messages(
         self,

@@ -76,6 +76,7 @@ def _messages_for_wire(messages: list[dict]) -> list[dict]:
     """Keep UI/runtime tool metadata in history, never in provider requests."""
     result = deepcopy(messages)
     for message in result:
+        message.pop("responses_output", None)
         if message.get("role") == "tool":
             for key in list(message):
                 if key not in {"role", "content", "tool_call_id"}:

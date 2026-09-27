@@ -55,6 +55,7 @@ class ModelChatResponse(BaseModel):
     provider_request_id: Optional[str] = None
     provider_extra: Optional[Dict[str, Any]] = None
     system_fingerprint: Optional[str] = None
+    responses_output: Optional[List[Dict[str, Any]]] = Field(default=None, exclude=True)
 
     # Convenience properties to maintain backwards compatibility
     @property
