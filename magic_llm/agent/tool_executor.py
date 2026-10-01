@@ -121,6 +121,19 @@ class ToolExecutor:
         finally:
             CURRENT_TOOL_CALL.reset(token)
 
+    def _can_deduplicate(self, name: str) -> bool:
+        """Invocation controls must observe every call, including repeated arguments.
+
+        Graph adapters declare this on their callable; looking up the current
+        registration also restores normal caching when a wrapper is replaced.
+        Explicit caller-configured exclusions continue to apply independently.
+        """
+        return (
+            self._enable_dedup
+            and name not in self._dedup_excluded_tools
+            and not getattr(self._registry.get(name), '_disable_dedup', False)
+        )
+
     def exclude_from_dedup(self, *names: str) -> None:
         """Exclude stateful tools from fingerprint deduplication."""
         self._dedup_excluded_tools.update(names)
@@ -183,9 +196,7 @@ class ToolExecutor:
             return malformed
 
         # Check dedup cache
-        dedup_enabled = (
-            self._enable_dedup and tool_call.name not in self._dedup_excluded_tools
-        )
+        dedup_enabled = self._can_deduplicate(tool_call.name)
         if dedup_enabled:
             fingerprint = self._compute_fingerprint(
                 tool_call.name, tool_call.arguments
@@ -257,7 +268,7 @@ class ToolExecutor:
         seen: set[str] = set()
         for call in tool_calls:
             fingerprint = self._compute_fingerprint(call.name, call.arguments)
-            duplicate = (self._enable_dedup and call.name not in self._dedup_excluded_tools
+            duplicate = (self._can_deduplicate(call.name)
                          and fingerprint in seen)
             if call.name in self._serial_tools or duplicate:
                 if batch:
@@ -287,9 +298,7 @@ class ToolExecutor:
             return malformed
 
         # Check dedup cache
-        dedup_enabled = (
-            self._enable_dedup and tool_call.name not in self._dedup_excluded_tools
-        )
+        dedup_enabled = self._can_deduplicate(tool_call.name)
         if dedup_enabled:
             fingerprint = self._compute_fingerprint(
                 tool_call.name, tool_call.arguments
