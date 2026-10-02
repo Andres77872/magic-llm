@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any, Dict, Tuple, TYPE_CHECKING, TypeVar
 
 from magic_llm.engine._usage_factory import attach_attempt_metadata, usage_attempt_dict, usage_has_tokens
-from magic_llm.exception.ChatException import ChatException
+from magic_llm.exception.ChatException import ChatException, RequestValidationError
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.util.http import HttpError
@@ -91,7 +91,9 @@ class BaseChat(abc.ABC):
         if not self.callback:
             return
 
+        protected_request = chat.complete_context_required
         try:
+            chat = chat.observer_projection()
             if inspect.iscoroutinefunction(self.callback):
                 await self.callback(chat, response_content, usage, model, meta)
             else:
@@ -105,7 +107,10 @@ class BaseChat(abc.ABC):
                     meta
                 )
         except Exception as e:
-            logger.error(f"Callback execution failed: {e}")
+            if protected_request:
+                logger.error("Callback execution failed in protected request")
+            else:
+                logger.error(f"Callback execution failed: {e}")
 
     def _execute_callback_sync(
         self,
@@ -123,7 +128,9 @@ class BaseChat(abc.ABC):
         if not self.callback:
             return
 
+        protected_request = chat.complete_context_required
         try:
+            chat = chat.observer_projection()
             if inspect.iscoroutinefunction(self.callback):
                 result = []
                 exception = []
@@ -155,7 +162,10 @@ class BaseChat(abc.ABC):
                     meta
                 ).result()
         except Exception as e:
-            logger.error(f"Callback execution failed: {e}")
+            if protected_request:
+                logger.error("Callback execution failed in protected request")
+            else:
+                logger.error(f"Callback execution failed: {e}")
 
     def _update_metrics(self, item: ChatCompletionModel, metrics: Metrics, usage: Optional[UsageModel]) -> None:
         """Update metrics for a chat completion item."""
@@ -327,6 +337,8 @@ class BaseChat(abc.ABC):
                     break
 
                 except Exception as e:
+                    if isinstance(e, RequestValidationError):
+                        raise
                     if usage_has_tokens(locals().get('current_attempt_usage')):
                         attempt_usages.append(
                             usage_attempt_dict(
@@ -455,6 +467,8 @@ class BaseChat(abc.ABC):
                     break
 
                 except Exception as e:
+                    if isinstance(e, RequestValidationError):
+                        raise
                     if usage_has_tokens(locals().get('current_attempt_usage')):
                         attempt_usages.append(
                             usage_attempt_dict(
@@ -520,6 +534,8 @@ class BaseChat(abc.ABC):
                     return response
 
                 except Exception as e:
+                    if isinstance(e, RequestValidationError):
+                        raise
                     er = f"Async generation attempt {attempt + 1} failed: {e!r}"
                     logger.exception("Async generation attempt %d failed: %r", attempt + 1, e)
                     await self._execute_callback(chat,
@@ -569,6 +585,8 @@ class BaseChat(abc.ABC):
                     return response
 
                 except Exception as e:
+                    if isinstance(e, RequestValidationError):
+                        raise
                     er = f"Sync generation attempt {attempt + 1} failed: {e!r}"
                     logger.exception("Sync generation attempt %d failed: %r", attempt + 1, e)
                     self._execute_callback_sync(chat,

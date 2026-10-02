@@ -137,6 +137,7 @@ class OpenAIResponsesAdapter:
                 data.pop(name, None)
             include = [value for value in include if value != 'message.output_text.logprobs']
         data['include'] = include
+        chat.validate_provider_payload(data)
         return json.dumps(data).encode('utf-8'), headers
 
     def transform_response(self, raw):

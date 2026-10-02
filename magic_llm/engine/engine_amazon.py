@@ -104,6 +104,7 @@ class EngineAmazon(BaseChat):
             kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
         )
         body = self.provider.transform_request(chat, **kwargs)
+        chat.validate_provider_payload(json.loads(body))
         headers = {
             'accept': 'application/json',
             'contentType': 'application/json'
@@ -163,6 +164,7 @@ class EngineAmazon(BaseChat):
             kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
         )
         body = self.provider.transform_request(chat, **kwargs)
+        chat.validate_provider_payload(json.loads(body))
         url = build_bedrock_url(region, self.model, stream=False)
         prepared = build_sigv4_prepared_request(
             method='POST',
@@ -209,6 +211,7 @@ class EngineAmazon(BaseChat):
             kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
         )
         body = self.provider.transform_request(chat, **kwargs)
+        chat.validate_provider_payload(json.loads(body))
         url = build_bedrock_url(region, self.model, stream=False)
         sigv4_headers = build_sigv4_headers(
             method='POST',
@@ -250,6 +253,7 @@ class EngineAmazon(BaseChat):
             kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
         )
         body = self.provider.transform_request(chat, **kwargs)
+        chat.validate_provider_payload(json.loads(body))
         url = build_bedrock_url(region, self.model, stream=True)
         sigv4_headers = build_sigv4_headers(
             method='POST',
@@ -309,6 +313,7 @@ class EngineAmazon(BaseChat):
             kwargs.get('tool_choice', self.kwargs.get('tool_choice')),
         )
         body = self.provider.transform_request(chat, **kwargs)
+        chat.validate_provider_payload(json.loads(body))
         url = build_bedrock_url(region, self.model, stream=True)
         prepared = build_sigv4_prepared_request(
             method='POST',

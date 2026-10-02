@@ -211,6 +211,10 @@ def _clone_chat(chat: ModelChat) -> ModelChat:
         extra_args=copy.deepcopy(chat.extra_args),
     )
     cloned.messages = copy.deepcopy(chat.messages)
+    if chat.complete_context_required:
+        cloned.require_complete_context()
+    cloned.set_provider_payload_guard(chat._provider_payload_guard)
+    cloned.set_observer_projection(chat._observer_projection)
     return cloned
 
 

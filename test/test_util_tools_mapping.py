@@ -131,9 +131,9 @@ def test_map_to_anthropic_tools_and_choice_mapping():
     t, c = map_to_anthropic(tools, "required")
     assert c == {"type": "any"}
 
-    # none -> None
+    # none explicitly disables invocation
     t, c = map_to_anthropic(tools, "none")
-    assert c is None
+    assert c == {"type": "none"}
 
 
 def test_coerce_tool_choice_to_string_behaviors():

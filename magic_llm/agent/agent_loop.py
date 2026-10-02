@@ -11,6 +11,8 @@ Concurrent .run()/.stream() calls on the same instance raise RuntimeError.
 
 from __future__ import annotations
 
+from magic_llm.agent.request import validate_agent_request, observer_tool_result
+
 import json
 import copy
 import logging
@@ -92,10 +94,14 @@ class AgentLoop:
         prompt_fragment: str | Callable[..., str] | None = None,
         builtin_todo_tools: Optional[bool] = None,
         tool_executor_options: Optional[dict[str, Any]] = None,
+        request_guard: Optional[Callable[..., Any]] = None,
+        tool_result_observer: Optional[Callable[..., Any]] = None,
         **kwargs: Any,
     ) -> None:
         self._client = client
         self._prompt_fragment = prompt_fragment
+        self._request_guard = request_guard
+        self._tool_result_observer = tool_result_observer
 
         # Store tools for registration at run time
         self._user_tools = list(tools or [])
@@ -287,6 +293,10 @@ class AgentLoop:
                 )
 
                 # Step 2: LLM_CALL — pass raw tools to engine/core tooling.
+                validate_agent_request(self._request_guard, chat=chat,
+                    tools=self._tools, tool_choice=self._tool_choice,
+                    provider=self._provider, client=self._client,
+                    generation_options=self._generate_kwargs)
                 response = self._client.llm.generate(
                     chat,
                     tools=self._tools,
@@ -332,12 +342,12 @@ class AgentLoop:
                 content = response.content
                 if content and not tool_calls:
                     collected_content.append(content)
-                    chat.add_assistant_message(content, responses_output=response.responses_output)
+                    chat.add_assistant_message(content, responses_output=response.responses_output, gemini_parts=response.gemini_parts)
 
                 # Step 7: CHECK_DONE — no tool calls OR is_finished
                 # INVARIANT: Content recording runs BEFORE break so the final
                 # content-only assistant message is in state when the loop exits.
-                if not tool_calls or is_finished(self._provider, response):
+                if not tool_calls or (self._provider not in {"google", "gemini"} and is_finished(self._provider, response)):
                     # Exit loop
                     break
 
@@ -347,6 +357,7 @@ class AgentLoop:
                     tool_call_dicts = [
                         {
                             "id": tc.id,
+                            "provider_metadata": tc.provider_metadata,
                             "type": "function",
                             "function": {
                                 "name": tc.name,
@@ -358,6 +369,7 @@ class AgentLoop:
                     chat.add_tool_call_message(
                         tool_calls=tool_call_dicts,
                         responses_output=response.responses_output,
+                        gemini_parts=response.gemini_parts,
                         content=None,  # INVARIANT: no speculative content in LLM context
                     )
 
@@ -382,7 +394,7 @@ class AgentLoop:
                 for result in results:
                     _invoke_hook_safely(
                         getattr(self._hooks, "on_tool_complete", None),
-                        result,
+                        observer_tool_result(self._tool_result_observer, result),
                         self.state,
                         state=self.state,
                     )
@@ -519,6 +531,10 @@ class AgentLoop:
                 summary = StreamIterationSummary()
                 last_chunk: Optional[ChatCompletionModel] = None
 
+                validate_agent_request(self._request_guard, chat=chat,
+                    tools=self._tools, tool_choice=self._tool_choice,
+                    provider=self._provider, client=self._client,
+                    generation_options=self._generate_kwargs)
                 source = self._client.llm.stream_generate(
                     chat,
                     tools=self._tools,
@@ -554,6 +570,7 @@ class AgentLoop:
                         created=last_chunk.created or 0.0,
                         model=last_chunk.model,
                         responses_output=summary.responses_output,
+                        gemini_parts=summary.gemini_parts,
                         choices=[
                             Choice(
                                 index=0,
@@ -598,13 +615,13 @@ class AgentLoop:
                     # ensures only content-only iterations are recorded.
                     if summary.content and not tool_calls:
                         iter_content = summary.content
-                        chat.add_assistant_message(iter_content, responses_output=summary.responses_output)
+                        chat.add_assistant_message(iter_content, responses_output=summary.responses_output, gemini_parts=summary.gemini_parts)
                         collected_content.append(iter_content)
                         self._state.messages = chat.messages
 
                     # Check done — AFTER content recording so final content-only
                     # assistant message is synced to state before the break.
-                    if not tool_calls or is_finished(self._provider, response):
+                    if not tool_calls or (self._provider not in {"google", "gemini"} and is_finished(self._provider, response)):
                         break
 
                     # Add tool_call message (no speculative content)
@@ -612,6 +629,7 @@ class AgentLoop:
                         tool_call_dicts = [
                             {
                                 "id": tc.id,
+                                "provider_metadata": tc.provider_metadata,
                                 "type": "function",
                                 "function": {
                                     "name": tc.name,
@@ -623,6 +641,7 @@ class AgentLoop:
                         chat.add_tool_call_message(
                             tool_calls=tool_call_dicts,
                             responses_output=response.responses_output,
+                            gemini_parts=response.gemini_parts,
                             content=None,  # INVARIANT: no speculative content in LLM context
                         )
 
@@ -647,7 +666,7 @@ class AgentLoop:
                     for result in results:
                         _invoke_hook_safely(
                             getattr(self._hooks, "on_tool_complete", None),
-                            result,
+                            observer_tool_result(self._tool_result_observer, result),
                             self.state,
                             state=self.state,
                         )

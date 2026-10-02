@@ -1,8 +1,11 @@
 import base64
 import logging
+import json
+import inspect
+from copy import deepcopy
 from typing import Any, Union
 
-from magic_llm.exception.ChatException import ChatException
+from magic_llm.exception.ChatException import ChatException, RequestValidationError
 from magic_llm.model import ModelChatResponse
 from magic_llm.util.tokenizer import from_openai
 
@@ -20,6 +23,61 @@ class ModelChat:
         self.messages = [{"role": "system", "content": system}] if system else []
         self.max_input_tokens = max_input_tokens
         self.extra_args = extra_args
+        self._require_complete_context = False
+        self._provider_payload_guard = None
+        self._observer_projection = None
+
+    def require_complete_context(self) -> None:
+        """Fail on context overflow instead of dropping any messages or tool pairs."""
+        self._require_complete_context = True
+
+    @property
+    def complete_context_required(self) -> bool:
+        return self._require_complete_context
+
+    def set_provider_payload_guard(self, guard) -> None:
+        """Set a mandatory validator for the actual mapped provider JSON payload."""
+        if guard is not None and not callable(guard):
+            raise TypeError('provider payload guard must be callable')
+        self._provider_payload_guard = guard
+
+    def validate_provider_payload(self, payload: dict) -> None:
+        """Called by supported adapters after final mapping, before telemetry/I/O."""
+        if self._provider_payload_guard is None:
+            return
+        try:
+            result = self._provider_payload_guard(deepcopy(payload))
+            if inspect.isawaitable(result):
+                close = getattr(result, 'close', None)
+                if close is not None:
+                    close()
+                raise TypeError('provider payload guard must be synchronous')
+        except RequestValidationError:
+            raise
+        except Exception as exc:
+            raise RequestValidationError(exc) from exc
+
+    def set_observer_projection(self, projection) -> None:
+        """Configure callback-only chat projection; canonical inference stays intact."""
+        if projection is not None and not callable(projection):
+            raise TypeError('observer projection must be callable')
+        self._observer_projection = projection
+
+    def observer_projection(self):
+        """Return observer history, projecting a detached copy when configured."""
+        if self._observer_projection is None:
+            return self
+        cloned = ModelChat(max_input_tokens=self.max_input_tokens, extra_args=deepcopy(self.extra_args))
+        cloned.messages = deepcopy(self.messages)
+        result = self._observer_projection(cloned)
+        if inspect.isawaitable(result):
+            close = getattr(result, 'close', None)
+            if close is not None:
+                close()
+            raise TypeError('observer projection must be synchronous')
+        if not isinstance(result, ModelChat):
+            raise TypeError('observer projection must return ModelChat')
+        return result
 
     def set_system(self, system: str, index: int = 0):
         self.messages.insert(index, {"role": "system", "content": system})
@@ -108,7 +166,8 @@ class ModelChat:
             "content": _content
         })
 
-    def add_assistant_message(self, content: str, responses_output: list[dict] | None = None):
+    def add_assistant_message(self, content: str, responses_output: list[dict] | None = None,
+                              gemini_parts: list[dict] | None = None):
         self.messages.append({
             "role": "assistant",
             "content": content
@@ -116,6 +175,8 @@ class ModelChat:
 
         if responses_output:
             self.messages[-1]['responses_output'] = responses_output
+        if gemini_parts is not None:
+            self.messages[-1]['gemini_parts'] = deepcopy(gemini_parts)
 
     def add_system_message(self, content: str):
         self.messages.append({
@@ -245,6 +306,9 @@ class ModelChat:
                     elif part.get('type') == 'image_url':
                         url = part.get('image_url', {}).get('url', '')
                         tokens += self._estimate_image_tokens(url)
+                    else:
+                        # Native tool-result blocks and opaque provider replay.
+                        tokens += len(from_openai(json.dumps(part, default=str)))
                 elif isinstance(part, str):
                     tokens += len(from_openai(part))
             return tokens
@@ -265,13 +329,15 @@ class ModelChat:
         """
 
         num_tokens = 0
-        for message in messages or self.messages:
+        for message in self.messages if messages is None else messages:
             num_tokens += self.TOKENS_PER_MESSAGE
             for key, value in message.items():
                 if key == 'content':
                     num_tokens += self._count_content_tokens(value)
                 elif isinstance(value, str):
                     num_tokens += len(from_openai(value))
+                elif value is not None:
+                    num_tokens += len(from_openai(json.dumps(value, default=str)))
                 if key == "name":
                     num_tokens += self.TOKENS_PER_NAME
 
@@ -303,6 +369,12 @@ class ModelChat:
         total_tokens = self.num_tokens_from_messages()
         if total_tokens <= self.max_input_tokens:
             return self.messages
+
+        if self._require_complete_context:
+            raise RequestValidationError(ChatException(
+                message="Complete request context exceeds token limit",
+                error_code="COMPLETE_CONTEXT_EXCEEDS_TOKEN_LIMIT",
+            ))
 
         system_tokens = 0
         system_messages = []
@@ -372,6 +444,7 @@ class ModelChat:
         tool_calls: list[dict[str, Any]],
         content: str | None = None,
         responses_output: list[dict] | None = None,
+        gemini_parts: list[dict] | None = None,
     ) -> None:
         """Append an assistant message with tool_calls to the conversation history.
 
@@ -387,6 +460,8 @@ class ModelChat:
 
         if responses_output:
             self.messages[-1]['responses_output'] = responses_output
+        if gemini_parts is not None:
+            self.messages[-1]['gemini_parts'] = deepcopy(gemini_parts)
 
     def add_tool_messages(
         self,

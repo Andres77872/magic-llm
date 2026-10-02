@@ -21,4 +21,5 @@ class ProviderSambaNova(OpenAiBaseProvider):
                     "include_usage": True
                 }
             })
+        chat.validate_provider_payload(data)
         return json.dumps(data).encode('utf-8'), headers

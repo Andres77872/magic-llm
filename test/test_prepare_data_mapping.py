@@ -90,7 +90,7 @@ def test_deepinfra_provider_preserves_named_tool_choice(chat_simple):
     [
         ("auto", {"type": "auto"}),
         ("required", {"type": "any"}),
-        ("none", None),
+        ("none", {"type": "none"}),
         ({"name": "get_weather"}, {"type": "tool", "name": "get_weather"}),
     ],
 )

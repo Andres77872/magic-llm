@@ -69,6 +69,7 @@ class ToolExecutor:
         self._dedup_excluded_tools = set(dedup_excluded_tools or set())
         self._registry: dict[str, Callable[..., Any]] = {}
         self._dedup_cache: dict[str, ToolResult] = {}
+        self._complete_output_tools: set[str] = set()
 
     def fork(self):
         """Return an isolated per-run registry and result cache."""
@@ -79,6 +80,7 @@ class ToolExecutor:
         clone._serial_tools = set(self._serial_tools)
         clone._max_content_sizes = dict(self._max_content_sizes)
         clone._tool_timeouts = dict(self._tool_timeouts)
+        clone._complete_output_tools = set(self._complete_output_tools)
         return clone
 
     def with_options(self, options: dict[str, Any]):
@@ -104,6 +106,38 @@ class ToolExecutor:
         for name, value in options.items():
             setattr(clone, '_' + name, value)
         return clone
+
+    @staticmethod
+    def serialize_output(output: Any) -> str:
+        """Exact untruncated content serialization used by ordinary tools."""
+        try:
+            return json.dumps(output)
+        except (TypeError, ValueError):
+            return str(output)
+
+    def content_limit(self, tool_name: str) -> int:
+        """Effective serialized character limit after per-tool overrides."""
+        return self._max_content_sizes.get(tool_name, self._max_content_size)
+
+    def require_complete_output(self, *names: str) -> None:
+        """Opt tools into atomic size errors instead of partial body fragments."""
+        self._complete_output_tools.update(names)
+        for name in names:
+            self._invalidate_tool_cache(name)
+
+    def _requires_complete_output(self, name: str) -> bool:
+        return (name in self._complete_output_tools or
+                bool(getattr(self._registry.get(name), '_require_complete_output', False)))
+
+    def _limit_complete_result(self, result: ToolResult) -> ToolResult:
+        if (self._requires_complete_output(result.name) and
+                len(result.content) > self.content_limit(result.name)):
+            content = '{"error":"Tool output exceeds limit","type":"ToolOutputLimitError"}'
+            if len(content) > self.content_limit(result.name):
+                raise ValueError('Tool content limit cannot fit an atomic error result')
+            return result.model_copy(update={"content": content, "is_error": True,
+                "error": "Tool output exceeds limit", "error_type": "ToolOutputLimitError"})
+        return result
 
     @staticmethod
     def _invoke_sync(fn: Callable[..., Any], tool_call: CanonicalToolCall) -> Any:
@@ -156,6 +190,10 @@ class ToolExecutor:
         self._invalidate_tool_cache(name)
         self._registry[name] = fn
 
+    def registered_names(self) -> frozenset[str]:
+        """Read-only names available for host collision checks before registration."""
+        return frozenset(self._registry)
+
     def unregister(self, name: str) -> bool:
         """Remove a registered tool by name.
 
@@ -193,7 +231,7 @@ class ToolExecutor:
         # tool with silently-emptied arguments executes it with wrong input.
         malformed = self._malformed_arguments_result(tool_call)
         if malformed is not None:
-            return malformed
+            return self._limit_complete_result(malformed)
 
         # Check dedup cache
         dedup_enabled = self._can_deduplicate(tool_call.name)
@@ -212,7 +250,7 @@ class ToolExecutor:
         # Look up tool
         fn = self._registry.get(tool_call.name)
         if fn is None:
-            return self._unknown_tool_result(tool_call, start)
+            return self._limit_complete_result(self._unknown_tool_result(tool_call, start))
 
         # Execute with timeout (per-tool override supported)
         effective_timeout = self._resolve_timeout(tool_call.name)
@@ -225,10 +263,10 @@ class ToolExecutor:
             # here too. The future tells the two apart: an expired deadline
             # leaves it unfinished; a tool-raised TimeoutError completed it.
             if future.done():
-                return self._error_result(tool_call, start, exc)
-            return self._deadline_result(tool_call, start, effective_timeout)
+                return self._limit_complete_result(self._error_result(tool_call, start, exc))
+            return self._limit_complete_result(self._deadline_result(tool_call, start, effective_timeout))
         except Exception as exc:
-            return self._error_result(tool_call, start, exc)
+            return self._limit_complete_result(self._error_result(tool_call, start, exc))
 
         duration_ms = (time.monotonic() - start) * 1000
         result = self._build_output_result(tool_call, output, duration_ms)
@@ -295,7 +333,7 @@ class ToolExecutor:
         """
         malformed = self._malformed_arguments_result(tool_call)
         if malformed is not None:
-            return malformed
+            return self._limit_complete_result(malformed)
 
         # Check dedup cache
         dedup_enabled = self._can_deduplicate(tool_call.name)
@@ -314,7 +352,7 @@ class ToolExecutor:
         # Look up tool
         fn = self._registry.get(tool_call.name)
         if fn is None:
-            return self._unknown_tool_result(tool_call, start)
+            return self._limit_complete_result(self._unknown_tool_result(tool_call, start))
 
         effective_timeout = self._resolve_timeout(tool_call.name)
         invocation: Any = None
@@ -340,10 +378,10 @@ class ToolExecutor:
             else:
                 hit_deadline = invocation is None or not invocation.done()
             if not hit_deadline:
-                return self._error_result(tool_call, start, exc)
-            return self._deadline_result(tool_call, start, effective_timeout)
+                return self._limit_complete_result(self._error_result(tool_call, start, exc))
+            return self._limit_complete_result(self._deadline_result(tool_call, start, effective_timeout))
         except Exception as exc:
-            return self._error_result(tool_call, start, exc)
+            return self._limit_complete_result(self._error_result(tool_call, start, exc))
 
         duration_ms = (time.monotonic() - start) * 1000
         result = self._build_output_result(tool_call, output, duration_ms)
@@ -466,6 +504,11 @@ class ToolExecutor:
         self, tool_call: CanonicalToolCall, output: Any, duration_ms: float
     ) -> ToolResult:
         """Serialize a successful tool return, reporting truncation with a cause."""
+        if self._requires_complete_output(tool_call.name):
+            return self._limit_complete_result(ToolResult(
+                tool_call_id=tool_call.id, name=tool_call.name,
+                content=self.serialize_output(output), duration_ms=duration_ms,
+            ))
         content, full_chars = self._serialize_output_with_size(
             output, tool_name=tool_call.name
         )
@@ -538,7 +581,7 @@ class ToolExecutor:
         Returns:
             The effective max content size in characters.
         """
-        return self._max_content_sizes.get(tool_name, self._max_content_size)
+        return self.content_limit(tool_name)
 
     def _serialize_output_with_size(
         self, output: Any, tool_name: str | None = None
@@ -550,10 +593,7 @@ class ToolExecutor:
         the max content size for the tool, it is truncated with a
         [TRUNCATED] suffix.
         """
-        try:
-            result = json.dumps(output)
-        except (TypeError, ValueError):
-            result = str(output)
+        result = self.serialize_output(output)
 
         full_chars = len(result)
         max_size = self._resolve_max_content_size(tool_name or "")

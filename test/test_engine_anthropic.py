@@ -19,7 +19,7 @@ class TestPrepareData:
     """prepare_data() — content=None handling (V1 verification)."""
 
     def test_content_none_tool_call_message(self):
-        """Tool-call assistant msg with content=None → empty text part, no crash."""
+        """Tool-call-only assistant messages replay their native tool_use block."""
         engine = _make_engine()
         chat = ModelChat()
         chat.add_user_message("Hello")
@@ -35,7 +35,7 @@ class TestPrepareData:
         # Last message should be the tool-call assistant message
         last = msgs[-1]
         assert last["role"] == "assistant"
-        assert last["content"] == [{"type": "text", "text": ""}]
+        assert last["content"] == [{"type": "tool_use", "id": "call_1", "name": "test", "input": {}}]
         assert "tool_calls" not in last  # Anthropic uses content blocks, not top-level tool_calls
 
     def test_content_normal_string(self):

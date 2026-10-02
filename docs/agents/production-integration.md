@@ -104,6 +104,15 @@ start with the same remaining allowance. These are admission/observation bounds,
 not a prepaid global token ledger: set finite child caps and concurrency limits,
 and reserve spending in the host if a strict account-wide ceiling is required.
 
+## Mandatory request and output integrity
+
+For metadata-first catalogs and complete definition results, use the public
+`request_guard`, final `ModelChat.validate_provider_payload` seam, and complete
+ToolExecutor output policy described in [request integrity](request-integrity.md).
+They enforce request admission rather than observational hooks or cumulative
+post-response accounting. The host may keep all definition content inside agent
+JSON; these generic seams require no skill database or external file service.
+
 ## Skills and planning
 
 Magic LLM does not interpret arbitrary `SKILL.md` files or execute skill scripts.

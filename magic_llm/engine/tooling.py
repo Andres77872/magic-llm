@@ -41,6 +41,7 @@ class RequestTools:
 @dataclass
 class StreamIterationSummary:
     responses_output: list[dict[str, Any]] | None = None
+    gemini_parts: list[dict[str, Any]] | None = None
     content: str = ""
     tool_calls: list[Any] = field(default_factory=list)
     finish_reason: str | None = None
@@ -375,7 +376,7 @@ def map_to_anthropic(tools: Optional[List[OpenAITool]], tool_choice: ToolChoice)
         elif normalized_choice == "required":
             anthropic_choice = {"type": "any"}
         elif normalized_choice == "none":
-            anthropic_choice = None
+            anthropic_choice = {"type": "none"}
     elif isinstance(normalized_choice, dict) and normalized_choice.get("name"):
         anthropic_choice = {"type": "tool", "name": normalized_choice["name"]}
     return anthropic_tools, anthropic_choice
@@ -464,6 +465,7 @@ def map_request_tools(provider: str, tools: list[Any] | None, tool_choice: ToolC
 
 def extract_tool_calls(response: Any) -> list[Any]:
     """Parse normalized ModelChatResponse.tool_calls into CanonicalToolCall-compatible calls."""
+    from magic_llm.agent.types import CanonicalToolCall
     raw_calls = getattr(response, "tool_calls", None)
     if not raw_calls:
         return []
@@ -492,6 +494,7 @@ def extract_tool_calls(response: Any) -> list[Any]:
                 name=name or "",
                 arguments=arguments,
                 arguments_error=arguments_error,
+                provider_metadata=copy.deepcopy(getattr(tc, "provider_metadata", None) if not isinstance(tc, dict) else tc.get("provider_metadata")),
             )
         )
     return result
@@ -525,7 +528,7 @@ def append_tool_results(provider: str, chat: Any, results: list[Any]) -> None:
         chat.add_tool_messages([{
             "role": "user",
             "content": [
-                {"type": "tool_result", "tool_use_id": result.tool_call_id or "", "content": result.content}
+                {"type": "tool_result", "tool_use_id": result.tool_call_id or "", "content": result.content, "is_error": result.is_error}
                 for result in results
             ],
         }])
@@ -640,6 +643,10 @@ def accumulate_stream_chunk(summary: StreamIterationSummary, chunk: Any) -> Stre
     summary.last_chunk = chunk
     if getattr(chunk, "responses_output", None) is not None:
         summary.responses_output = copy.deepcopy(chunk.responses_output)
+    if getattr(chunk, "gemini_parts", None) is not None:
+        if summary.gemini_parts is None:
+            summary.gemini_parts = []
+        summary.gemini_parts.extend(copy.deepcopy(chunk.gemini_parts))
     if getattr(chunk, "usage", None) is not None:
         # Providers can send usage before the final content chunk, whose model
         # defaults usage to zeros. Preserve cumulative counts across both.
@@ -666,7 +673,15 @@ def _merge_stream_tool_calls(accumulated: list[dict[str, Any]], tool_calls: list
     by_index = {entry.get("index", i): entry for i, entry in enumerate(accumulated)}
     for pos, tc in enumerate(tool_calls):
         idx = getattr(tc, "index", None)
-        idx = pos if idx is None else idx
+        if idx is None:
+            call_id = getattr(tc, "id", None)
+            matched = next((item for item in accumulated if call_id and item.get("id") == call_id), None)
+            if matched is not None:
+                idx = matched["index"]
+            elif call_id and pos in by_index and by_index[pos].get("id") not in {None, call_id}:
+                idx = max(by_index, default=-1) + 1
+            else:
+                idx = pos
         entry = by_index.get(idx)
         if entry is None:
             entry = {"index": idx, "function": {"arguments": ""}}
@@ -674,6 +689,9 @@ def _merge_stream_tool_calls(accumulated: list[dict[str, Any]], tool_calls: list
             accumulated.append(entry)
         if getattr(tc, "id", None):
             entry["id"] = tc.id
+        metadata = getattr(tc, "provider_metadata", None)
+        if metadata is not None:
+            entry["provider_metadata"] = copy.deepcopy(metadata)
         function = getattr(tc, "function", None)
         if function:
             entry.setdefault("function", {})
@@ -685,6 +703,7 @@ def _merge_stream_tool_calls(accumulated: list[dict[str, Any]], tool_calls: list
 
 def stream_summary_tool_calls(summary: StreamIterationSummary) -> list[Any]:
     """Return CanonicalToolCall-compatible calls from an accumulated stream summary."""
+    from magic_llm.agent.types import CanonicalToolCall
     calls = []
     for entry in sorted(summary.tool_calls, key=lambda item: item.get("index", 0)):
         function = entry.get("function", {})
@@ -702,6 +721,7 @@ def stream_summary_tool_calls(summary: StreamIterationSummary) -> list[Any]:
                 name=function.get("name", ""),
                 arguments=arguments,
                 arguments_error=arguments_error,
+                provider_metadata=copy.deepcopy(entry.get("provider_metadata")),
             )
         )
     return calls

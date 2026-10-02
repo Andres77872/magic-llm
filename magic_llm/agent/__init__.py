@@ -148,3 +148,6 @@ __all__ = [
     "BinderValidationError",
     "UnknownSubagentError",
 ]
+
+# Mandatory per-request validation context.
+from magic_llm.agent.request import AgentRequestContext

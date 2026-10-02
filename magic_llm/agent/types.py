@@ -78,7 +78,7 @@ class CanonicalToolCall:
             tool error instead of executing with silently-emptied arguments.
     """
 
-    __slots__ = ("id", "name", "arguments", "arguments_error")
+    __slots__ = ("id", "name", "arguments", "arguments_error", "provider_metadata")
 
     def __init__(
         self,
@@ -86,11 +86,13 @@ class CanonicalToolCall:
         name: str,
         arguments: dict[str, Any],
         arguments_error: Optional[str] = None,
+        provider_metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         self.id = id
         self.name = name
         self.arguments = arguments
         self.arguments_error = arguments_error
+        self.provider_metadata = provider_metadata
 
     def __repr__(self) -> str:
         return f"CanonicalToolCall(id={self.id!r}, name={self.name!r}, arguments={self.arguments!r})"

@@ -13,6 +13,7 @@ class FunctionCall(BaseModel):
 class ToolCall(BaseModel):
     id: Optional[str] = None
     type: Optional[str] = "function"
+    provider_metadata: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
     function: Optional[FunctionCall] = None
 
 
@@ -56,6 +57,7 @@ class ModelChatResponse(BaseModel):
     provider_extra: Optional[Dict[str, Any]] = None
     system_fingerprint: Optional[str] = None
     responses_output: Optional[List[Dict[str, Any]]] = Field(default=None, exclude=True)
+    gemini_parts: Optional[List[Dict[str, Any]]] = Field(default=None, exclude=True)
 
     # Convenience properties to maintain backwards compatibility
     @property

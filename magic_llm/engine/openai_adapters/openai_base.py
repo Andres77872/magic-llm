@@ -48,6 +48,7 @@ class ProviderOpenAI(OpenAiBaseProvider):
                     del data["max_tokens"]
         if data.get("stream"):
             data["stream_options"] = {"include_usage": True}
+        chat.validate_provider_payload(data)
         return json.dumps(data).encode("utf-8"), headers
 
     def prepare_data(self, chat: ModelChat, **kwargs):

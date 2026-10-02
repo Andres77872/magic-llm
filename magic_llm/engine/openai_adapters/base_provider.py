@@ -1,4 +1,5 @@
 import json
+from magic_llm.util.request_privacy import protected_payload_summary
 from copy import deepcopy
 import logging
 import os
@@ -77,6 +78,7 @@ def _messages_for_wire(messages: list[dict]) -> list[dict]:
     result = deepcopy(messages)
     for message in result:
         message.pop("responses_output", None)
+        message.pop("gemini_parts", None)
         if message.get("role") == "tool":
             for key in list(message):
                 if key not in {"role", "content", "tool_call_id"}:
@@ -210,11 +212,13 @@ class OpenAiBaseProvider(ABC):
         elif 'tool_choice' in data:
             data.pop('tool_choice')
 
+        chat.validate_provider_payload(data)
+
         if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD"):
-            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", _dump_payload(self, data))
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", (protected_payload_summary(self, data) if chat.complete_context_required else _dump_payload(self, data)))
 
         if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD_FULL"):
-            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", _dump_payload_full(self, data))
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", (protected_payload_summary(self, data) if chat.complete_context_required else _dump_payload_full(self, data)))
 
         json_data = json.dumps(data).encode('utf-8')
         return json_data, self.headers

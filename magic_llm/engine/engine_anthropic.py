@@ -1,5 +1,7 @@
 # https://docs.anthropic.com/claude/reference/messages-streaming
 import json
+from magic_llm.util.request_privacy import protected_payload_summary
+import copy
 import logging
 import os
 import time
@@ -137,6 +139,13 @@ class EngineAnthropic(BaseChat):
                 'block': event.get('content_block', {}),
                 'args': ''  # accumulate partial_json for tool_use
             }
+            block = event.get('content_block', {})
+            if block.get('type') == 'tool_use':
+                call = build_stream_tool_call(id=block.get('id'), name=block.get('name'),
+                    arguments=json.dumps(block['input']) if block.get('input') else '')
+                call.index = event['index']
+                return build_stream_chunk(id=idx, model=self.model, content='',
+                    tool_calls=[call], usage=usage), idx, usage
             return None, idx, usage
         if event['type'] == 'content_block_stop':
             # Cleanup finished block
@@ -170,8 +179,9 @@ class EngineAnthropic(BaseChat):
                     tool_call = build_stream_tool_call(
                         id=block.get('id'),
                         name=block.get('name'),
-                        arguments=block_ctx['args']
+                        arguments=partial
                     )
+                    tool_call.index = event['index']
                     model = build_stream_chunk(
                         id=idx,
                         model=self.model,
@@ -231,10 +241,10 @@ class EngineAnthropic(BaseChat):
         # ------------------------------------------------------------------ #
         # Extract optional pre-amble (1st `system` message)
         # ------------------------------------------------------------------ #
-        messages = chat.get_messages()
-        preamble = messages[0]["content"] if messages and messages[0]["role"] == "system" else None
-        if preamble:
-            messages.pop(0)  # remove it from the normal flow
+        messages = copy.deepcopy(chat.get_messages())
+        system_parts = [msg.get("content", "") for msg in messages if msg.get("role") == "system"]
+        preamble = "\n\n".join(str(part) for part in system_parts) if system_parts else None
+        messages = [msg for msg in messages if msg.get("role") != "system"]
 
         # ------------------------------------------------------------------ #
         # Normalise message contents
@@ -294,7 +304,23 @@ class EngineAnthropic(BaseChat):
                     else:
                         parts.append(part)
 
-            anthropic_chat.append({"role": msg["role"], "content": parts})
+            calls = msg.get('tool_calls') or []
+            if calls:
+                if raw_content is None:
+                    parts = []
+                for call in calls:
+                    function = call['function']
+                    arguments = function.get('arguments', '{}')
+                    if isinstance(arguments, str):
+                        arguments = json.loads(arguments or '{}')
+                    parts.append({'type': 'tool_use', 'id': call['id'],
+                                  'name': function['name'], 'input': arguments})
+            role = msg['role']
+            if role == 'tool':
+                role = 'user'
+                parts = [{'type': 'tool_result', 'tool_use_id': msg['tool_call_id'],
+                          'content': raw_content, 'is_error': bool(msg.get('is_error', False))}]
+            anthropic_chat.append({"role": role, "content": parts})
 
         # ------------------------------------------------------------------ #
         # Keep only the three most-recent *user* turns (with cache_control)
@@ -360,11 +386,13 @@ class EngineAnthropic(BaseChat):
         if preamble:
             data['system'] = preamble
 
+        chat.validate_provider_payload(data)
+
         if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD"):
-            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", _dump_payload(self, data))
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", (protected_payload_summary(self, data) if chat.complete_context_required else _dump_payload(self, data)))
 
         if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD_FULL"):
-            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", _dump_payload_full(self, data))
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", (protected_payload_summary(self, data) if chat.complete_context_required else _dump_payload_full(self, data)))
 
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers

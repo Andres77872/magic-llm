@@ -3,10 +3,13 @@ import asyncio
 import base64
 import io
 import json
+from magic_llm.util.request_privacy import protected_payload_summary
+import copy
 import logging
 import mimetypes
 import os
 import time
+import uuid
 import wave
 from typing import Dict, Any, Tuple, Optional
 from urllib.parse import urlparse
@@ -82,6 +85,37 @@ def _dump_payload_full(provider: "EngineGoogle", data: dict) -> str:
     return json.dumps(payload, default=str)
 
 
+
+def _canonical_call_parts(message: dict) -> list[dict]:
+    parts = []
+    for call in message.get('tool_calls') or []:
+        metadata = call.get('provider_metadata') or {}
+        native = metadata.get('gemini_part')
+        if native is not None:
+            part = copy.deepcopy(native)
+            part['functionCall'].setdefault('id', call['id'])
+        else:
+            function = call['function']
+            arguments = function.get('arguments', '{}')
+            if isinstance(arguments, str):
+                arguments = json.loads(arguments or '{}')
+            part = {'functionCall': {'id': call['id'], 'name': function['name'], 'args': arguments}}
+        parts.append(part)
+    return parts
+
+
+def _canonical_result_part(message: dict, messages: list[dict]) -> dict:
+    name = message.get('name')
+    if not name:
+        for item in messages:
+            for call in item.get('tool_calls') or []:
+                if call.get('id') == message['tool_call_id']:
+                    name = call['function']['name']
+    if not name:
+        raise ValueError('Tool result has no matching named function call')
+    return {'functionResponse': {'id': message['tool_call_id'], 'name': name,
+        'response': {'error' if message.get('is_error') else 'output': message.get('content')}}}
+
 class EngineGoogle(BaseChat):
     engine = 'google'
 
@@ -120,11 +154,18 @@ class EngineGoogle(BaseChat):
         }
 
         # ------------------------- Messages ------------------------------- #
-        messages = chat.get_messages().copy()
+        messages = copy.deepcopy(chat.get_messages())
 
-        preamble: str | None = None
-        if messages and messages[0]["role"] == "system":
-            preamble = messages.pop(0)["content"]
+        preambles = []
+        for message in messages:
+            if message.get("role") == "system":
+                content = message.get("content")
+                if isinstance(content, str):
+                    preambles.append(content)
+                elif isinstance(content, list):
+                    preambles.extend(part["text"] for part in content if isinstance(part, dict) and "text" in part)
+        messages = [message for message in messages if message.get("role") != "system"]
+        preamble = "\n\n".join(preambles)
 
         # ------------------ Sync helpers ---------------------------------- #
         def _http_image_to_b64(url: str, client: HttpClient) -> tuple[str, str]:
@@ -192,9 +233,18 @@ class EngineGoogle(BaseChat):
                 else:
                     raise ValueError(f"Unknown content type: {type(raw)!r}")
 
+                native_parts = msg.get('gemini_parts')
+                if native_parts is not None:
+                    parts = copy.deepcopy(native_parts)
+                else:
+                    call_parts = _canonical_call_parts(msg)
+                    if call_parts:
+                        parts = ([] if raw is None else parts) + call_parts
+                if msg['role'] == 'tool':
+                    parts = [_canonical_result_part(msg, messages)]
                 api_contents.append(
                     {
-                        "role": msg["role"].replace("assistant", "model"),
+                        "role": "user" if msg["role"] == "tool" else msg["role"].replace("assistant", "model"),
                         "parts": parts,
                     }
                 )
@@ -219,11 +269,13 @@ class EngineGoogle(BaseChat):
         if request_tools.tool_choice:
             data["toolConfig"] = request_tools.tool_choice
 
+        chat.validate_provider_payload(data)
+
         if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD"):
-            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", _dump_payload(self, data))
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", (protected_payload_summary(self, data) if chat.complete_context_required else _dump_payload(self, data)))
 
         if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD_FULL"):
-            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", _dump_payload_full(self, data))
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", (protected_payload_summary(self, data) if chat.complete_context_required else _dump_payload_full(self, data)))
 
         json_bytes = json.dumps(data).encode("utf-8")
         return json_bytes, headers, data
@@ -253,11 +305,18 @@ class EngineGoogle(BaseChat):
         }
 
         # ------------------------- Messages ------------------------------- #
-        messages = chat.get_messages().copy()
+        messages = copy.deepcopy(chat.get_messages())
 
-        preamble: str | None = None
-        if messages and messages[0]["role"] == "system":
-            preamble = messages.pop(0)["content"]
+        preambles = []
+        for message in messages:
+            if message.get("role") == "system":
+                content = message.get("content")
+                if isinstance(content, str):
+                    preambles.append(content)
+                elif isinstance(content, list):
+                    preambles.extend(part["text"] for part in content if isinstance(part, dict) and "text" in part)
+        messages = [message for message in messages if message.get("role") != "system"]
+        preamble = "\n\n".join(preambles)
 
         # ------------------ Async helpers --------------------------------- #
         async def _http_image_to_b64(url: str, client: AsyncHttpClient) -> tuple[str, str]:
@@ -326,9 +385,18 @@ class EngineGoogle(BaseChat):
                 else:
                     raise ValueError(f"Unknown content type: {type(raw)!r}")
 
+                native_parts = msg.get('gemini_parts')
+                if native_parts is not None:
+                    parts = copy.deepcopy(native_parts)
+                else:
+                    call_parts = _canonical_call_parts(msg)
+                    if call_parts:
+                        parts = ([] if raw is None else parts) + call_parts
+                if msg['role'] == 'tool':
+                    parts = [_canonical_result_part(msg, messages)]
                 api_contents.append(
                     {
-                        "role": msg["role"].replace("assistant", "model"),
+                        "role": "user" if msg["role"] == "tool" else msg["role"].replace("assistant", "model"),
                         "parts": parts,
                     }
                 )
@@ -353,11 +421,13 @@ class EngineGoogle(BaseChat):
         if request_tools.tool_choice:
             data["toolConfig"] = request_tools.tool_choice
 
+        chat.validate_provider_payload(data)
+
         if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD"):
-            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", _dump_payload(self, data))
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD %s", (protected_payload_summary(self, data) if chat.complete_context_required else _dump_payload(self, data)))
 
         if os.environ.get("MAGIC_LLM_DEBUG_PAYLOAD_FULL"):
-            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", _dump_payload_full(self, data))
+            logger.info("MAGIC_LLM_DEBUG_PAYLOAD_FULL %s", (protected_payload_summary(self, data) if chat.complete_context_required else _dump_payload_full(self, data)))
 
         json_bytes = json.dumps(data).encode("utf-8")
         return json_bytes, headers, data
@@ -451,13 +521,14 @@ class EngineGoogle(BaseChat):
                     tool_calls = []
 
                 # Capture native id when available, fallback to synthetic ID
-                call_id = func_call.get('id') or f"call_{len(tool_calls)}_{int(time.time() * 1000)}"
+                call_id = func_call.get('id') or f"call_{len(tool_calls)}_{uuid.uuid4().hex}"
 
                 tool_call = build_tool_call(
                     id=call_id,
                     name=func_name,
                     arguments=json.dumps(func_call.get('args', {}))
                 )
+                tool_call.provider_metadata = {"gemini_part": copy.deepcopy(part)}
                 tool_calls.append(tool_call)
 
         # Combine text parts if any
@@ -478,8 +549,8 @@ class EngineGoogle(BaseChat):
             provider_request_id=response_id,
         )
 
-        # Build standardized response
-        return build_response(
+        # Keep complete opaque native parts for exact continuation replay.
+        response = build_response(
             id=response_id,
             model=gemini_response.get('modelVersion', 'gemini'),
             content=content,
@@ -488,6 +559,8 @@ class EngineGoogle(BaseChat):
             usage=usage,
             logprobs=candidate.get('avgLogprobs')
         )
+        response.gemini_parts = copy.deepcopy(parts)
+        return response
 
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
@@ -539,13 +612,14 @@ class EngineGoogle(BaseChat):
                 if tool_calls is None:
                     tool_calls = []
                 tool_call = build_stream_tool_call(
-                    id=func_call.get('id', f"call_{len(tool_calls)}_{int(time.time() * 1000)}"),
+                    id=func_call.get('id', f"call_{len(tool_calls)}_{uuid.uuid4().hex}"),
                     name=func_name,
                     arguments=json.dumps(func_call.get('args', {}))
                 )
+                tool_call.provider_metadata = {"gemini_part": copy.deepcopy(part)}
                 tool_calls.append(tool_call)
 
-        return build_stream_chunk(
+        response = build_stream_chunk(
             id='1',
             model=self.model,
             content=content or '',
@@ -553,6 +627,8 @@ class EngineGoogle(BaseChat):
             tool_calls=tool_calls,
             usage=usage
         )
+        response.gemini_parts = copy.deepcopy(parts)
+        return response
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):

@@ -307,6 +307,20 @@ class MagicLLM(MagicLlmBase):
 
     # ─── Canonical agent methods (AgentLoop / AsyncAgentLoop) ──────────────
 
+    def registered_tool_names(self) -> frozenset[str]:
+        """Read-only names registered on this client, including task/subagent tools."""
+        executor = getattr(self, "_task_executor", None)
+        return executor.registered_names() if executor is not None else frozenset()
+
+    def tool_content_limit(self, name: str, *, tool_executor=None,
+                           tool_executor_options=None) -> int:
+        """Resolve the effective run-local ordinary-tool serialized limit."""
+        from magic_llm.agent.tool_executor import ToolExecutor
+        executor = tool_executor or getattr(self, '_task_executor', None) or ToolExecutor()
+        if tool_executor_options is not None:
+            executor = executor.with_options(tool_executor_options)
+        return executor.content_limit(name)
+
     def run_agent(
         self,
         user_input: str,
@@ -324,6 +338,8 @@ class MagicLLM(MagicLlmBase):
         prompt_fragment: str | Callable[..., str] | None = None,
         initial_chat: Optional["ModelChat"] = None,
         tool_executor_options: Optional[Dict[str, Any]] = None,
+        request_guard: Optional[Callable[..., Any]] = None,
+        tool_result_observer: Optional[Callable[..., Any]] = None,
         **kwargs: Any,
     ) -> "ModelChatResponse":
         """Execute a ReAct-style agent loop synchronously using AgentLoop.
@@ -396,6 +412,8 @@ class MagicLLM(MagicLlmBase):
             deduplicate=deduplicate,
             prompt_fragment=prompt_fragment,
             tool_executor_options=tool_executor_options,
+            request_guard=request_guard,
+            tool_result_observer=tool_result_observer,
             **loop_kwargs,
         )
 
@@ -423,6 +441,8 @@ class MagicLLM(MagicLlmBase):
         prompt_fragment: str | Callable[..., str] | None = None,
         initial_chat: Optional["ModelChat"] = None,
         tool_executor_options: Optional[Dict[str, Any]] = None,
+        request_guard: Optional[Callable[..., Any]] = None,
+        tool_result_observer: Optional[Callable[..., Any]] = None,
         **kwargs: Any,
     ) -> Iterator["ChatCompletionModel"]:
         """Stream chunks from a ReAct-style agent loop synchronously.
@@ -483,6 +503,8 @@ class MagicLLM(MagicLlmBase):
             deduplicate=deduplicate,
             prompt_fragment=prompt_fragment,
             tool_executor_options=tool_executor_options,
+            request_guard=request_guard,
+            tool_result_observer=tool_result_observer,
             **loop_kwargs,
         )
 
@@ -511,6 +533,8 @@ class MagicLLM(MagicLlmBase):
         prompt_fragment: str | Callable[..., str] | None = None,
         initial_chat: Optional["ModelChat"] = None,
         tool_executor_options: Optional[Dict[str, Any]] = None,
+        request_guard: Optional[Callable[..., Any]] = None,
+        tool_result_observer: Optional[Callable[..., Any]] = None,
         **kwargs: Any,
     ) -> "ModelChatResponse":
         """Execute a ReAct-style agent loop asynchronously using AsyncAgentLoop.
@@ -589,6 +613,8 @@ class MagicLLM(MagicLlmBase):
             tool_executor=executor,
             prompt_fragment=prompt_fragment,
             tool_executor_options=tool_executor_options,
+            request_guard=request_guard,
+            tool_result_observer=tool_result_observer,
             **loop_kwargs,
         )
 
@@ -617,6 +643,8 @@ class MagicLLM(MagicLlmBase):
         prompt_fragment: str | Callable[..., str] | None = None,
         initial_chat: Optional["ModelChat"] = None,
         tool_executor_options: Optional[Dict[str, Any]] = None,
+        request_guard: Optional[Callable[..., Any]] = None,
+        tool_result_observer: Optional[Callable[..., Any]] = None,
         **kwargs: Any,
     ) -> AsyncIterator["ChatCompletionModel"]:
         """Stream chunks from a ReAct-style agent loop asynchronously.
@@ -683,6 +711,8 @@ class MagicLLM(MagicLlmBase):
             tool_executor=executor,
             prompt_fragment=prompt_fragment,
             tool_executor_options=tool_executor_options,
+            request_guard=request_guard,
+            tool_result_observer=tool_result_observer,
             **loop_kwargs,
         )
 

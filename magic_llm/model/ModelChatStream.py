@@ -12,6 +12,7 @@ class ToolCall(BaseModel):
     index: Optional[int] = None
     id: Optional[str] = None
     type: Optional[str] = "function"
+    provider_metadata: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
     function: Optional[FunctionCall] = None
 
 
@@ -73,6 +74,7 @@ class ChatCompletionModel(BaseModel):
     usage: Optional[UsageModel] = Field(default_factory=UsageModel)
     extras: Optional[Any] = None
     responses_output: Optional[List[Dict[str, Any]]] = Field(default=None, exclude=True)
+    gemini_parts: Optional[List[Dict[str, Any]]] = Field(default=None, exclude=True)
 
 
 class ChatMetaModel(BaseModel):
