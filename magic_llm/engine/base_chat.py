@@ -9,6 +9,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any, Dict, Tuple, TYPE_CHECKING, TypeVar
 
+from magic_llm.engine.attempt_control import (
+    ProviderAttemptControl, controlled_generate, controlled_stream, reject_sync_control,
+)
 from magic_llm.engine._usage_factory import attach_attempt_metadata, usage_attempt_dict, usage_has_tokens
 from magic_llm.exception.ChatException import ChatException, RequestValidationError
 from magic_llm.model import ModelChat, ModelChatResponse
@@ -274,7 +277,15 @@ class BaseChat(abc.ABC):
     @staticmethod
     def async_intercept_stream_generate(func: Callable[..., Awaitable[AsyncIterator[ChatCompletionModel]]]):
         @functools.wraps(func)
-        async def wrapper(self, chat: ModelChat, **kwargs) -> AsyncIterator[ChatCompletionModel]:
+        async def wrapper(self, chat: ModelChat, *, provider_attempt_control: ProviderAttemptControl | None = None, **kwargs) -> AsyncIterator[ChatCompletionModel]:
+            if provider_attempt_control is not None:
+                source = controlled_stream(self, func, chat, kwargs, provider_attempt_control)
+                try:
+                    async for item in source:
+                        yield item
+                finally:
+                    await source.aclose()
+                return
             model = self.model or kwargs.get('model')
             usage = None
             response_content = ''
@@ -395,6 +406,8 @@ class BaseChat(abc.ABC):
                     else:
                         await asyncio.sleep(self.retry_config.delay)
 
+        wrapper._provider_attempt_control_version = 1
+        wrapper._provider_attempt_raw = func
         return wrapper
 
     @staticmethod
@@ -404,7 +417,8 @@ class BaseChat(abc.ABC):
             nest_asyncio.apply()
 
         @functools.wraps(func)
-        def wrapper(self, chat: ModelChat, **kwargs) -> Iterator[ChatCompletionModel]:
+        def wrapper(self, chat: ModelChat, *, provider_attempt_control: ProviderAttemptControl | None = None, **kwargs) -> Iterator[ChatCompletionModel]:
+            reject_sync_control(provider_attempt_control)
             model = self.model or kwargs.get('model')
             usage = None
             response_content = ''
@@ -515,7 +529,9 @@ class BaseChat(abc.ABC):
     @staticmethod
     def async_intercept_generate(func: Callable[..., Awaitable[ModelChatResponse]]):
         @functools.wraps(func)
-        async def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse | None | Any:
+        async def wrapper(self, chat: ModelChat, *, provider_attempt_control: ProviderAttemptControl | None = None, **kwargs) -> ModelChatResponse | None | Any:
+            if provider_attempt_control is not None:
+                return await controlled_generate(self, func, chat, kwargs, provider_attempt_control)
             model = self.model or kwargs.get('model')
             for attempt in range(self.retry_config.attempts):
                 start_time = time.time()
@@ -558,6 +574,8 @@ class BaseChat(abc.ABC):
                     await asyncio.sleep(self.retry_config.delay)
             return None
 
+        wrapper._provider_attempt_control_version = 1
+        wrapper._provider_attempt_raw = func
         return wrapper
 
     @staticmethod
@@ -567,7 +585,8 @@ class BaseChat(abc.ABC):
             nest_asyncio.apply()
 
         @functools.wraps(func)
-        def wrapper(self, chat: ModelChat, **kwargs) -> ModelChatResponse | None | Any:
+        def wrapper(self, chat: ModelChat, *, provider_attempt_control: ProviderAttemptControl | None = None, **kwargs) -> ModelChatResponse | None | Any:
+            reject_sync_control(provider_attempt_control)
             model = self.model or kwargs.get('model')
             for attempt in range(self.retry_config.attempts):
                 usage = None

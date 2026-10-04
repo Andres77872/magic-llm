@@ -6,6 +6,8 @@ from magic_llm.base import MagicLlmBase
 from magic_llm.model.discovery import NormalizedDiscoveredModel
 
 if TYPE_CHECKING:
+    from magic_llm.engine.attempt_control import ProviderAttemptControl
+    from magic_llm.agent.control import AgentLoopControl, AgentLoopCheckpoint
     from magic_llm.model.ModelChatResponse import ModelChatResponse
     from magic_llm.model.ModelChatStream import ChatCompletionModel
     from magic_llm.agent.types import AgentBudget, TaskManifest, ToolSpec
@@ -340,6 +342,9 @@ class MagicLLM(MagicLlmBase):
         tool_executor_options: Optional[Dict[str, Any]] = None,
         request_guard: Optional[Callable[..., Any]] = None,
         tool_result_observer: Optional[Callable[..., Any]] = None,
+        provider_attempt_control: Optional["ProviderAttemptControl"] = None,
+        control: Optional["AgentLoopControl"] = None,
+        continuation: Optional["AgentLoopCheckpoint"] = None,
         **kwargs: Any,
     ) -> "ModelChatResponse":
         """Execute a ReAct-style agent loop synchronously using AgentLoop.
@@ -414,6 +419,8 @@ class MagicLLM(MagicLlmBase):
             tool_executor_options=tool_executor_options,
             request_guard=request_guard,
             tool_result_observer=tool_result_observer,
+            provider_attempt_control=provider_attempt_control,
+            control=control,
             **loop_kwargs,
         )
 
@@ -422,6 +429,7 @@ class MagicLLM(MagicLlmBase):
             system_prompt=system_prompt,
             extra_messages=extra_messages,
             initial_chat=initial_chat,
+            continuation=continuation,
         )
 
     def run_agent_stream(
@@ -443,6 +451,9 @@ class MagicLLM(MagicLlmBase):
         tool_executor_options: Optional[Dict[str, Any]] = None,
         request_guard: Optional[Callable[..., Any]] = None,
         tool_result_observer: Optional[Callable[..., Any]] = None,
+        provider_attempt_control: Optional["ProviderAttemptControl"] = None,
+        control: Optional["AgentLoopControl"] = None,
+        continuation: Optional["AgentLoopCheckpoint"] = None,
         **kwargs: Any,
     ) -> Iterator["ChatCompletionModel"]:
         """Stream chunks from a ReAct-style agent loop synchronously.
@@ -505,6 +516,8 @@ class MagicLLM(MagicLlmBase):
             tool_executor_options=tool_executor_options,
             request_guard=request_guard,
             tool_result_observer=tool_result_observer,
+            provider_attempt_control=provider_attempt_control,
+            control=control,
             **loop_kwargs,
         )
 
@@ -513,6 +526,7 @@ class MagicLLM(MagicLlmBase):
             system_prompt=system_prompt,
             extra_messages=extra_messages,
             initial_chat=initial_chat,
+            continuation=continuation,
         )
 
     async def run_agent_async(
@@ -535,6 +549,9 @@ class MagicLLM(MagicLlmBase):
         tool_executor_options: Optional[Dict[str, Any]] = None,
         request_guard: Optional[Callable[..., Any]] = None,
         tool_result_observer: Optional[Callable[..., Any]] = None,
+        provider_attempt_control: Optional["ProviderAttemptControl"] = None,
+        control: Optional["AgentLoopControl"] = None,
+        continuation: Optional["AgentLoopCheckpoint"] = None,
         **kwargs: Any,
     ) -> "ModelChatResponse":
         """Execute a ReAct-style agent loop asynchronously using AsyncAgentLoop.
@@ -615,6 +632,8 @@ class MagicLLM(MagicLlmBase):
             tool_executor_options=tool_executor_options,
             request_guard=request_guard,
             tool_result_observer=tool_result_observer,
+            provider_attempt_control=provider_attempt_control,
+            control=control,
             **loop_kwargs,
         )
 
@@ -623,6 +642,7 @@ class MagicLLM(MagicLlmBase):
             system_prompt=system_prompt,
             extra_messages=extra_messages,
             initial_chat=initial_chat,
+            continuation=continuation,
         )
 
     async def run_agent_stream_async(
@@ -645,6 +665,9 @@ class MagicLLM(MagicLlmBase):
         tool_executor_options: Optional[Dict[str, Any]] = None,
         request_guard: Optional[Callable[..., Any]] = None,
         tool_result_observer: Optional[Callable[..., Any]] = None,
+        provider_attempt_control: Optional["ProviderAttemptControl"] = None,
+        control: Optional["AgentLoopControl"] = None,
+        continuation: Optional["AgentLoopCheckpoint"] = None,
         **kwargs: Any,
     ) -> AsyncIterator["ChatCompletionModel"]:
         """Stream chunks from a ReAct-style agent loop asynchronously.
@@ -713,6 +736,8 @@ class MagicLLM(MagicLlmBase):
             tool_executor_options=tool_executor_options,
             request_guard=request_guard,
             tool_result_observer=tool_result_observer,
+            provider_attempt_control=provider_attempt_control,
+            control=control,
             **loop_kwargs,
         )
 
@@ -721,6 +746,7 @@ class MagicLLM(MagicLlmBase):
             system_prompt=system_prompt,
             extra_messages=extra_messages,
             initial_chat=initial_chat,
+            continuation=continuation,
         )
         try:
             async for chunk in source:

@@ -70,6 +70,7 @@ class ToolExecutor:
         self._registry: dict[str, Callable[..., Any]] = {}
         self._dedup_cache: dict[str, ToolResult] = {}
         self._complete_output_tools: set[str] = set()
+        self._propagated_errors: tuple[type[Exception], ...] = ()
 
     def fork(self):
         """Return an isolated per-run registry and result cache."""
@@ -106,6 +107,19 @@ class ToolExecutor:
         for name, value in options.items():
             setattr(clone, '_' + name, value)
         return clone
+
+    def propagate_errors(self, *exception_classes: type[Exception]) -> None:
+        """Host-only terminal failure policy, preserved by isolated run forks.
+
+        Authoritative admission failures must escape the native loop rather
+        than become ordinary model-visible tool errors. This typed policy is
+        deliberately absent from authored/JSON executor options. Ordinary
+        tool failures and returned negative receipts retain their behavior.
+        """
+        if any(not isinstance(cls, type) or not issubclass(cls, Exception)
+               for cls in exception_classes):
+            raise TypeError("Terminal tool errors must be Exception subclasses")
+        self._propagated_errors = tuple(dict.fromkeys(self._propagated_errors + exception_classes))
 
     @staticmethod
     def serialize_output(output: Any) -> str:
@@ -258,6 +272,8 @@ class ToolExecutor:
         try:
             output = future.result(timeout=effective_timeout)
         except FuturesTimeoutError as exc:
+            if isinstance(exc, self._propagated_errors):
+                raise
             # On 3.11+ concurrent.futures.TimeoutError is the builtin
             # TimeoutError, so a TimeoutError raised *inside* the tool lands
             # here too. The future tells the two apart: an expired deadline
@@ -266,6 +282,8 @@ class ToolExecutor:
                 return self._limit_complete_result(self._error_result(tool_call, start, exc))
             return self._limit_complete_result(self._deadline_result(tool_call, start, effective_timeout))
         except Exception as exc:
+            if isinstance(exc, self._propagated_errors):
+                raise
             return self._limit_complete_result(self._error_result(tool_call, start, exc))
 
         duration_ms = (time.monotonic() - start) * 1000
@@ -368,6 +386,8 @@ class ToolExecutor:
                     invocation, timeout=effective_timeout
                 )
         except asyncio.TimeoutError as exc:
+            if isinstance(exc, self._propagated_errors):
+                raise
             # asyncio.TimeoutError is the builtin TimeoutError on 3.11+, so a
             # TimeoutError raised *by the tool itself* is caught here as well.
             # An expired executor deadline cancels the task (or leaves the
@@ -381,6 +401,8 @@ class ToolExecutor:
                 return self._limit_complete_result(self._error_result(tool_call, start, exc))
             return self._limit_complete_result(self._deadline_result(tool_call, start, effective_timeout))
         except Exception as exc:
+            if isinstance(exc, self._propagated_errors):
+                raise
             return self._limit_complete_result(self._error_result(tool_call, start, exc))
 
         duration_ms = (time.monotonic() - start) * 1000

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import zlib
 from typing import Any, Generator, AsyncGenerator, Optional, TypeVar, Literal
 
 import aiohttp
@@ -41,6 +42,48 @@ class HttpError(Exception):
         super().__init__(message)
 
 
+def disable_automatic_retries(session):
+    """Qualify aiohttp's retry switch instead of hiding another paid request.
+
+    aiohttp 3.13 may retry idempotent methods after a disconnected connection.
+    A missing switch is an unsupported transport, never silent compatibility.
+    """
+    if type(getattr(session, '_retry_connection', None)) is not bool:
+        raise RuntimeError('HTTP transport does not expose qualified retry control')
+    session._retry_connection = False
+
+
+async def read_bounded_response(response, max_bytes: int) -> bytes:
+    """Read encoded and decoded bytes under the same finite ceiling.
+
+    Callers must disable transport auto-decompression. Unknown encodings,
+    truncated streams and concatenated compressed members reject explicitly.
+    """
+    if type(max_bytes) is not int or not 0 < max_bytes <= 16 * 1024 * 1024:
+        raise ValueError('Response byte ceiling must be a bounded positive integer')
+    encoding = response.headers.get('Content-Encoding', 'identity').strip().lower()
+    if encoding not in ('', 'identity', 'gzip', 'deflate'):
+        raise HttpError('Unsupported controlled HTTP content encoding', response.status)
+    decoder = zlib.decompressobj(31 if encoding == 'gzip' else 15) if encoding in ('gzip', 'deflate') else None
+    output, wire_bytes = bytearray(), 0
+    try:
+        async for chunk in response.content.iter_chunked(65536):
+            wire_bytes += len(chunk)
+            if wire_bytes > max_bytes:
+                raise HttpError('HTTP response exceeds admitted byte limit', response.status)
+            decoded = decoder.decompress(chunk, max_bytes - len(output) + 1) if decoder else chunk
+            if len(output) + len(decoded) > max_bytes:
+                raise HttpError('HTTP response exceeds admitted byte limit', response.status)
+            if decoder and (decoder.unused_data or decoder.unconsumed_tail):
+                raise HttpError('Invalid or oversized controlled HTTP compression', response.status)
+            output.extend(decoded)
+        if decoder and not decoder.eof:
+            raise HttpError('Truncated controlled HTTP compression', response.status)
+    except zlib.error as error:
+        raise HttpError('Invalid controlled HTTP compression', response.status) from error
+    return bytes(output)
+
+
 class AsyncHttpClient:
     """
     A reusable HTTP client for making asynchronous requests using aiohttp.
@@ -79,6 +122,19 @@ class AsyncHttpClient:
         """
         self._ensure_session()
         timeout = aiohttp.ClientTimeout(total=kwargs.pop('timeout', 30))
+        max_response_bytes = kwargs.pop('max_response_bytes', None)
+        if max_response_bytes is not None and (
+                type(max_response_bytes) is not int or not 0 < max_response_bytes <= 16 * 1024 * 1024):
+            raise ValueError('max_response_bytes must be an integer between 1 and 16777216')
+        if max_response_bytes is not None:
+            # Decoding is bounded below; aiohttp automatic decompression can
+            # allocate an arbitrarily expanded buffer before a consumer sees it.
+            disable_automatic_retries(self.session)
+            kwargs['auto_decompress'] = False
+            if timeout.total is None or not 0 < timeout.total <= 300:
+                raise ValueError('Controlled HTTP requires a finite timeout <= 300 seconds')
+            timeout = aiohttp.ClientTimeout(total=timeout.total, connect=min(30, timeout.total),
+                                            sock_read=min(30, timeout.total))
         try:
             async with self.session.request(
                 method,
@@ -86,16 +142,26 @@ class AsyncHttpClient:
                 timeout=timeout,
                 **kwargs,
             ) as response:
-                content = await response.read()
+                if max_response_bytes is None:
+                    content = await response.read()
+                else:
+                    content = await read_bounded_response(response, max_response_bytes)
                 if response.status != 200:
+                    if max_response_bytes is not None:
+                        # Controlled requests do not log private URLs or bodies.
+                        raise HttpError(f'HTTP {response.status}', response.status)
                     error_msg = f"HTTP {response.status}: {content.decode('utf-8', errors='replace')}"
                     logger.error(f"Request to {url} failed: {error_msg}")
                     raise HttpError(error_msg, response.status, content)
                 return content
         except aiohttp.ClientError as e:
+            if max_response_bytes is not None:
+                raise HttpError('Controlled HTTP transport failed') from e
             logger.error(f"Request to {url} failed with aiohttp error: {str(e)}")
             raise HttpError(f"aiohttp error: {str(e)}")
         except asyncio.TimeoutError as e:
+            if max_response_bytes is not None:
+                raise HttpError('Controlled HTTP request timed out') from e
             # aiohttp raises a bare asyncio.TimeoutError (not a ClientError) when
             # the total timeout elapses; normalize it so callers only see HttpError.
             logger.error(f"Request to {url} timed out after {timeout.total}s")
@@ -114,7 +180,8 @@ class AsyncHttpClient:
         try:
             return json.loads(response.decode('utf-8'))
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response from {url}: {str(e)}")
+            if kwargs.get('max_response_bytes') is None:
+                logger.error(f"Failed to parse JSON response from {url}: {str(e)}")
             raise
 
     async def post_raw_binary(self, url: str, **kwargs) -> bytes:

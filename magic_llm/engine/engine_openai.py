@@ -1,6 +1,7 @@
 # https://cookbook.openai.com/examples/how_to_format_inputs_to_chatgpt_models
 import json
 import logging
+import math
 import re
 from typing import Callable, Type, Optional, Dict, Any, Tuple
 
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class EngineOpenAI(BaseChat):
     engine = 'openai'
+    external_embedding_control_version = 1
 
     # Map domain patterns to provider classes for easier maintenance
     PROVIDER_MAPPING = {
@@ -281,7 +283,40 @@ class EngineOpenAI(BaseChat):
                                         headers=self.base.headers)
             return self.base.transform_embedding_response(response)
 
-    async def async_embedding(self, text: list[str] | str, **kwargs):
+    async def async_embedding(self, text: list[str] | str, *,
+                              external_dispatch=None,
+                              external_kind: str = 'memory.embedding.query',
+                              **kwargs):
+        if external_dispatch is not None:
+            # Admission sees the exact resolved physical request. Control ports
+            # are trusted host objects and never belong to the provider payload.
+            timeout = kwargs.pop('timeout', 30)
+            if (type(timeout) not in (int, float) or not math.isfinite(timeout)
+                    or not 0 < timeout <= 300):
+                raise ValueError('Controlled embeddings require a finite timeout <= 300 seconds')
+            data = {'input': text, 'model': self.model, **kwargs}
+            body = json.dumps(data, allow_nan=False)
+            if len(body.encode('utf-8')) > 4 * 1024 * 1024:
+                raise ValueError('Controlled embedding request exceeds its byte ceiling')
+            # Detach all mutable request inputs before calling any host callback.
+            data = json.loads(body)
+            headers = dict(self.base.headers)
+            url = self.base.base_url + '/embeddings'
+            max_response_bytes = 4 * 1024 * 1024
+            request = {'method': 'POST', 'url': url, 'headers': dict(headers),
+                       'json': data, 'timeout_seconds': timeout,
+                       'allow_redirects': False, 'auto_decompress': False,
+                       'max_request_bytes': 4 * 1024 * 1024, 'max_response_bytes': max_response_bytes}
+
+            async def dispatch():
+                async with AsyncHttpClient() as client:
+                    response = await client.post_json(
+                        url=url, data=body, headers=headers, timeout=timeout,
+                        allow_redirects=False, max_response_bytes=max_response_bytes)
+                    return self.base.transform_embedding_response(response)
+
+            return await external_dispatch.call(external_kind, request, dispatch)
+
         async with AsyncHttpClient() as client:
             data = {
                 "input": text,

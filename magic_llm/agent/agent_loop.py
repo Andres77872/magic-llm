@@ -11,6 +11,8 @@ Concurrent .run()/.stream() calls on the same instance raise RuntimeError.
 
 from __future__ import annotations
 
+from magic_llm.engine.attempt_control import ProviderAttemptControl, reject_sync_control
+from magic_llm.agent.control import AgentLoopControl, AgentControlError
 from magic_llm.agent.request import validate_agent_request, observer_tool_result
 
 import json
@@ -96,8 +98,13 @@ class AgentLoop:
         tool_executor_options: Optional[dict[str, Any]] = None,
         request_guard: Optional[Callable[..., Any]] = None,
         tool_result_observer: Optional[Callable[..., Any]] = None,
+        provider_attempt_control: ProviderAttemptControl | None = None,
+        control: AgentLoopControl | None = None,
         **kwargs: Any,
     ) -> None:
+        if control is not None:
+            raise AgentControlError("Loop control requires an async entry point", "CONTROL_UNSUPPORTED")
+        reject_sync_control(provider_attempt_control)
         self._client = client
         self._prompt_fragment = prompt_fragment
         self._request_guard = request_guard
@@ -206,6 +213,7 @@ class AgentLoop:
         system_prompt: Optional[str] = None,
         extra_messages: Optional[list[dict[str, Any]]] = None,
         initial_chat: Optional[ModelChat] = None,
+        continuation: Any = None,
     ) -> ModelChatResponse:
         """Execute the full ReAct loop synchronously.
 
@@ -226,6 +234,8 @@ class AgentLoop:
             RuntimeError: If called while the loop is already running.
             AgentBudgetExceeded: If any budget constraint is violated.
         """
+        if continuation is not None:
+            raise AgentControlError("Continuation requires an async entry point", "CONTROL_UNSUPPORTED")
         self._acquire_lock()
         try:
             # INIT: Resolve prompt_fragment and prepend to system prompt (C3)
@@ -434,6 +444,7 @@ class AgentLoop:
         system_prompt: Optional[str] = None,
         extra_messages: Optional[list[dict[str, Any]]] = None,
         initial_chat: Optional[ModelChat] = None,
+        continuation: Any = None,
     ) -> Iterator[ChatCompletionModel]:
         """Stream chunks from the LLM, executing tools between iterations.
 
@@ -451,6 +462,8 @@ class AgentLoop:
         Raises:
             RuntimeError: If called while the loop is already running.
         """
+        if continuation is not None:
+            raise AgentControlError("Continuation requires an async entry point", "CONTROL_UNSUPPORTED")
         self._acquire_lock()
         # Track whether budget was exceeded — if so, skip on_loop_complete
         # in the finally block (budget-exceeded uses on_budget_exceeded instead)

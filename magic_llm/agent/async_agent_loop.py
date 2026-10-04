@@ -10,9 +10,13 @@ instance raise RuntimeError.
 
 from __future__ import annotations
 
+from magic_llm.engine.attempt_control import ProviderAttemptControl, require_attempt_capability
+from magic_llm.agent.control import (AgentLoopControl, AgentLoopCheckpoint, InboxMessage,
+    AgentControlError, CheckpointBudget, utc_timestamp, parse_timestamp, require_complete_tool_history)
 from magic_llm.agent.request import validate_agent_request, observer_tool_result
 
 import asyncio
+import hashlib
 import json
 import copy
 import logging
@@ -48,6 +52,7 @@ from magic_llm.agent.types import (
     AgentBudgetExceeded,
     AgentState,
     CanonicalToolCall,
+    ToolResult,
 )
 from magic_llm.engine.tooling import (
     StreamIterationSummary,
@@ -116,12 +121,22 @@ class AsyncAgentLoop:
         tool_executor_options: Optional[dict[str, Any]] = None,
         request_guard: Optional[Callable[..., Any]] = None,
         tool_result_observer: Optional[Callable[..., Any]] = None,
+        provider_attempt_control: ProviderAttemptControl | None = None,
+        control: AgentLoopControl | None = None,
+        control_clock: Callable[[], float] | None = None,
         **kwargs: Any,
     ) -> None:
+        if control is not None and provider_attempt_control is None:
+            raise AgentControlError("Loop control requires provider attempt admission", "CONTROL_CAPABILITY_REQUIRED")
+        self._control = control
+        self._control_clock = control_clock or time.time
+        self._last_checkpoint = None
+        self._absolute_deadline = None
         self._client = client
         self._prompt_fragment = prompt_fragment
         self._request_guard = request_guard
         self._tool_result_observer = tool_result_observer
+        self._provider_attempt_control = provider_attempt_control
         # Base system prompt WITHOUT fragment — used for per-iteration resolution
         self._base_system_prompt: Optional[str] = None
 
@@ -139,6 +154,7 @@ class AsyncAgentLoop:
 
         # Budget defaults
         self._budget = budget if budget is not None else AgentBudget()
+        self._configured_budget = copy.deepcopy(self._budget)
         self._hooks = hooks  # None = no-op (handled by _invoke_hook_safely)
 
         # Adapter: explicit override takes precedence over auto-detection
@@ -180,6 +196,176 @@ class AsyncAgentLoop:
 
         # Internal state
         self._state = AgentState()
+
+    @property
+    def checkpoint(self) -> AgentLoopCheckpoint | None:
+        """Last successfully committed safe checkpoint (detached private data)."""
+        return self._last_checkpoint.detached() if self._last_checkpoint is not None else None
+
+    def _controlled_chat(self, user_input, system_prompt, extra_messages, initial_chat, continuation):
+        self._resume_checkpoint = None
+        if continuation is None:
+            return _build_initial_chat(user_input=user_input, system_prompt=system_prompt,
+                extra_messages=extra_messages, initial_chat=initial_chat)
+        if self._control is None:
+            raise AgentControlError('Continuation requires an authoritative control port', 'INVALID_CONTINUATION')
+        if user_input not in (None, '') or system_prompt is not None or extra_messages or initial_chat is not None:
+            raise AgentControlError('Deliver new input through the continuation mailbox', 'INVALID_CONTINUATION')
+        try:
+            checkpoint = AgentLoopCheckpoint.model_validate(
+                continuation.model_dump() if isinstance(continuation, AgentLoopCheckpoint) else continuation)
+        except (ValueError, TypeError) as error:
+            raise AgentControlError('Unsupported or invalid continuation checkpoint', 'INVALID_CONTINUATION') from error
+        if checkpoint.provider != self._provider:
+            raise AgentControlError('Continuation provider is incompatible', 'INVALID_CONTINUATION')
+        if checkpoint.requires_context_guard and self._request_guard is None:
+            raise AgentControlError('Continuation requires reconstructed context guards', 'INVALID_CONTINUATION')
+        require_complete_tool_history(checkpoint.messages)
+        self._resume_checkpoint = checkpoint.detached()
+        chat = ModelChat(max_input_tokens=checkpoint.max_input_tokens,
+                         extra_args=copy.deepcopy(checkpoint.chat_extra_args))
+        chat.messages = copy.deepcopy(checkpoint.messages)
+        chat.require_complete_context()
+        return chat
+
+    def _start_control(self, chat, seen_tool_call_ids):
+        if self._control is None:
+            return
+        self._budget = copy.deepcopy(self._configured_budget)
+        self._last_checkpoint = None
+        self._message_digests = {}
+        self._output_candidate = None
+        self._started_at = self._control_clock()
+        self._absolute_deadline = (self._started_at + self._budget.wall_clock_timeout
+                                   if self._budget.wall_clock_timeout is not None else None)
+        self._active_seen_tool_ids = seen_tool_call_ids
+        chat.require_complete_context()
+        require_complete_tool_history(chat.messages)
+        self._executor._dedup_cache.clear()
+        restored = self._resume_checkpoint
+        if restored is not None:
+            if (restored.tool_manifest_digest != self._manifest_digest()
+                    or restored.builtin_todo_enabled != self._builtin_todo_enabled
+                    or restored.deduplicate != self._executor._enable_dedup):
+                raise AgentControlError('Continuation tool configuration changed', 'INVALID_CONTINUATION')
+            if not set(seen_tool_call_ids).issubset(restored.seen_tool_call_ids):
+                raise AgentControlError('Continuation lost historical tool IDs', 'INVALID_CONTINUATION')
+            self._active_seen_tool_ids.update(restored.seen_tool_call_ids)
+            self._message_digests = dict(restored.message_digests)
+            self._started_at = parse_timestamp(restored.started_at)
+            for name in ('max_iterations', 'max_input_tokens', 'max_output_tokens', 'wall_clock_timeout'):
+                values = [value for value in (getattr(self._budget, name), getattr(restored.budget, name))
+                          if value is not None]
+                setattr(self._budget, name, min(values) if values else None)
+            deadlines = [parse_timestamp(restored.absolute_deadline)] if restored.absolute_deadline else []
+            if self._budget.wall_clock_timeout is not None:
+                deadlines.append(self._started_at + self._budget.wall_clock_timeout)
+            self._absolute_deadline = min(deadlines) if deadlines else None
+            if self._absolute_deadline is not None:
+                self._budget.wall_clock_timeout = self._absolute_deadline - self._started_at
+                remaining = min(self._budget.wall_clock_timeout,
+                                max(0.0, self._absolute_deadline - self._control_clock()))
+                self._state.start_time = time.monotonic() - (self._budget.wall_clock_timeout - remaining)
+            self._state.step = restored.step
+            self._state.total_input_tokens = restored.total_input_tokens
+            self._state.total_output_tokens = restored.total_output_tokens
+            self._executor._dedup_cache = {key: ToolResult.model_validate(value)
+                                          for key, value in restored.dedup_results.items()}
+            if self._builtin_todo_enabled:
+                self._builtin_tool_functions['todowrite'](todos=copy.deepcopy(restored.todos))
+            self._base_system_prompt = copy.deepcopy(restored.base_system_prompt)
+            self._output_candidate = restored.output_candidate
+            self._last_checkpoint = restored.detached()
+        self._control_deadline()
+
+    def _manifest_digest(self):
+        from magic_llm.engine.tooling import normalize_openai_tools
+        return hashlib.sha256(json.dumps(
+            {'tools': normalize_openai_tools(self._tools), 'tool_choice': self._tool_choice},
+            sort_keys=True, ensure_ascii=False, allow_nan=False,
+            separators=(',', ':')).encode('utf-8')).hexdigest()
+
+    def _control_deadline(self):
+        if self._control is not None and self._absolute_deadline is not None:
+            now = self._control_clock()
+            if now >= self._absolute_deadline:
+                raise AgentBudgetExceeded('wall_clock_timeout', self._budget.wall_clock_timeout,
+                                          now - self._started_at)
+
+    def _control_snapshot(self, chat):
+        require_complete_tool_history(chat.messages)
+        return AgentLoopCheckpoint(
+            schema_version=1,
+            provider=self._provider, tool_manifest_digest=self._manifest_digest(),
+            messages=copy.deepcopy(chat.messages),
+            seen_tool_call_ids=sorted(self._active_seen_tool_ids),
+            consumed_message_ids=list(self._message_digests),
+            message_digests=dict(self._message_digests), step=self._state.step,
+            total_input_tokens=self._state.total_input_tokens,
+            total_output_tokens=self._state.total_output_tokens,
+            started_at=utc_timestamp(self._started_at),
+            absolute_deadline=utc_timestamp(self._absolute_deadline) if self._absolute_deadline is not None else None,
+            budget=CheckpointBudget(**vars(self._budget)),
+            deduplicate=self._executor._enable_dedup,
+            dedup_results={key: value.model_dump() for key, value in self._executor._dedup_cache.items()},
+            builtin_todo_enabled=self._builtin_todo_enabled,
+            todos=self._builtin_tool_functions['todoread']()['todos'] if self._builtin_todo_enabled else [],
+            base_system_prompt=copy.deepcopy(self._base_system_prompt),
+            max_input_tokens=chat.max_input_tokens, chat_extra_args=copy.deepcopy(chat.extra_args),
+            requires_context_guard=(self._request_guard is not None or chat._provider_payload_guard is not None
+                                    or chat._observer_projection is not None),
+            output_candidate=self._output_candidate,
+        )
+
+    async def _save_control_checkpoint(self, chat, boundary):
+        if self._control is None:
+            return
+        snapshot = self._control_snapshot(chat)
+        # Hosts bound their persistence operations. Do not cancel a final safe
+        # state commit merely because model compute's horizon just expired.
+        await self._control.checkpoint(snapshot.detached(), boundary)
+        self._last_checkpoint = snapshot
+
+    async def _before_control_turn(self, chat):
+        if self._control is None:
+            return
+        self._control_deadline()
+        batch = await self._await_with_budget(self._control.before_turn(self._control_snapshot(chat)))
+        if not isinstance(batch, list) or len(batch) > 32:
+            raise AgentControlError('Control returned an invalid or oversized inbox batch')
+        messages = [InboxMessage.model_validate(item) for item in batch]
+        if sum(len(item.render().encode('utf-8')) for item in messages) > 65536:
+            raise AgentControlError('Control inbox batch exceeds its byte bound')
+        for item in messages:
+            digest = item.digest()
+            previous = self._message_digests.get(item.message_id)
+            if previous is not None:
+                if previous != digest:
+                    raise AgentControlError('Immutable message ID has conflicting content', 'MESSAGE_CONFLICT')
+                continue
+            chat.add_user_message(item.render())
+            self._message_digests[item.message_id] = digest
+        self._state.messages = chat.messages
+        await self._save_control_checkpoint(chat, 'input')
+        self._control_deadline()
+
+    async def _finish_control_candidate(self, chat, content):
+        if self._control is None:
+            return True
+        self._state.step += 1
+        self._state.messages = chat.messages
+        self._output_candidate = content or ''
+        await self._save_control_checkpoint(chat, 'candidate')
+        decision = await self._await_with_budget(self._control.finish_candidate(self.checkpoint))
+        if decision not in ('continue', 'candidate_ready'):
+            raise AgentControlError('Control returned an invalid candidate decision')
+        return decision == 'candidate_ready'
+
+    def _attempt_options(self, method: Any) -> dict[str, Any]:
+        if self._provider_attempt_control is None:
+            return {}
+        require_attempt_capability(method)
+        return {'provider_attempt_control': self._provider_attempt_control}
 
     @property
     def state(self) -> AgentState:
@@ -229,18 +415,18 @@ class AsyncAgentLoop:
         """Release the concurrency lock (reset _running flag)."""
         self._running = False
 
-    async def run(self, user_input=None, system_prompt=None, extra_messages=None, initial_chat=None) -> ModelChatResponse:
+    async def run(self, user_input=None, system_prompt=None, extra_messages=None, initial_chat=None, *, continuation=None) -> ModelChatResponse:
         """Run exclusively; reject concurrent use before mutating state."""
         self._acquire_lock()
         try:
-            return await self._run(user_input, system_prompt, extra_messages, initial_chat)
+            return await self._run(user_input, system_prompt, extra_messages, initial_chat, continuation)
         finally:
             self._release_lock()
 
-    async def stream(self, user_input=None, system_prompt=None, extra_messages=None, initial_chat=None) -> AsyncIterator[ChatCompletionModel]:
+    async def stream(self, user_input=None, system_prompt=None, extra_messages=None, initial_chat=None, *, continuation=None) -> AsyncIterator[ChatCompletionModel]:
         """Stream exclusively and close the underlying stream on cancellation."""
         self._acquire_lock()
-        source = self._stream(user_input, system_prompt, extra_messages, initial_chat)
+        source = self._stream(user_input, system_prompt, extra_messages, initial_chat, continuation)
         try:
             async for chunk in source:
                 yield chunk
@@ -256,6 +442,8 @@ class AsyncAgentLoop:
         if timeout is None:
             return await awaitable
         remaining = timeout - (time.monotonic() - self._state.start_time)
+        if self._control is not None and self._absolute_deadline is not None:
+            remaining = min(remaining, self._absolute_deadline - self._control_clock())
         deadline = async_timeout(max(0.0, remaining))
         try:
             async with deadline:
@@ -288,6 +476,7 @@ class AsyncAgentLoop:
         system_prompt: Optional[str] = None,
         extra_messages: Optional[list[dict[str, Any]]] = None,
         initial_chat: Optional[ModelChat] = None,
+        continuation: AgentLoopCheckpoint | dict[str, Any] | None = None,
     ) -> ModelChatResponse:
         """Execute the full ReAct loop asynchronously.
 
@@ -313,12 +502,7 @@ class AsyncAgentLoop:
             AgentBudgetExceeded: If any budget constraint is violated.
         """
         # Build initial chat — NO prompt_fragment prepended at init
-        chat = _build_initial_chat(
-            user_input=user_input,
-            system_prompt=system_prompt,
-            extra_messages=extra_messages,
-            initial_chat=initial_chat,
-        )
+        chat = self._controlled_chat(user_input, system_prompt, extra_messages, initial_chat, continuation)
         seen_tool_call_ids = _initial_tool_call_ids(chat)
 
         # Capture the base system prompt WITHOUT prompt_fragment from the chat.
@@ -350,6 +534,7 @@ class AsyncAgentLoop:
             step=0,
             start_time=time.monotonic(),
         )
+        self._start_control(chat, seen_tool_call_ids)
 
         # Set parent context ContextVars for nested LLM node execution
         # Child tasks can read these via PARENT_BUDGET.get(), PARENT_STATE.get(),
@@ -380,6 +565,8 @@ class AsyncAgentLoop:
                             state=self.state,
                         )
                         raise
+
+                    await self._before_control_turn(chat)
 
                     # Hook: on_iteration_start
                     _invoke_hook_safely(
@@ -422,6 +609,7 @@ class AsyncAgentLoop:
                         tools=self._tools,
                         tool_choice=self._tool_choice,
                         **self._generate_kwargs,
+                        **self._attempt_options(self._client.llm.async_generate),
                     ))
 
                     # Update token counts from response usage
@@ -460,14 +648,20 @@ class AsyncAgentLoop:
 
                     # Step 6: RECORD_CONTENT — INVARIANT: suppress when tool_calls present
                     content = response.content
-                    if content and not tool_calls:
-                        collected_content.append(content)
-                        chat.add_assistant_message(content, responses_output=response.responses_output, gemini_parts=response.gemini_parts)
+                    if not tool_calls and (content or self._control is not None):
+                        if content:
+                            collected_content.append(content)
+                        chat.add_assistant_message(content or '', responses_output=response.responses_output, gemini_parts=response.gemini_parts)
 
                     # Step 7: CHECK_DONE — AFTER content recording (Phase 7)
                     # INVARIANT: Final content-only iteration must persist to state BEFORE break
                     if not tool_calls or (self._provider not in {"google", "gemini"} and is_finished(self._provider, response)):
-                        break
+                        if self._control is not None and tool_calls:
+                            raise AgentControlError('Final response carries unresolved tool calls')
+                        if await self._finish_control_candidate(chat, content):
+                            break
+                        collected_content.clear()
+                        continue
 
                     # Step 8: ADD_TOOL_CALL — tool-call message (no speculative content)
                     if tool_calls:
@@ -522,8 +716,9 @@ class AsyncAgentLoop:
                     # Update state messages reference
                     self._state.messages = chat.messages
 
-                    # Step 11: LOOP
+                    # Step 11: LOOP — checkpoint only after the complete batch.
                     self._state.step += 1
+                    await self._save_control_checkpoint(chat, 'tool_results')
 
             finally:
                 self._lock.release()
@@ -559,6 +754,7 @@ class AsyncAgentLoop:
         system_prompt: Optional[str] = None,
         extra_messages: Optional[list[dict[str, Any]]] = None,
         initial_chat: Optional[ModelChat] = None,
+        continuation: AgentLoopCheckpoint | dict[str, Any] | None = None,
     ) -> AsyncIterator[ChatCompletionModel]:
         """Stream chunks from the LLM asynchronously, executing tools between iterations.
 
@@ -578,12 +774,7 @@ class AsyncAgentLoop:
             TypeError: If used with sync iteration (for in ...).
         """
         # Build initial chat — NO prompt_fragment prepended at init
-        chat = _build_initial_chat(
-            user_input=user_input,
-            system_prompt=system_prompt,
-            extra_messages=extra_messages,
-            initial_chat=initial_chat,
-        )
+        chat = self._controlled_chat(user_input, system_prompt, extra_messages, initial_chat, continuation)
         seen_tool_call_ids = _initial_tool_call_ids(chat)
 
         # Capture the base system prompt WITHOUT prompt_fragment from the chat.
@@ -615,6 +806,7 @@ class AsyncAgentLoop:
             step=0,
             start_time=time.monotonic(),
         )
+        self._start_control(chat, seen_tool_call_ids)
 
         # Accumulated content across all iterations (for on_loop_complete)
         collected_content: list[str] = []
@@ -651,6 +843,8 @@ class AsyncAgentLoop:
                             state=self.state,
                         )
                         raise
+
+                    await self._before_control_turn(chat)
 
                     # Hook: on_iteration_start
                     _invoke_hook_safely(
@@ -695,6 +889,7 @@ class AsyncAgentLoop:
                         tools=self._tools,
                         tool_choice=self._tool_choice,
                         **self._generate_kwargs,
+                        **self._attempt_options(self._client.llm.async_stream_generate),
                     ))
                     try:
                         async for chunk in source:
@@ -763,16 +958,21 @@ class AsyncAgentLoop:
                         _reserve_tool_call_ids(tool_calls, seen_tool_call_ids)
 
                         # Record content — runs for EVERY iteration (including final no-tool answer)
-                        if summary.content and not tool_calls:
-                            iter_content = summary.content
+                        if not tool_calls and (summary.content or self._control is not None):
+                            iter_content = summary.content or ''
                             chat.add_assistant_message(iter_content, responses_output=summary.responses_output, gemini_parts=summary.gemini_parts)
                             collected_content.append(iter_content)
                             self._state.messages = chat.messages  # State sync BEFORE break
 
                         # Check done — AFTER content recording
                         if not tool_calls or (self._provider not in {"google", "gemini"} and is_finished(self._provider, response)):
-                            _completed = True
-                            break
+                            if self._control is not None and tool_calls:
+                                raise AgentControlError('Final response carries unresolved tool calls')
+                            if await self._finish_control_candidate(chat, summary.content):
+                                _completed = True
+                                break
+                            collected_content.clear()
+                            continue
 
                         # Add tool_call message (no speculative content)
                         if tool_calls:
@@ -833,6 +1033,10 @@ class AsyncAgentLoop:
                                 except asyncio.CancelledError:
                                     pass
 
+                        if self._control is not None:
+                            self._state.step += 1
+                            await self._save_control_checkpoint(chat, 'tool_results')
+
                         # Hook: on_tool_complete — invoke AFTER execution for each result
                         for result in results:
                             _invoke_hook_safely(
@@ -856,7 +1060,10 @@ class AsyncAgentLoop:
                             )
                             yield separator_chunk
 
-                    self._state.step += 1
+                    if self._control is None:
+                        self._state.step += 1
+                    elif last_chunk is None:
+                        raise AgentControlError('Provider returned an empty stream')
 
             finally:
                 # Fire on_loop_complete with accumulated response
