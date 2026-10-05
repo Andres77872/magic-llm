@@ -317,6 +317,70 @@ class AsyncAgentLoop:
             output_candidate=self._output_candidate,
         )
 
+    @staticmethod
+    def _response_json(value):
+        # Internal recovery includes provider metadata excluded from public dumps.
+        from pydantic import BaseModel
+        if isinstance(value, BaseModel):
+            return {key: AsyncAgentLoop._response_json(getattr(value, key))
+                    for key in type(value).model_fields}
+        if isinstance(value, dict):
+            return {key: AsyncAgentLoop._response_json(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [AsyncAgentLoop._response_json(item) for item in value]
+        return value
+
+    async def _native_response(self, chat):
+        save = getattr(self._control, 'response_ready', None)
+        restore = getattr(self._control, 'restore_response', None)
+        before = self._control_snapshot(chat) if callable(save) else None
+        retained = await restore(before, stream=False) if callable(restore) else None
+        if retained is not None:
+            if retained.get('kind') != 'response':
+                raise AgentControlError('Retained response mode changed', 'INVALID_CONTINUATION')
+            response = ModelChatResponse.model_validate(retained['response'])
+        else:
+            response = await self._await_with_budget(self._client.llm.async_generate(
+                chat, tools=self._tools, tool_choice=self._tool_choice,
+                **self._generate_kwargs, **self._attempt_options(self._client.llm.async_generate)))
+        if callable(save):
+            await save(before, {'kind': 'response', 'response': self._response_json(response)})
+        return response
+
+    async def _native_stream(self, chat):
+        save = getattr(self._control, 'response_ready', None)
+        restore = getattr(self._control, 'restore_response', None)
+        before = self._control_snapshot(chat) if callable(save) else None
+        retained = await restore(before, stream=True) if callable(restore) else None
+        if retained is not None:
+            if retained.get('kind') != 'stream':
+                raise AgentControlError('Retained response mode changed', 'INVALID_CONTINUATION')
+            for value in retained['chunks']:
+                yield ChatCompletionModel.model_validate(value)
+            return
+        chunks = [] if callable(save) else None
+        chunk_bytes = 2
+        source = self._stream_with_budget(self._client.llm.async_stream_generate(
+            chat, tools=self._tools, tool_choice=self._tool_choice,
+            **self._generate_kwargs, **self._attempt_options(self._client.llm.async_stream_generate)))
+        try:
+            async for chunk in source:
+                if chunks is not None:
+                    value = self._response_json(chunk)
+                    chunks.append(value)
+                    chunk_bytes += len(json.dumps(value, ensure_ascii=False, allow_nan=False,
+                                                   separators=(',', ':')).encode('utf-8')) + 1
+                    bound = getattr(self._control, 'response_capacity_bytes', None)
+                    if type(bound) is not int or bound < 1:
+                        raise AgentControlError('Native response storage has no byte capacity')
+                    if chunk_bytes > bound:
+                        raise AgentControlError('Native response exceeds admitted storage capacity')
+                yield chunk
+        finally:
+            await source.aclose()
+        if callable(save):
+            await save(before, {'kind': 'stream', 'chunks': chunks})
+
     async def _save_control_checkpoint(self, chat, boundary):
         if self._control is None:
             return
@@ -604,13 +668,7 @@ class AsyncAgentLoop:
                         tools=self._tools, tool_choice=self._tool_choice,
                         provider=self._provider, client=self._client,
                         generation_options=self._generate_kwargs)
-                    response = await self._await_with_budget(self._client.llm.async_generate(
-                        chat,
-                        tools=self._tools,
-                        tool_choice=self._tool_choice,
-                        **self._generate_kwargs,
-                        **self._attempt_options(self._client.llm.async_generate),
-                    ))
+                    response = await self._native_response(chat)
 
                     # Update token counts from response usage
                     if response.usage is not None:
@@ -884,13 +942,7 @@ class AsyncAgentLoop:
                         tools=self._tools, tool_choice=self._tool_choice,
                         provider=self._provider, client=self._client,
                         generation_options=self._generate_kwargs)
-                    source = self._stream_with_budget(self._client.llm.async_stream_generate(
-                        chat,
-                        tools=self._tools,
-                        tool_choice=self._tool_choice,
-                        **self._generate_kwargs,
-                        **self._attempt_options(self._client.llm.async_stream_generate),
-                    ))
+                    source = self._native_stream(chat)
                     try:
                         async for chunk in source:
                             before_input = getattr(summary.usage, "prompt_tokens", 0) or 0
