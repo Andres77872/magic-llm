@@ -195,6 +195,8 @@ class OpenAiBaseProvider(ABC):
             data.pop('callback')
         if 'fallback' in data:
             data.pop('fallback')
+        # Transport controls must reach the HTTP client, never the model body.
+        data.pop('timeout', None)
         if data.pop('json_output', False):
             if 'response_format' not in data:
                 data['response_format'] = {"type": "json_object"}

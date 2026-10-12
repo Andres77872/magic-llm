@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from magic_llm.exception.ChatException import ChatException, RequestValidationError
 from magic_llm.model.ModelChatStream import ChatMetaModel
+from magic_llm.util.http import HttpError
 
 
 class ProviderAttemptControlError(ChatException):
@@ -253,6 +254,13 @@ async def _observe(engine, chat, attempt, outcome, content, started):
     )
 
 
+def is_permanent_provider_error(error):
+    if isinstance(error, RequestValidationError):
+        return True
+    return (isinstance(error, HttpError) and type(error.status_code) is int
+            and 400 <= error.status_code < 500 and error.status_code not in (408, 429))
+
+
 def _terminal_error(error, semantic):
     if not isinstance(error, Exception):
         raise error
@@ -260,6 +268,11 @@ def _terminal_error(error, semantic):
         raise error
     if semantic:
         raise ProviderStreamInterrupted() from error
+    if is_permanent_provider_error(error):
+        raise ProviderAttemptControlError(
+            'Provider rejected the admitted request',
+            error_code='PROVIDER_HTTP_' + str(error.status_code),
+        ) from error
 
 
 async def controlled_stream(engine, func, chat, kwargs, control):

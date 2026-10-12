@@ -260,6 +260,7 @@ class EngineGoogle(BaseChat):
             "contents": api_contents,
             "generationConfig": {**engine_kwargs, **kwargs},
         }
+        data["generationConfig"].pop('timeout', None)
         if preamble:
             data["systemInstruction"] = {"parts": [{"text": preamble}]}
 
@@ -412,6 +413,7 @@ class EngineGoogle(BaseChat):
             "contents": api_contents,
             "generationConfig": {**engine_kwargs, **kwargs},
         }
+        data["generationConfig"].pop('timeout', None)
         if preamble:
             data["systemInstruction"] = {"parts": [{"text": preamble}]}
 

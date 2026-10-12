@@ -383,6 +383,7 @@ class EngineAnthropic(BaseChat):
             data['tool_choice'] = request_tools.tool_choice
 
         data.setdefault('max_tokens', 4096)
+        data.pop('timeout', None)
         if preamble:
             data['system'] = preamble
 

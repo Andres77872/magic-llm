@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union, List, Any, Dict, Tuple, TYPE_CHECKING, TypeVar
 
 from magic_llm.engine.attempt_control import (
-    ProviderAttemptControl, controlled_generate, controlled_stream, reject_sync_control,
+    ProviderAttemptControl, controlled_generate, controlled_stream, reject_sync_control, is_permanent_provider_error,
 )
 from magic_llm.engine._usage_factory import attach_attempt_metadata, usage_attempt_dict, usage_has_tokens
 from magic_llm.exception.ChatException import ChatException, RequestValidationError
@@ -348,7 +348,7 @@ class BaseChat(abc.ABC):
                     break
 
                 except Exception as e:
-                    if isinstance(e, RequestValidationError):
+                    if is_permanent_provider_error(e):
                         raise
                     if usage_has_tokens(locals().get('current_attempt_usage')):
                         attempt_usages.append(
@@ -481,7 +481,7 @@ class BaseChat(abc.ABC):
                     break
 
                 except Exception as e:
-                    if isinstance(e, RequestValidationError):
+                    if is_permanent_provider_error(e):
                         raise
                     if usage_has_tokens(locals().get('current_attempt_usage')):
                         attempt_usages.append(
@@ -550,7 +550,7 @@ class BaseChat(abc.ABC):
                     return response
 
                 except Exception as e:
-                    if isinstance(e, RequestValidationError):
+                    if is_permanent_provider_error(e):
                         raise
                     er = f"Async generation attempt {attempt + 1} failed: {e!r}"
                     logger.exception("Async generation attempt %d failed: %r", attempt + 1, e)
@@ -604,7 +604,7 @@ class BaseChat(abc.ABC):
                     return response
 
                 except Exception as e:
-                    if isinstance(e, RequestValidationError):
+                    if is_permanent_provider_error(e):
                         raise
                     er = f"Sync generation attempt {attempt + 1} failed: {e!r}"
                     logger.exception("Sync generation attempt %d failed: %r", attempt + 1, e)

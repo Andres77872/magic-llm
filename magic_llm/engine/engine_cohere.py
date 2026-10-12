@@ -76,6 +76,7 @@ class EngineCohere(BaseChat):
             "prompt_truncation": 'AUTO',
             **kwargs
         }
+        data.pop('timeout', None)
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
 

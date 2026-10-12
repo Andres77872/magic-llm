@@ -555,3 +555,81 @@ async def test_native_loop_rejects_unsupported_engine_without_leaking_control():
     with pytest.raises(ProviderAttemptControlError):
         await loop.run('hello')
     assert calls == []
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('status', [400, 401, 402, 403, 404, 413, 422])
+async def test_permanent_http_failures_are_reconciled_once_without_retry_or_fallback(stream, status):
+    from magic_llm.util.http import HttpError
+    async def failed_stream(index):
+        raise HttpError('PRIVATE_PROVIDER_ERROR', status)
+        yield chunk()
+    async def failed_generate(index):
+        raise HttpError('PRIVATE_PROVIDER_ERROR', status)
+    fallback = FakeProvider(stream=failed_stream, generate=failed_generate, model='fallback')
+    provider = FakeProvider(stream=failed_stream, generate=failed_generate, retries=3, fallback=fallback)
+    control = Control()
+    with pytest.raises(ProviderAttemptControlError) as caught:
+        if stream:
+            await collect(provider.async_stream_generate(ModelChat(), provider_attempt_control=control))
+        else:
+            await provider.async_generate(ModelChat(), provider_attempt_control=control)
+    assert caught.value.error_code == 'PROVIDER_HTTP_' + str(status)
+    assert 'PRIVATE_PROVIDER_ERROR' not in str(caught.value)
+    assert len(provider.calls) == len(control.admissions) == len(control.outcomes) == 1
+    assert control.outcomes[0][1].status == 'failed' and fallback.calls == []
+
+
+@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('status', [408, 429, 500, 503, None])
+async def test_transient_http_failures_still_retry_and_succeed(stream, status):
+    from magic_llm.util.http import HttpError
+    async def retry_stream(index):
+        if index == 1: raise HttpError('transient', status)
+        yield chunk('done', finish='stop')
+    async def retry_generate(index):
+        if index == 1: raise HttpError('transient', status)
+        return response()
+    provider = FakeProvider(stream=retry_stream, generate=retry_generate)
+    control = Control()
+    if stream:
+        await collect(provider.async_stream_generate(ModelChat(), provider_attempt_control=control))
+    else:
+        await provider.async_generate(ModelChat(), provider_attempt_control=control)
+    assert len(provider.calls) == len(control.admissions) == len(control.outcomes) == 2
+    assert [outcome.status for _, outcome in control.outcomes] == ['failed', 'completed']
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_regular_async_requests_do_not_retry_permanent_http_errors(stream):
+    from magic_llm.util.http import HttpError
+    async def failed_stream(index):
+        raise HttpError('permanent', 400)
+        yield chunk()
+    async def failed_generate(index):
+        raise HttpError('permanent', 400)
+    provider = FakeProvider(stream=failed_stream, generate=failed_generate, retries=3)
+    with pytest.raises(HttpError):
+        if stream: await collect(provider.async_stream_generate(ModelChat()))
+        else: await provider.async_generate(ModelChat())
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_regular_sync_requests_do_not_retry_permanent_http_errors(stream):
+    from magic_llm.util.http import HttpError
+    class Rejected(FakeProvider):
+        @BaseChat.sync_intercept_generate
+        def generate(self, chat, **kwargs):
+            self.calls.append(kwargs)
+            raise HttpError('permanent', 400)
+        @BaseChat.sync_intercept_stream_generate
+        def stream_generate(self, chat, **kwargs):
+            self.calls.append(kwargs)
+            raise HttpError('permanent', 400)
+            yield chunk()
+    provider = Rejected(retries=3)
+    with pytest.raises(HttpError):
+        if stream: list(provider.stream_generate(ModelChat()))
+        else: provider.generate(ModelChat())
+    assert len(provider.calls) == 1
