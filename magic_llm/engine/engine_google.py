@@ -118,16 +118,77 @@ def _canonical_result_part(message: dict, messages: list[dict]) -> dict:
 
 class EngineGoogle(BaseChat):
     engine = 'google'
+    DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta'
+    _OPTION_ALIASES = {
+        'top_p': 'topP',
+        'top_k': 'topK',
+        'max_tokens': 'maxOutputTokens',
+        'max_completion_tokens': 'maxOutputTokens',
+        'max_output_tokens': 'maxOutputTokens',
+        'stop': 'stopSequences',
+        'stop_sequences': 'stopSequences',
+        'presence_penalty': 'presencePenalty',
+        'frequency_penalty': 'frequencyPenalty',
+        'candidate_count': 'candidateCount',
+        'response_mime_type': 'responseMimeType',
+        'response_schema': 'responseSchema',
+        'response_json_schema': 'responseJsonSchema',
+        'response_modalities': 'responseModalities',
+        'thinking_config': 'thinkingConfig',
+        'speech_config': 'speechConfig',
+        'image_config': 'imageConfig',
+        'media_resolution': 'mediaResolution',
+        'safety_settings': 'safetySettings',
+        'cached_content': 'cachedContent',
+        'tool_config': 'toolConfig',
+        'service_tier': 'serviceTier',
+        'continuation_token': 'continuationToken',
+    }
+    _REQUEST_FIELDS = {'safetySettings', 'cachedContent', 'toolConfig', 'serviceTier',
+                       'continuationToken', 'labels', 'store'}
 
     def __init__(self,
                  api_key: str,
+                 base_url: Optional[str] = None,
+                 timeout: Optional[float] = 30,
                  **kwargs) -> None:
+        # AI Studio's native REST root is transport configuration, never a
+        # GenerationConfig field. A bare host and a /models listing URL are
+        # accepted too, matching the Google discovery adapter.
+        base = (base_url or self.DEFAULT_BASE_URL).rstrip('/').removesuffix('/models')
+        parsed = urlparse(base)
+        if parsed.path.endswith('/openai') or '/openai/' in parsed.path:
+            raise ValueError("Google's /openai endpoint requires engine='openai'; "
+                             "engine='google' uses the native Gemini API base URL.")
+        if parsed.scheme not in {'http', 'https'} or not parsed.netloc or parsed.query or parsed.fragment:
+            raise ValueError('Google base_url must be an HTTP(S) API root without a query or fragment')
+        if not parsed.path:
+            base += '/v1beta'
+        if kwargs.get('model'):
+            kwargs['model'] = kwargs['model'].removeprefix('models/')
         super().__init__(**kwargs)
-        base = 'https://generativelanguage.googleapis.com/v1beta/models/'
-        self.url_stream = f'{base}{self.model}:streamGenerateContent?alt=sse'
-        self.url = f'{base}{self.model}:generateContent'
-        self.url_tts = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent'
+        self.base_url = base
+        self.timeout = timeout
+        self.url_stream = f'{base}/models/{self.model}:streamGenerateContent?alt=sse'
+        self.url = f'{base}/models/{self.model}:generateContent'
+        self.url_tts = f'{base}/models/gemini-2.5-flash-preview-tts:generateContent'
         self.api_key = api_key
+
+    def _prepare_request_options(self, overrides: dict) -> dict:
+        """Separate native request fields from generation and transport options."""
+        options = {}
+        # Normalize each layer before merging so a call-time alias can override
+        # a native constructor default, and vice versa. Keep native extension
+        # fields intact instead of maintaining a brittle generation allowlist.
+        for source in (self.kwargs, overrides):
+            options.update({self._OPTION_ALIASES.get(k, k): v for k, v in source.items()
+                            if k not in {'base_url', 'timeout', 'tools', 'tool_choice'}})
+        options = {k: v for k, v in options.items() if v is not None}
+        request = {k: options.pop(k) for k in self._REQUEST_FIELDS if k in options}
+        if isinstance(options.get('stopSequences'), str):
+            options['stopSequences'] = [options['stopSequences']]
+        request['generationConfig'] = options
+        return request
 
     def prepare_data_sync(self, chat: ModelChat, **kwargs):
         """
@@ -255,12 +316,10 @@ class EngineGoogle(BaseChat):
         openai_tool_choice = kwargs.pop('tool_choice') if 'tool_choice' in kwargs else self.kwargs.get('tool_choice',
                                                                                                        None)
 
-        engine_kwargs = {k: v for k, v in self.kwargs.items() if k not in {'tools', 'tool_choice'}}
         data: dict = {
             "contents": api_contents,
-            "generationConfig": {**engine_kwargs, **kwargs},
+            **self._prepare_request_options(kwargs),
         }
-        data["generationConfig"].pop('timeout', None)
         if preamble:
             data["systemInstruction"] = {"parts": [{"text": preamble}]}
 
@@ -408,12 +467,10 @@ class EngineGoogle(BaseChat):
         openai_tool_choice = kwargs.pop('tool_choice') if 'tool_choice' in kwargs else self.kwargs.get('tool_choice',
                                                                                                        None)
 
-        engine_kwargs = {k: v for k, v in self.kwargs.items() if k not in {'tools', 'tool_choice'}}
         data: dict = {
             "contents": api_contents,
-            "generationConfig": {**engine_kwargs, **kwargs},
+            **self._prepare_request_options(kwargs),
         }
-        data["generationConfig"].pop('timeout', None)
         if preamble:
             data["systemInstruction"] = {"parts": [{"text": preamble}]}
 
@@ -571,7 +628,7 @@ class EngineGoogle(BaseChat):
             response = await client.post_json(url=self.url,
                                               data=json_data,
                                               headers=headers,
-                                              timeout=kwargs.get('timeout', 30))
+                                              timeout=kwargs.get('timeout', self.timeout))
             return self.process_generate(response)
 
     @BaseChat.sync_intercept_generate
@@ -581,7 +638,7 @@ class EngineGoogle(BaseChat):
             response = client.post_json(url=self.url,
                                         data=json_data,
                                         headers=headers,
-                                        timeout=kwargs.get('timeout', 30))
+                                        timeout=kwargs.get('timeout', self.timeout))
             return self.process_generate(response)
 
     def prepare_stream_response(self, chunk):
@@ -641,7 +698,7 @@ class EngineGoogle(BaseChat):
                                                self.url_stream,
                                                data=json_data,
                                                headers=headers,
-                                               timeout=kwargs.get('timeout', 30)):
+                                               timeout=kwargs.get('timeout', self.timeout)):
                 if chunk.strip():
                     yield self.prepare_stream_response(chunk)
 
@@ -652,7 +709,8 @@ class EngineGoogle(BaseChat):
         async with AsyncHttpClient() as client:
             async for chunk in client.post_stream(self.url_stream,
                                                   data=json_data,
-                                                  headers=headers):
+                                                  headers=headers,
+                                                  timeout=kwargs.get('timeout', self.timeout)):
                 if chunk.strip():
                     yield self.prepare_stream_response(chunk)
 
@@ -705,7 +763,7 @@ class EngineGoogle(BaseChat):
                     url=self.url_tts,
                     data=json_data,
                     headers=headers,
-                    timeout=kwargs.get('timeout', 30)
+                    timeout=kwargs.get('timeout', self.timeout)
                 )
 
                 # Extract PCM audio data from response
@@ -733,7 +791,7 @@ class EngineGoogle(BaseChat):
                     url=self.url_tts,
                     data=json_data,
                     headers=headers,
-                    timeout=kwargs.get('timeout', 30)
+                    timeout=kwargs.get('timeout', self.timeout)
                 )
 
                 # Extract PCM audio data from response
