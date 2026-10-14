@@ -8,6 +8,7 @@ import copy
 import logging
 import mimetypes
 import os
+import re
 import time
 import uuid
 import wave
@@ -184,11 +185,41 @@ class EngineGoogle(BaseChat):
             options.update({self._OPTION_ALIASES.get(k, k): v for k, v in source.items()
                             if k not in {'base_url', 'timeout', 'tools', 'tool_choice'}})
         options = {k: v for k, v in options.items() if v is not None}
+        # The shared schema is not a per-model capability list. Hosted Gemma
+        # rejects penalties but keeps sampling controls, while recent Gemini
+        # models use fixed sampling. Normalize generic UI defaults before I/O.
+        omitted = self._unsupported_sampling_fields().intersection(options)
+        for field in omitted:
+            options.pop(field)
+        if omitted:
+            logger.debug('Omitting unsupported sampling options for %s: %s',
+                         self.model, ', '.join(sorted(omitted)))
         request = {k: options.pop(k) for k in self._REQUEST_FIELDS if k in options}
         if isinstance(options.get('stopSequences'), str):
             options['stopSequences'] = [options['stopSequences']]
         request['generationConfig'] = options
         return request
+
+    def _unsupported_sampling_fields(self) -> set[str]:
+        penalties = {'presencePenalty', 'frequencyPenalty'}
+        if self._uses_fixed_sampling():
+            return penalties | {'temperature', 'topP', 'topK'}
+        if (self.model or '').lower().startswith('gemma-'):
+            return penalties
+        return set()
+
+    def _uses_fixed_sampling(self) -> bool:
+        """Model restrictions introduced with 3.6 Flash / 3.5 Flash-Lite."""
+        model = (self.model or '').lower()
+        # The latest Flash aliases use the new behavior. 3.5 Flash is also
+        # redirected to 3.6 Flash by the API (see Google's deprecations page).
+        if model in {'gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-3.5-flash'}:
+            return True
+        match = re.match(r'^gemini-(\d+)(?:\.(\d+))?-(.+)$', model)
+        if match is None:
+            return False
+        version = (int(match[1]), int(match[2] or 0))
+        return version >= (3, 6) or (version == (3, 5) and match[3].startswith('flash-lite'))
 
     def prepare_data_sync(self, chat: ModelChat, **kwargs):
         """

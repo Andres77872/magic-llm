@@ -57,11 +57,7 @@ def test_catalog_options_produce_native_gemini_payload(make_engine, chat, prepar
 
     assert json.loads(encoded) == data
     assert data["generationConfig"] == {
-        "temperature": 0,
-        "topP": 0.8,
         "maxOutputTokens": 128,
-        "presencePenalty": 0.1,
-        "frequencyPenalty": 0.2,
         "stopSequences": ["END"],
     }
     assert data["systemInstruction"] == {"parts": [{"text": "Be brief."}]}
@@ -96,7 +92,7 @@ def test_openai_compatibility_url_requires_openai_engine(make_engine):
 
 
 def test_call_options_override_defaults_across_aliases(make_engine, chat, prepare):
-    engine = make_engine(topP=0.7, max_tokens=256, stop=["OLD"], temperature=0.5)
+    engine = make_engine(model="gemini-2.5-flash", topP=0.7, max_tokens=256, stop=["OLD"], temperature=0.5)
     _, _, data = prepare(engine, chat, top_p=0.9, maxOutputTokens=64, stopSequences=None,
                          temperature=0, timeout=19, base_url="https://ignored.example/v1beta")
     assert data["generationConfig"] == {"topP": 0.9, "maxOutputTokens": 64, "temperature": 0}
@@ -113,8 +109,57 @@ def test_native_request_fields_stay_outside_generation_config(make_engine, chat,
     assert data["generationConfig"] == {
         "thinkingConfig": {"thinkingLevel": "LOW"},
         "responseMimeType": "application/json",
-        "topK": 32,
     }
+
+
+@pytest.mark.parametrize("model", [
+    "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "models/gemini-3.8-flash",
+    "gemini-3.5-flash-lite", "gemini-3.5-flash-lite-preview", "gemini-3.5-flash",
+    "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-4-argon",
+])
+def test_fixed_sampling_models_omit_ui_defaults_and_native_overrides(make_engine, chat, prepare, model):
+    engine = make_engine(model=model, temperature=0.8, top_p=1, top_k=40,
+                         presence_penalty=0.5, frequency_penalty=1, max_tokens=128)
+    _, _, data = prepare(engine, chat, frequencyPenalty=0.8, presencePenalty=-0.2, topP=0.5,
+                         topK=12, temperature=0, thinkingConfig={"thinkingLevel": "LOW"})
+    assert data["generationConfig"] == {"maxOutputTokens": 128, "thinkingConfig": {"thinkingLevel": "LOW"}}
+    assert engine.kwargs["frequency_penalty"] == 1
+
+
+@pytest.mark.parametrize("model", ["gemini-2.5-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview"])
+def test_older_models_preserve_sampling_and_penalty_mapping(make_engine, chat, prepare, model):
+    engine = make_engine(model=model, temperature=0.8, top_p=0.9, top_k=40,
+                         presence_penalty=0.5, frequency_penalty=1, max_tokens=128)
+    _, _, data = prepare(engine, chat, frequencyPenalty=0.8)
+    assert data["generationConfig"] == {
+        "temperature": 0.8, "topP": 0.9, "topK": 40, "presencePenalty": 0.5,
+        "frequencyPenalty": 0.8, "maxOutputTokens": 128,
+    }
+
+
+def test_fixed_sampling_omits_even_zero_valued_penalties(make_engine, chat, prepare):
+    engine = make_engine(presencePenalty=0, frequency_penalty=0, max_tokens=64)
+    _, _, data = prepare(engine, chat)
+    assert data["generationConfig"] == {"maxOutputTokens": 64}
+
+
+@pytest.mark.parametrize("model", ["gemma-4-31b-it", "gemma-4-26b-a4b-it", "models/gemma-4-31b-it"])
+def test_hosted_gemma_omits_penalties_and_preserves_sampling(make_engine, chat, prepare, model):
+    engine = make_engine(model=model, temperature=0.8, top_p=0.9, top_k=40,
+                         presence_penalty=0.5, frequency_penalty=1, max_tokens=128)
+    _, _, data = prepare(engine, chat, frequencyPenalty=0.8, presencePenalty=-0.2,
+                         temperature=0, stop="END", thinkingConfig={"thinkingLevel": "MINIMAL"})
+    assert data["generationConfig"] == {
+        "temperature": 0, "topP": 0.9, "topK": 40, "maxOutputTokens": 128,
+        "stopSequences": ["END"], "thinkingConfig": {"thinkingLevel": "MINIMAL"},
+    }
+    assert engine.kwargs["frequency_penalty"] == 1
+
+
+def test_hosted_gemma_omits_zero_valued_penalties(make_engine, chat, prepare):
+    engine = make_engine(model="gemma-4-31b-it", presencePenalty=0, frequency_penalty=0, max_tokens=64)
+    _, _, data = prepare(engine, chat, frequencyPenalty=0)
+    assert data["generationConfig"] == {"maxOutputTokens": 64}
 
 
 @pytest.mark.parametrize("operation", ["generate", "async_generate", "stream_generate", "async_stream_generate"])
@@ -131,7 +176,7 @@ def test_http_receives_timeout_and_native_payload(monkeypatch, make_engine, chat
     def capture(url, kwargs):
         captured.append((url, kwargs))
         payload = json.loads(kwargs["data"])
-        assert payload["generationConfig"] == {"topP": 0.8, "maxOutputTokens": 128}
+        assert payload["generationConfig"] == {"maxOutputTokens": 128}
         assert kwargs["headers"]["x-goog-api-key"] == "test-key"
         assert "test-key" not in url
 
