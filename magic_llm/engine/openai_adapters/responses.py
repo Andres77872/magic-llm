@@ -9,6 +9,7 @@ import re
 from copy import deepcopy
 
 from magic_llm.engine._usage_factory import build_usage_model
+from magic_llm.util.http import HttpError
 from magic_llm.engine.openai_adapters.openai_base import _is_official_openai_url
 from magic_llm.model.ModelChatResponse import ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel
@@ -65,7 +66,7 @@ def _usage(response):
 def _finish_reason(response):
     if response.get('error') or response.get('status') in {'failed', 'cancelled'}:
         error = response.get('error') or {}
-        raise ValueError(f"Responses API failed: {error.get('message') or response.get('status')}")
+        raise HttpError('Provider response failed', response_content=json.dumps({'error': error}).encode())
     if response.get('status') == 'incomplete':
         reason = (response.get('incomplete_details') or {}).get('reason')
         return 'length' if reason == 'max_output_tokens' else 'content_filter'
@@ -178,7 +179,7 @@ class OpenAIResponsesAdapter:
             context.update(id=response['id'], model=response.get('model'), created=response.get('created_at'))
         if kind in {'error', 'response.failed'}:
             error = response.get('error') or raw.get('error') or raw
-            raise ValueError(f"Responses API failed: {error.get('message', 'unknown error')}")
+            raise HttpError('Provider stream failed', response_content=json.dumps({'error': error}).encode())
         delta, finish, usage, output = {}, None, None, None
         if kind == 'response.output_text.delta':
             delta['content'] = raw['delta']

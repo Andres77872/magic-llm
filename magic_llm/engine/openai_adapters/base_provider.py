@@ -12,7 +12,7 @@ from magic_llm.exception.ChatException import ChatException
 from magic_llm.model import ModelChat, ModelChatResponse, ModelEmbeddingResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
-from magic_llm.util.http import AsyncHttpClient, HttpClient
+from magic_llm.util.http import AsyncHttpClient, HttpClient, HttpError
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +236,8 @@ class OpenAiBaseProvider(ABC):
         Returns:
             Normalized ModelChatResponse
         """
+        if raw.get('error'):
+            raise HttpError('Provider response failed', response_content=json.dumps(raw).encode())
         normalized = dict(raw)
         if normalized.get('usage'):
             normalized['usage'] = usage_from_openai_payload(normalized)
@@ -291,9 +293,10 @@ class OpenAiBaseProvider(ABC):
             if '[DONE]' in chunk:
                 return None
             chunk = json.loads(chunk[5:])
-            # TODO improve server side error per provider
+            if chunk.get('error'):
+                raise HttpError('Provider stream failed', response_content=json.dumps(chunk).encode())
             if 'choices' not in chunk:
-                raise ValueError(f'no choices, {chunk}')
+                raise ValueError('Provider stream omitted choices')
             chunk['usage'] = usage_from_openai_payload(chunk) if chunk.get('usage') else {}
             if len(chunk['choices']) == 0:
                 if not chunk['usage']:

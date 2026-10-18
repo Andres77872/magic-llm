@@ -1,4 +1,5 @@
 import asyncio
+from magic_llm.util.provider_errors import failure_code, response_code, MESSAGES
 import json
 import logging
 import zlib
@@ -38,8 +39,12 @@ class HttpError(Exception):
 
     def __init__(self, message: str, status_code: Optional[int] = None, response_content: Optional[bytes] = None):
         self.status_code = status_code
-        self.response_content = response_content
-        super().__init__(message)
+        self.provider_code = response_code(response_content)
+        self.code = failure_code(status_code, self.provider_code)
+        # Raw provider bodies can contain the supplied key. Retain neither the
+        # body nor its message in exceptions inspected by logs/hooks/storage.
+        self.response_content = None
+        super().__init__(MESSAGES[self.code] if status_code is not None or response_content is not None else message)
 
 
 def disable_automatic_retries(session):
@@ -150,21 +155,21 @@ class AsyncHttpClient:
                     if max_response_bytes is not None:
                         # Controlled requests do not log private URLs or bodies.
                         raise HttpError(f'HTTP {response.status}', response.status)
-                    error_msg = f"HTTP {response.status}: {content.decode('utf-8', errors='replace')}"
-                    logger.error(f"Request to {url} failed: {error_msg}")
+                    error_msg = f"HTTP {response.status}"
+                    logger.error("Provider request failed status=%s", response.status)
                     raise HttpError(error_msg, response.status, content)
                 return content
         except aiohttp.ClientError as e:
             if max_response_bytes is not None:
                 raise HttpError('Controlled HTTP transport failed') from e
-            logger.error(f"Request to {url} failed with aiohttp error: {str(e)}")
-            raise HttpError(f"aiohttp error: {str(e)}")
+            logger.error("Provider HTTP transport failed")
+            raise HttpError("Provider HTTP transport failed") from None
         except asyncio.TimeoutError as e:
             if max_response_bytes is not None:
                 raise HttpError('Controlled HTTP request timed out') from e
             # aiohttp raises a bare asyncio.TimeoutError (not a ClientError) when
             # the total timeout elapses; normalize it so callers only see HttpError.
-            logger.error(f"Request to {url} timed out after {timeout.total}s")
+            logger.error("Provider request timed out")
             raise HttpError(f"Request timed out after {timeout.total}s") from e
 
     async def post_json(self, url: str, **kwargs) -> Any:
@@ -181,7 +186,7 @@ class AsyncHttpClient:
             return json.loads(response.decode('utf-8'))
         except json.JSONDecodeError as e:
             if kwargs.get('max_response_bytes') is None:
-                logger.error(f"Failed to parse JSON response from {url}: {str(e)}")
+                logger.error("Provider returned invalid JSON")
             raise
 
     async def post_raw_binary(self, url: str, **kwargs) -> bytes:
@@ -264,8 +269,8 @@ class AsyncHttpClient:
             ) as response:
                 if response.status != 200:
                     content = await response.read()
-                    error_msg = f"HTTP {response.status}: {content.decode('utf-8', errors='replace')}"
-                    logger.error(f"Streaming request to {url} failed: {error_msg}")
+                    error_msg = f"HTTP {response.status}"
+                    logger.error("Provider stream failed status=%s", response.status)
                     raise HttpError(error_msg, response.status, content)
 
                 buffer = b''
@@ -278,8 +283,8 @@ class AsyncHttpClient:
                 if buffer.strip():
                     yield buffer
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            logger.error(f"Streaming request to {url} failed with aiohttp error: {e!r}")
-            raise HttpError(f"aiohttp streaming error: {e!r}")
+            logger.error("Provider streaming transport failed")
+            raise HttpError("Provider streaming transport failed") from None
 
     async def post_stream(self, url: str, **kwargs) -> AsyncGenerator[bytes, None]:
         """
@@ -336,20 +341,20 @@ class HttpClient:
         try:
             response = self.session.request(method, url, **kwargs)
             if response.status_code != 200:
-                error_msg = f"HTTP {response.status_code}: {response.content.decode('utf-8', errors='replace')}"
-                logger.error(f"Request to {url} failed: {error_msg}")
+                error_msg = f"HTTP {response.status_code}"
+                logger.error("Provider request failed status=%s", response.status_code)
                 raise HttpError(error_msg, response.status_code, response.content)
             return response.content
         except RequestException as e:
-            # Preserve the original error but add more context if possible
+            # Retain only the status and recognized error code.
             if hasattr(e, 'response') and hasattr(e.response, 'content'):
-                error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
-                logger.error(f"Request to {url} failed: {error_message}")
+                error_message = "Provider HTTP request failed"
+                logger.error("Provider HTTP request failed")
                 raise HttpError(error_message,
                                 getattr(e.response, 'status_code', None),
-                                getattr(e.response, 'content', None))
-            logger.error(f"Request to {url} failed with requests error: {str(e)}")
-            raise HttpError(f"requests error: {str(e)}")
+                                getattr(e.response, 'content', None)) from None
+            logger.error("Provider HTTP transport failed")
+            raise HttpError("Provider HTTP transport failed") from None
 
     def post_json(self, url: str, **kwargs) -> Any:
         """
@@ -364,7 +369,7 @@ class HttpClient:
         try:
             return json.loads(response.decode('utf-8'))
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response from {url}: {str(e)}")
+            logger.error("Provider returned invalid JSON")
             raise
 
     def post_raw_binary(self, url: str, **kwargs) -> bytes:
@@ -435,23 +440,23 @@ class HttpClient:
         try:
             with self.session.request(method, url, **kwargs) as response:
                 if response.status_code != 200:
-                    error_msg = f"HTTP {response.status_code}: {response.content.decode('utf-8', errors='replace')}"
-                    logger.error(f"Streaming request to {url} failed: {error_msg}")
+                    error_msg = f"HTTP {response.status_code}"
+                    logger.error("Provider stream failed status=%s", response.status_code)
                     raise HttpError(error_msg, response.status_code, response.content)
 
                 for line in response.iter_lines(decode_unicode=False):
                     if line:
                         yield line.decode('utf-8')
         except RequestException as e:
-            # Add context to the error if possible
+            # Retain only the status and recognized error code.
             if hasattr(e, 'response') and hasattr(e.response, 'content'):
-                error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
-                logger.error(f"Streaming request to {url} failed: {error_message}")
+                error_message = "Provider HTTP request failed"
+                logger.error("Provider HTTP stream failed")
                 raise HttpError(error_message,
                                 getattr(e.response, 'status_code', None),
-                                getattr(e.response, 'content', None))
-            logger.error(f"Streaming request to {url} failed with requests error: {str(e)}")
-            raise HttpError(f"requests streaming error: {str(e)}")
+                                getattr(e.response, 'content', None)) from None
+            logger.error("Provider streaming transport failed")
+            raise HttpError("Provider streaming transport failed") from None
 
     def stream_request_bytes(
         self,
@@ -481,8 +486,8 @@ class HttpClient:
         try:
             with self.session.request(method, url, **kwargs) as response:
                 if response.status_code != 200:
-                    error_msg = f"HTTP {response.status_code}: {response.content.decode('utf-8', errors='replace')}"
-                    logger.error(f"Streaming request to {url} failed: {error_msg}")
+                    error_msg = f"HTTP {response.status_code}"
+                    logger.error("Provider stream failed status=%s", response.status_code)
                     raise HttpError(error_msg, response.status_code, response.content)
 
                 for chunk in response.iter_content(chunk_size=chunk_size):
@@ -490,10 +495,10 @@ class HttpClient:
                         yield chunk
         except RequestException as e:
             if hasattr(e, 'response') and hasattr(e.response, 'content'):
-                error_message = f"{str(e)}: {e.response.content.decode('utf-8', errors='replace')}"
-                logger.error(f"Streaming request to {url} failed: {error_message}")
+                error_message = "Provider HTTP request failed"
+                logger.error("Provider HTTP stream failed")
                 raise HttpError(error_message,
                                 getattr(e.response, 'status_code', None),
-                                getattr(e.response, 'content', None))
-            logger.error(f"Streaming request to {url} failed with requests error: {str(e)}")
-            raise HttpError(f"requests streaming error: {str(e)}")
+                                getattr(e.response, 'content', None)) from None
+            logger.error("Provider streaming transport failed")
+            raise HttpError("Provider streaming transport failed") from None
