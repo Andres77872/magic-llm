@@ -2,8 +2,8 @@
 import json
 import logging
 import math
-import re
 from typing import Callable, Type, Optional, Dict, Any, Tuple
+from urllib.parse import urlsplit
 
 from magic_llm.engine.base_chat import BaseChat
 from magic_llm.engine.openai_adapters import (ProviderOpenAI,
@@ -22,6 +22,7 @@ from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.util.http import AsyncHttpClient, HttpClient
+from magic_llm.util.private_http import PrivateAsyncHttpClient, validate_private_provider_url
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +31,17 @@ class EngineOpenAI(BaseChat):
     engine = 'openai'
     external_embedding_control_version = 1
 
-    # Map domain patterns to provider classes for easier maintenance
+    # Match the parsed hostname; provider names in paths or host suffixes are
+    # not permission to use another provider's adapter.
     PROVIDER_MAPPING = {
-        r'api\.groq\.com': ProviderGroq,
-        r'api\.sambanova\.ai': ProviderSambaNova,
-        r'openrouter\.ai': ProviderOpenRouter,
-        r'api\.mistral\.ai': ProviderMistral,
-        r'api\.fireworks\.ai': ProviderFireworks,
-        r'api\.deepseek\.com': ProviderDeepseek,
-        r'api\.deepinfra\.com\/v1': ProviderDeepInfra,
-        r'api\.together\.xyz': ProviderTogether,
+        ('api.groq.com', ''): ProviderGroq,
+        ('api.sambanova.ai', ''): ProviderSambaNova,
+        ('openrouter.ai', ''): ProviderOpenRouter,
+        ('api.mistral.ai', ''): ProviderMistral,
+        ('api.fireworks.ai', ''): ProviderFireworks,
+        ('api.deepseek.com', ''): ProviderDeepseek,
+        ('api.deepinfra.com', '/v1'): ProviderDeepInfra,
+        ('api.together.xyz', ''): ProviderTogether,
     }
 
     def __init__(self,
@@ -47,6 +49,7 @@ class EngineOpenAI(BaseChat):
                  openai_adapter: Optional[Callable] = None,
                  base_url: Optional[str] = None,
                  endpoint: str = "chat_completions",
+                 private_transport: bool = False,
                  **kwargs) -> None:
         """
         Initialize the OpenAI engine with the appropriate provider.
@@ -60,6 +63,12 @@ class EngineOpenAI(BaseChat):
         if endpoint not in {"chat_completions", "responses"}:
             raise ValueError("endpoint must be chat_completions or responses")
         self.endpoint = endpoint
+        if type(private_transport) is not bool:
+            raise ValueError('private_transport must be a boolean')
+        self._private_transport = private_transport
+        if private_transport:
+            validate_private_provider_url(base_url or 'https://api.openai.com/v1')
+            openai_adapter = ProviderOpenAI
         super().__init__(**kwargs)
 
         if openai_adapter is None and base_url is None:
@@ -67,13 +76,18 @@ class EngineOpenAI(BaseChat):
             self.base = ProviderOpenAI(api_key=api_key, **kwargs)
             logger.debug("Using default OpenAI provider")
         elif base_url:
-            # Select provider based on base_url pattern matching
-            provider_class = self._get_provider_for_url(base_url)
-            self.base = provider_class(api_key=api_key, **kwargs)
-
-            # If a custom base_url is provided for OpenAI, pass it along
+            # An explicit adapter also applies when a custom base URL is set.
+            provider_class = (openai_adapter
+                if isinstance(openai_adapter, type) and issubclass(openai_adapter, OpenAiBaseProvider)
+                else self._get_provider_for_url(base_url))
             if provider_class == ProviderOpenAI:
-                self.base = ProviderOpenAI(api_key=api_key, base_url=base_url, **kwargs)
+                self.base = ProviderOpenAI(api_key=api_key, base_url=base_url,
+                                           stream_usage=not private_transport, **kwargs)
+            else:
+                self.base = provider_class(api_key=api_key, **kwargs)
+                # Specialized adapters may hardcode a default URL. An explicit
+                # base URL owns routing, including the provider's API prefix.
+                self.base.base_url = base_url
 
             logger.debug(f"Selected provider {provider_class.__name__} for URL: {base_url}")
         elif isinstance(openai_adapter, type) and issubclass(openai_adapter, OpenAiBaseProvider):
@@ -85,7 +99,8 @@ class EngineOpenAI(BaseChat):
             self.base = ProviderOpenAI(api_key=api_key, **kwargs)
             logger.warning(f"Unrecognized adapter type: {type(openai_adapter)}. Using default OpenAI provider.")
 
-        self._chat_provider = OpenAIResponsesAdapter(self.base) if endpoint == "responses" else self.base
+        self._chat_provider = (OpenAIResponsesAdapter(self.base, include_encrypted_reasoning=not private_transport)
+                               if endpoint == "responses" else self.base)
 
     @property
     def chat_url(self):
@@ -102,10 +117,11 @@ class EngineOpenAI(BaseChat):
         Returns:
             The provider class to use
         """
-        url_lower = url.lower()
+        parsed = urlsplit(url)
+        path = parsed.path.rstrip('/')
 
-        for pattern, provider in self.PROVIDER_MAPPING.items():
-            if re.search(pattern, url_lower):
+        for (hostname, prefix), provider in self.PROVIDER_MAPPING.items():
+            if parsed.hostname == hostname and (not prefix or path == prefix or path.startswith(prefix + '/')):
                 return provider
 
         # Default to OpenAI if no match is found
@@ -187,7 +203,7 @@ class EngineOpenAI(BaseChat):
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self._chat_provider.transform_request(chat, **kwargs)
-        async with AsyncHttpClient() as client:
+        async with (PrivateAsyncHttpClient() if self._private_transport else AsyncHttpClient()) as client:
             response = await client.post_json(url=self.chat_url,
                                               data=json_data,
                                               headers=headers,
@@ -196,6 +212,8 @@ class EngineOpenAI(BaseChat):
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
+        if self._private_transport:
+            raise ValueError('Protected custom providers require asynchronous execution')
         # Make the request and read the response.
         data, headers = self._chat_provider.transform_request(chat, **kwargs)
         with HttpClient() as client:
@@ -207,6 +225,8 @@ class EngineOpenAI(BaseChat):
 
     @BaseChat.sync_intercept_stream_generate
     def stream_generate(self, chat: ModelChat, **kwargs):
+        if self._private_transport:
+            raise ValueError('Protected custom providers require asynchronous execution')
         data, headers = self._chat_provider.transform_request(chat, stream=True, **kwargs)
         with HttpClient() as client:
             id_generation = ''
@@ -241,7 +261,7 @@ class EngineOpenAI(BaseChat):
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self._chat_provider.transform_request(chat, stream=True, **kwargs)
-        async with AsyncHttpClient() as client:
+        async with (PrivateAsyncHttpClient() if self._private_transport else AsyncHttpClient()) as client:
             id_generation = ''
             last_chunk = ''
             context = {}

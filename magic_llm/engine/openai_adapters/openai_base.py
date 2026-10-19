@@ -24,7 +24,9 @@ class ProviderOpenAI(OpenAiBaseProvider):
 
     def __init__(self,
                  base_url: str = "https://api.openai.com/v1",
+                 stream_usage: bool = True,
                  **kwargs):
+        self.stream_usage = stream_usage
         super().__init__(
             base_url=base_url,
             **kwargs
@@ -46,7 +48,7 @@ class ProviderOpenAI(OpenAiBaseProvider):
                     data["max_completion_tokens"] = data.pop("max_tokens")
                 else:
                     del data["max_tokens"]
-        if data.get("stream"):
+        if data.get("stream") and self.stream_usage:
             data["stream_options"] = {"include_usage": True}
         chat.validate_provider_payload(data)
         return json.dumps(data).encode("utf-8"), headers

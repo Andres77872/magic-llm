@@ -76,8 +76,9 @@ def _finish_reason(response):
 
 
 class OpenAIResponsesAdapter:
-    def __init__(self, provider):
+    def __init__(self, provider, *, include_encrypted_reasoning=True):
         self.provider = provider
+        self.include_encrypted_reasoning = include_encrypted_reasoning
 
     def transform_request(self, chat, **kwargs):
         raw, headers = self.provider.transform_request(chat, **kwargs)
@@ -127,7 +128,7 @@ class OpenAIResponsesAdapter:
             raise ValueError('Responses supports only one generation (n=1)')
         data.setdefault('store', False)
         include = list(data.get('include') or [])
-        if 'reasoning.encrypted_content' not in include:
+        if self.include_encrypted_reasoning and 'reasoning.encrypted_content' not in include:
             include.append('reasoning.encrypted_content')
         # GPT-6 defaults to reasoning, including when effort is omitted.
         # Keep this model-specific rule off OpenAI-compatible providers.
@@ -137,7 +138,10 @@ class OpenAIResponsesAdapter:
             for name in ('temperature', 'top_p', 'top_logprobs', 'logprobs'):
                 data.pop(name, None)
             include = [value for value in include if value != 'message.output_text.logprobs']
-        data['include'] = include
+        if include:
+            data['include'] = include
+        else:
+            data.pop('include', None)
         chat.validate_provider_payload(data)
         return json.dumps(data).encode('utf-8'), headers
 
