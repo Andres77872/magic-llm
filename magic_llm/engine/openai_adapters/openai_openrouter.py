@@ -5,6 +5,8 @@ from magic_llm.model.ModelChatStream import ChatCompletionModel
 
 
 class ProviderOpenRouter(OpenAiBaseProvider):
+    supports_vision = True
+
     def __init__(self, **kwargs):
         super().__init__(
             base_url="https://openrouter.ai/api/v1",

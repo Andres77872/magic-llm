@@ -13,7 +13,7 @@ from magic_llm.engine.attempt_control import (
     ProviderAttemptControlError, ProviderStreamInterrupted,
 )
 from magic_llm.engine.base_chat import BaseChat, RetryConfig
-from magic_llm.exception.ChatException import RequestValidationError
+from magic_llm.exception.ChatException import ChatException, RequestValidationError
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelChatStream import ChatCompletionModel, UsageModel
 
@@ -352,6 +352,100 @@ async def test_fallback_has_own_model_admission_and_same_operation(stream_mode):
     assert second.is_fallback and second.model == 'forbidden'
     assert second.request_operation_id == first.request_operation_id
     assert second.parent_attempt_id == first.provider_attempt_id
+
+
+def vision_rejected():
+    return ChatException('Model cannot process images', error_code='VISION_NOT_SUPPORTED')
+
+
+@pytest.mark.parametrize('stream_mode', [False, True])
+async def test_unsupported_vision_is_not_retried_and_keeps_its_message(stream_mode):
+    async def reject(index):
+        raise vision_rejected()
+
+    async def reject_stream(index):
+        raise vision_rejected()
+        yield
+
+    provider = FakeProvider(stream=reject_stream, generate=reject, retries=3)
+    control = Control()
+    with pytest.raises(ProviderAttemptControlError) as caught:
+        if stream_mode:
+            await collect(provider.async_stream_generate(ModelChat(), provider_attempt_control=control))
+        else:
+            await provider.async_generate(ModelChat(), provider_attempt_control=control)
+    assert len(provider.calls) == 1
+    assert caught.value.error_code == 'VISION_NOT_SUPPORTED'
+    assert caught.value.message == 'Model cannot process images'
+    assert isinstance(caught.value.__cause__, ChatException)
+
+
+@pytest.mark.parametrize('stream_mode', [False, True])
+async def test_unsupported_vision_still_tries_fallback(stream_mode):
+    async def reject(index):
+        raise vision_rejected()
+
+    async def reject_stream(index):
+        raise vision_rejected()
+        yield
+
+    async def succeed(index):
+        return response()
+
+    async def succeed_stream(index):
+        yield chunk('done', finish='stop')
+
+    fallback = FakeProvider(stream=succeed_stream, generate=succeed, model='allowed')
+    provider = FakeProvider(stream=reject_stream, generate=reject, retries=3, fallback=fallback)
+    control = Control()
+    if stream_mode:
+        await collect(provider.async_stream_generate(ModelChat(), provider_attempt_control=control))
+    else:
+        await provider.async_generate(ModelChat(), provider_attempt_control=control)
+    assert len(provider.calls) == 1
+    assert len(fallback.calls) == 1
+    assert [out.status for _, out in control.outcomes] == ['failed', 'completed']
+
+
+@pytest.mark.parametrize('stream_mode', [False, True])
+async def test_exhausted_attempts_stay_generic_after_a_transient_fallback_failure(stream_mode):
+    async def reject(index):
+        raise vision_rejected()
+
+    async def reject_stream(index):
+        raise vision_rejected()
+        yield
+
+    async def fail(index):
+        raise ConnectionError('fail')
+
+    async def fail_stream(index):
+        raise ConnectionError('fail')
+        yield
+
+    fallback = FakeProvider(stream=fail_stream, generate=fail, model='allowed', retries=1)
+    provider = FakeProvider(stream=reject_stream, generate=reject, retries=3, fallback=fallback)
+    control = Control()
+    with pytest.raises(ProviderAttemptControlError) as caught:
+        if stream_mode:
+            await collect(provider.async_stream_generate(ModelChat(), provider_attempt_control=control))
+        else:
+            await provider.async_generate(ModelChat(), provider_attempt_control=control)
+    assert caught.value.error_code == 'PROVIDER_ATTEMPTS_EXHAUSTED'
+
+
+async def test_real_adapter_rejects_image_once_without_dispatch():
+    png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=='
+    provider = MagicLLM(engine='openai', model='vision-less', private_key='fake-test-only',
+                        base_url='https://api.fireworks.ai/inference/v1', retries=3).llm
+    chat = ModelChat()
+    chat.add_user_message('Describe', image=f'data:image/png;base64,{png}')
+    control = Control()
+    with pytest.raises(ProviderAttemptControlError) as caught:
+        await collect(provider.async_stream_generate(chat, provider_attempt_control=control))
+    assert len(control.admissions) == 1
+    assert caught.value.error_code == 'VISION_NOT_SUPPORTED'
+    assert 'does not support image' in caught.value.message
 
 
 @pytest.mark.parametrize('stream_mode', [False, True])

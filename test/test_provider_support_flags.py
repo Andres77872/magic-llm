@@ -1,17 +1,24 @@
 """Offline provider media support-flag and fail-fast matrix."""
 
+import json
+
 import pytest
 
 from magic_llm.engine.openai_adapters.openai_base import ProviderOpenAI
 from magic_llm.engine.openai_adapters.openai_deepinfra import ProviderDeepInfra
 from magic_llm.engine.openai_adapters.openai_fireworks import ProviderFireworks
 from magic_llm.engine.openai_adapters.openai_groq import ProviderGroq
+from magic_llm.engine.openai_adapters.openai_openrouter import ProviderOpenRouter
 from magic_llm.engine.openai_adapters.openai_together import ProviderTogether
 from magic_llm.exception.ChatException import ChatException
+from magic_llm.model import ModelChat
 from magic_llm.model.ModelAudio import AudioTranscriptionsRequest
 
 
 WAV_BYTES = b'RIFF\x10\x00\x00\x00WAVEfmt '
+PNG_1x1_BASE64 = (
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=='
+)
 
 
 def _transcription():
@@ -61,12 +68,30 @@ def _transcription():
             'supports_stt_async': False,
             'supports_vision': False,
         }),
+        ('openrouter', ProviderOpenRouter(api_key='dummy', model='openai/gpt-4o'), {
+            'supports_tts_sync': False,
+            'supports_tts_async': False,
+            'supports_stt_sync': False,
+            'supports_stt_async': False,
+            'supports_vision': True,
+        }),
     ],
-    ids=['openai', 'together', 'deepinfra', 'fireworks', 'groq_non_supporting'],
+    ids=['openai', 'together', 'deepinfra', 'fireworks', 'groq_non_supporting', 'openrouter'],
 )
 def test_openai_compatible_media_support_flags(label, provider, expected):
     for attr, value in expected.items():
         assert getattr(provider, attr) is value, f'{label}: {attr}'
+
+
+def test_openrouter_forwards_image_input():
+    provider = ProviderOpenRouter(api_key='dummy', model='openai/gpt-4o')
+    chat = ModelChat()
+    chat.add_user_message('Describe', image=f'data:image/png;base64,{PNG_1x1_BASE64}')
+
+    body, _ = provider.transform_request(chat)
+
+    content = json.loads(body)['messages'][-1]['content']
+    assert any(part['type'] == 'image_url' for part in content)
 
 
 def test_custom_openai_compatible_url_downgrades_unverified_media_and_vision():

@@ -275,6 +275,21 @@ def _terminal_error(error, semantic):
         ) from error
 
 
+def _unsupported_by_provider(error):
+    # Raised locally before dispatch: this provider rejects the same request the
+    # same way every time. Retrying is pointless, but a fallback may support it.
+    return isinstance(error, ChatException) and error.error_code == 'VISION_NOT_SUPPORTED'
+
+
+def _exhausted_error(last_error):
+    if _unsupported_by_provider(last_error):
+        return ProviderAttemptControlError(last_error.message, error_code=last_error.error_code)
+    return ProviderAttemptControlError(
+        'Provider generation exhausted its admitted attempts',
+        error_code='PROVIDER_ATTEMPTS_EXHAUSTED',
+    )
+
+
 async def controlled_stream(engine, func, chat, kwargs, control):
     chain = _providers(engine, func, True)
     operation_id, parent_id, index = str(uuid4()), None, 0
@@ -318,12 +333,11 @@ async def controlled_stream(engine, func, chat, kwargs, control):
                 return
             _terminal_error(error, semantic)
             last_error = error
+            if _unsupported_by_provider(error):
+                break
             if retry_index < attempts:
                 await asyncio.sleep(delay)
-    raise ProviderAttemptControlError(
-        'Provider generation exhausted its admitted attempts',
-        error_code='PROVIDER_ATTEMPTS_EXHAUSTED',
-    ) from last_error
+    raise _exhausted_error(last_error) from last_error
 
 
 async def controlled_generate(engine, func, chat, kwargs, control):
@@ -351,9 +365,8 @@ async def controlled_generate(engine, func, chat, kwargs, control):
                 return response
             _terminal_error(error, False)
             last_error = error
+            if _unsupported_by_provider(error):
+                break
             if retry_index < attempts:
                 await asyncio.sleep(delay)
-    raise ProviderAttemptControlError(
-        'Provider generation exhausted its admitted attempts',
-        error_code='PROVIDER_ATTEMPTS_EXHAUSTED',
-    ) from last_error
+    raise _exhausted_error(last_error) from last_error
