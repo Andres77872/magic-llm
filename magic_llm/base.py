@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Type, TYPE_CHECKING
+from typing import Any, Callable, Optional, Dict, Type, TYPE_CHECKING
 
 from magic_llm.engine import (
     EngineOpenAI,
@@ -32,6 +32,7 @@ class MagicLlmBase:
         engine: str,
         private_key: Optional[str] = None,
         model: Optional[str] = None,
+        transport: Optional[Callable[[BaseChat], Any]] = None,
         **kwargs
     ) -> None:
         """
@@ -41,6 +42,10 @@ class MagicLlmBase:
             engine: The name of the LLM engine to use
             private_key: API key for authentication
             model: The specific model to use
+            transport: Optional ``transport(engine) -> llm`` that wraps the
+                engine and becomes ``self.llm`` (see
+                ``magic_llm.engine.transport.EngineTransport``). Engine
+                options such as ``retries`` still go to the engine.
             **kwargs: Additional arguments for the engine initialization
 
         Raises:
@@ -80,7 +85,10 @@ class MagicLlmBase:
                     f"Azure Speech requires {', '.join(missing)} for engine='azure'"
                 )
 
-        self.llm: BaseChat = engine_class(**engine_params)
+        engine_instance = engine_class(**engine_params)
+        if transport is not None and not callable(transport):
+            raise TypeError("transport must be callable")
+        self.llm: BaseChat = transport(engine_instance) if transport is not None else engine_instance
 
     @classmethod
     def _resolve_discovery_adapter(

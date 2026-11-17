@@ -521,12 +521,10 @@ class TestAsyncAgentLoopBuiltinTodoTools:
 
     # ─── Content Suppression Invariant Tests ────────────────────────────
 
-    def test_async_run_content_suppressed_when_tool_calls(self):
-        """INVARIANT + Phase 7: When run() response has both content AND tool_calls,
-        content is suppressed for the tool-call iteration — no add_assistant_message
-        for THAT iteration. After Phase 7 fix, the final content-only iteration
-        correctly records content to state BEFORE break, resulting in 2 assistant
-        messages: [tool-call, final-answer]."""
+    def test_async_run_text_beside_tool_calls_stays_out_of_the_answer(self):
+        """INVARIANT: text the model writes beside its tool calls is kept in
+        the tool-call message, so the next call sees it, and is never part of
+        the final answer."""
         client = MagicMock()
         client.llm = MagicMock()
         tc = _make_tool_call()
@@ -555,11 +553,11 @@ class TestAsyncAgentLoopBuiltinTodoTools:
             # so we now have 2 assistant messages: [tool-call, final-answer].
             assert len(assistant_msgs) == 2
 
-            # Msg 1: The tool-call message with content=None (pre-tool suppressed)
+            # Msg 1: The tool-call message, with the text written beside the calls
             tool_call_msg = assistant_msgs[0]
             assert tool_call_msg["role"] == "assistant"
             assert "tool_calls" in tool_call_msg
-            assert tool_call_msg.get("content") is None  # pre-tool content suppressed
+            assert tool_call_msg.get("content") == "thinking..."  # kept for the model
 
             # Msg 2: The final answer (no tool_calls, content preserved)
             final_msg = assistant_msgs[1]
@@ -1086,11 +1084,10 @@ class TestAsyncAgentLoopStream:
 
     # ─── Content Suppression Invariant Tests ────────────────────────────
 
-    def test_async_stream_content_suppressed_when_tool_calls(self):
-        """INVARIANT: When stream() iteration has content AND tool_calls,
-        content is suppressed — no assistant message added, only
-        add_tool_call_message(content=None). Pre-tool speculative text
-        is never persisted to chat history."""
+    def test_async_stream_text_beside_tool_calls_stays_out_of_the_answer(self):
+        """INVARIANT: text the model writes beside its tool calls is kept in
+        the tool-call message, so the next call sees it, and is never part of
+        the final answer."""
         client = MagicMock()
         client.llm = MagicMock()
 
@@ -1161,14 +1158,14 @@ class TestAsyncAgentLoopStream:
             assistant_msgs = [
                 m for m in loop.state.messages if m.get("role") == "assistant"
             ]
-            # Phase 7 fix: 2 assistant messages — tool-call (iter-1 content suppressed)
+            # 2 assistant messages — tool-call (with iter-1 text, for the model)
             # + final content-only (iter-2 "done" recorded BEFORE break).
             assert len(assistant_msgs) == 2
 
             tool_call_msg = assistant_msgs[0]
             assert tool_call_msg["role"] == "assistant"
             assert "tool_calls" in tool_call_msg
-            assert tool_call_msg.get("content") is None  # iter-1 content suppressed
+            assert tool_call_msg.get("content") == "thinking"  # kept for the model, not the answer
 
             # Phase 7: iter-2's content-only "done" IS recorded before break
             final_msg = assistant_msgs[1]

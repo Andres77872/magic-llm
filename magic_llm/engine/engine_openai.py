@@ -17,10 +17,10 @@ from magic_llm.engine.openai_adapters import (ProviderOpenAI,
                                               ProviderTogether,
                                               OpenAiBaseProvider)
 from magic_llm.engine.openai_adapters.responses import OpenAIResponsesAdapter
-from magic_llm.engine._usage_factory import build_usage_model
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
+from magic_llm.exception.ChatException import ProviderProtocolError
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 from magic_llm.util.private_http import PrivateAsyncHttpClient, validate_private_provider_url
 
@@ -168,38 +168,6 @@ class EngineOpenAI(BaseChat):
         """Backward compatible alias for transform_response."""
         return self.transform_response(r)
 
-    async def _poll_openrouter_usage_async(
-        self, id_generation: str, headers: dict, timeout: int = 30
-    ) -> dict | None:
-        """Poll OpenRouter /generation endpoint for usage data after streaming."""
-        url = f'https://openrouter.ai/api/v1/generation?id={id_generation}'
-        async with AsyncHttpClient() as client:
-            response = await client.request("GET", url, headers=headers, timeout=timeout)
-            data = json.loads(response.decode('utf-8'))
-            u = data['data']
-            return {
-                'completion_tokens': u['native_tokens_completion'],
-                'prompt_tokens': u['native_tokens_prompt'],
-                'total_tokens': u['native_tokens_prompt'] + u['native_tokens_completion'],
-                'provider_request_id': id_generation,
-            }
-
-    def _poll_openrouter_usage_sync(
-        self, id_generation: str, headers: dict, timeout: int = 30
-    ) -> dict | None:
-        """Sync poll OpenRouter /generation endpoint for usage data after streaming."""
-        url = f'https://openrouter.ai/api/v1/generation?id={id_generation}'
-        with HttpClient() as client:
-            response = client.request("GET", url, headers=headers, timeout=timeout)
-            data = json.loads(response.decode('utf-8'))
-            u = data['data']
-            return {
-                'completion_tokens': u['native_tokens_completion'],
-                'prompt_tokens': u['native_tokens_prompt'],
-                'total_tokens': u['native_tokens_prompt'] + u['native_tokens_completion'],
-                'provider_request_id': id_generation,
-            }
-
     @BaseChat.async_intercept_generate
     async def async_generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
         json_data, headers = self._chat_provider.transform_request(chat, **kwargs)
@@ -230,7 +198,6 @@ class EngineOpenAI(BaseChat):
         data, headers = self._chat_provider.transform_request(chat, stream=True, **kwargs)
         with HttpClient() as client:
             id_generation = ''
-            last_chunk = ''
             context = {}
             for chunk in client.stream_request("POST",
                                                self.chat_url,
@@ -240,30 +207,18 @@ class EngineOpenAI(BaseChat):
                 if c := self.transform_stream_chunk(chunk.strip(), context):
                     if c.id:
                         id_generation = c.id
-                    last_chunk = c
                     context.update(id_generation=id_generation, last_chunk=c)
                     yield c
 
             if self.endpoint == "responses" and not context.get("terminal"):
-                raise ValueError("Responses stream ended before a terminal event")
+                raise ProviderProtocolError("Responses stream ended before a terminal event")
 
-            # OpenRouter usage polling at engine level (sync path)
-            if id_generation and isinstance(self.base, ProviderOpenRouter):
-                try:
-                    usage = self._poll_openrouter_usage_sync(
-                        id_generation, self.base.headers, kwargs.get('timeout', 30)
-                    )
-                    if last_chunk and usage:
-                        last_chunk.usage = build_usage_model(**usage, provider_extra={'id_generation': id_generation})
-                except Exception as e:
-                    logger.warning(f"OpenRouter usage polling failed: {e}")
 
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self._chat_provider.transform_request(chat, stream=True, **kwargs)
         async with (PrivateAsyncHttpClient() if self._private_transport else AsyncHttpClient()) as client:
             id_generation = ''
-            last_chunk = ''
             context = {}
             async for chunk in client.post_stream(self.chat_url,
                                                   data=json_data,
@@ -273,23 +228,12 @@ class EngineOpenAI(BaseChat):
                 if c := self.transform_stream_chunk(chunk.strip(), context):
                     if c.id:
                         id_generation = c.id
-                    last_chunk = c
                     context.update(id_generation=id_generation, last_chunk=c)
                     yield c
 
             if self.endpoint == "responses" and not context.get("terminal"):
-                raise ValueError("Responses stream ended before a terminal event")
+                raise ProviderProtocolError("Responses stream ended before a terminal event")
 
-            # OpenRouter usage polling at engine level (non-blocking, after stream completes)
-            if id_generation and isinstance(self.base, ProviderOpenRouter):
-                try:
-                    usage = await self._poll_openrouter_usage_async(
-                        id_generation, self.base.headers, kwargs.get('timeout', 30)
-                    )
-                    if last_chunk and usage:
-                        last_chunk.usage = build_usage_model(**usage, provider_extra={'id_generation': id_generation})
-                except Exception as e:
-                    logger.warning(f"OpenRouter usage polling failed: {e}")
 
     def embedding(self, text: list[str] | str, **kwargs):
         with HttpClient() as client:

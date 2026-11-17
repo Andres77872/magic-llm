@@ -1,5 +1,8 @@
 import asyncio
-from magic_llm.util.provider_errors import failure_code, response_code, MESSAGES
+from magic_llm.util.provider_errors import (
+    ERROR_TYPES, MESSAGES, failure_code, mentions_context_overflow, mentions_rejected_key,
+    response_code, response_retry_after, response_type,
+)
 import json
 import logging
 import zlib
@@ -35,16 +38,38 @@ def _headers_without_multipart_content_type(headers: Optional[dict[str, str]]) -
 
 
 class HttpError(Exception):
-    """Base exception for HTTP client errors."""
+    """A failed provider request, carrying only what is safe to keep.
 
-    def __init__(self, message: str, status_code: Optional[int] = None, response_content: Optional[bytes] = None):
+    ``status_code``: the HTTP status, when there was one.
+    ``provider_code``: a recognized provider code (auth, quota, rate limit).
+    ``error_type``: a recognized typed error kind (``ERROR_TYPES``), such as
+    ``context_length_exceeded``; given by the caller or read from the body.
+    ``code``: the classification (``MESSAGES`` keys), e.g.
+    ``PROVIDER_CONTEXT_EXCEEDED`` for a request too large for the model.
+    ``retry_after``: a numeric ``retry_after`` the body gave, in seconds.
+
+    *response_content* is classified and dropped: raw provider bodies can
+    contain the supplied key or prompt text, so neither the body nor a
+    message taken from it is kept. With a body, the text is the safe message
+    for the classification and the status. Without one, *message* is the
+    library's own wording and is kept as given.
+    """
+
+    def __init__(self, message: str, status_code: Optional[int] = None,
+                 response_content: Optional[bytes] = None, error_type: Optional[str] = None):
         self.status_code = status_code
         self.provider_code = response_code(response_content)
-        self.code = failure_code(status_code, self.provider_code)
-        # Raw provider bodies can contain the supplied key. Retain neither the
-        # body nor its message in exceptions inspected by logs/hooks/storage.
+        if not (isinstance(error_type, str) and error_type in ERROR_TYPES):
+            error_type = response_type(response_content)
+        self.error_type = error_type
+        self.retry_after = response_retry_after(response_content)
+        self.code = failure_code(status_code, self.provider_code, error_type,
+                                 mentions_context_overflow(response_content),
+                                 mentions_rejected_key(response_content))
         self.response_content = None
-        super().__init__(MESSAGES[self.code] if status_code is not None or response_content is not None else message)
+        if response_content is not None:
+            message = MESSAGES[self.code] + (f' (HTTP {status_code})' if status_code is not None else '')
+        super().__init__(message)
 
 
 def disable_automatic_retries(session):
@@ -163,7 +188,7 @@ class AsyncHttpClient:
             if max_response_bytes is not None:
                 raise HttpError('Controlled HTTP transport failed') from e
             logger.error("Provider HTTP transport failed")
-            raise HttpError("Provider HTTP transport failed") from None
+            raise HttpError(f"Provider HTTP transport failed ({type(e).__name__})") from None
         except asyncio.TimeoutError as e:
             if max_response_bytes is not None:
                 raise HttpError('Controlled HTTP request timed out') from e
@@ -284,7 +309,7 @@ class AsyncHttpClient:
                     yield buffer
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             logger.error("Provider streaming transport failed")
-            raise HttpError("Provider streaming transport failed") from None
+            raise HttpError(f"Provider streaming transport failed ({type(e).__name__})") from None
 
     async def post_stream(self, url: str, **kwargs) -> AsyncGenerator[bytes, None]:
         """
@@ -354,7 +379,7 @@ class HttpClient:
                                 getattr(e.response, 'status_code', None),
                                 getattr(e.response, 'content', None)) from None
             logger.error("Provider HTTP transport failed")
-            raise HttpError("Provider HTTP transport failed") from None
+            raise HttpError(f"Provider HTTP transport failed ({type(e).__name__})") from None
 
     def post_json(self, url: str, **kwargs) -> Any:
         """
@@ -456,7 +481,7 @@ class HttpClient:
                                 getattr(e.response, 'status_code', None),
                                 getattr(e.response, 'content', None)) from None
             logger.error("Provider streaming transport failed")
-            raise HttpError("Provider streaming transport failed") from None
+            raise HttpError(f"Provider streaming transport failed ({type(e).__name__})") from None
 
     def stream_request_bytes(
         self,
@@ -501,4 +526,4 @@ class HttpClient:
                                 getattr(e.response, 'status_code', None),
                                 getattr(e.response, 'content', None)) from None
             logger.error("Provider streaming transport failed")
-            raise HttpError("Provider streaming transport failed") from None
+            raise HttpError(f"Provider streaming transport failed ({type(e).__name__})") from None

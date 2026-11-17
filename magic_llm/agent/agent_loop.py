@@ -31,6 +31,8 @@ from magic_llm.agent._loop_shared import (
     _register_tools_with_executor,
     _initial_tool_call_ids,
     _reserve_tool_call_ids,
+    final_answer_inputs,
+    final_answer_tool_calls,
 )
 from magic_llm.agent.builtin_tools import create_builtin_todo_bundle
 from magic_llm.agent.hooks import AgentHooks
@@ -303,14 +305,16 @@ class AgentLoop:
                 )
 
                 # Step 2: LLM_CALL — pass raw tools to engine/core tooling.
-                validate_agent_request(self._request_guard, chat=chat,
-                    tools=self._tools, tool_choice=self._tool_choice,
+                call_chat, call_choice, final_call = final_answer_inputs(
+                    chat, self._state, self._budget, self._tools, self._tool_choice)
+                validate_agent_request(self._request_guard, chat=call_chat,
+                    tools=self._tools, tool_choice=call_choice,
                     provider=self._provider, client=self._client,
                     generation_options=self._generate_kwargs)
                 response = self._client.llm.generate(
-                    chat,
+                    call_chat,
                     tools=self._tools,
-                    tool_choice=self._tool_choice,
+                    tool_choice=call_choice,
                     **self._generate_kwargs,
                 )
 
@@ -346,6 +350,12 @@ class AgentLoop:
 
                 # Step 5: EXTRACT — consume normalized engine response tool calls.
                 tool_calls: list[CanonicalToolCall] = extract_tool_calls(response)
+                if final_call:
+                    if tool_calls:
+                        response.responses_output = None
+                        response.gemini_parts = None
+                    tool_calls = final_answer_tool_calls(
+                        tool_calls, response.content, self._state, self._budget, self._hooks)
                 _reserve_tool_call_ids(tool_calls, seen_tool_call_ids)
 
                 # Step 6: RECORD content BEFORE checking done/break
@@ -361,7 +371,9 @@ class AgentLoop:
                     # Exit loop
                     break
 
-                # Step 7b: ADD_TOOL_CALL — tool-call message (no speculative content)
+                # Step 7b: ADD_TOOL_CALL — the tool-call message keeps the text the model
+                # wrote beside its calls: it is the model's own context (what it found
+                # and will do next). It never joins the final answer.
                 if tool_calls:
                     # Convert CanonicalToolCall to dict format for chat
                     tool_call_dicts = [
@@ -380,7 +392,7 @@ class AgentLoop:
                         tool_calls=tool_call_dicts,
                         responses_output=response.responses_output,
                         gemini_parts=response.gemini_parts,
-                        content=None,  # INVARIANT: no speculative content in LLM context
+                        content=content or None,  # the model's own text beside its calls
                     )
 
                 # Step 8: VALIDATE_INTEGRITY
@@ -544,14 +556,16 @@ class AgentLoop:
                 summary = StreamIterationSummary()
                 last_chunk: Optional[ChatCompletionModel] = None
 
-                validate_agent_request(self._request_guard, chat=chat,
-                    tools=self._tools, tool_choice=self._tool_choice,
+                call_chat, call_choice, final_call = final_answer_inputs(
+                    chat, self._state, self._budget, self._tools, self._tool_choice)
+                validate_agent_request(self._request_guard, chat=call_chat,
+                    tools=self._tools, tool_choice=call_choice,
                     provider=self._provider, client=self._client,
                     generation_options=self._generate_kwargs)
                 source = self._client.llm.stream_generate(
-                    chat,
+                    call_chat,
                     tools=self._tools,
-                    tool_choice=self._tool_choice,
+                    tool_choice=call_choice,
                     **self._generate_kwargs,
                 )
                 try:
@@ -620,12 +634,18 @@ class AgentLoop:
                     )
 
                     tool_calls = stream_summary_tool_calls(summary)
+                    if final_call:
+                        if tool_calls:
+                            summary.responses_output = None
+                            summary.gemini_parts = None
+                        tool_calls = final_answer_tool_calls(
+                            tool_calls, summary.content, self._state, self._budget, self._hooks)
                     _reserve_tool_call_ids(tool_calls, seen_tool_call_ids)
 
                     # Record content — runs for EVERY iteration (including final no-tool answer)
-                    # INVARIANT: When tool_calls are present, pre-tool content is
-                    # speculative and MUST be suppressed — condition `not tool_calls`
-                    # ensures only content-only iterations are recorded.
+                    # INVARIANT: the final answer holds only content-only iterations.
+                    # Text written beside tool calls goes into the tool-call message
+                    # below, for the model, and never into the answer.
                     if summary.content and not tool_calls:
                         iter_content = summary.content
                         chat.add_assistant_message(iter_content, responses_output=summary.responses_output, gemini_parts=summary.gemini_parts)
@@ -637,7 +657,8 @@ class AgentLoop:
                     if not tool_calls or (self._provider not in {"google", "gemini"} and is_finished(self._provider, response)):
                         break
 
-                    # Add tool_call message (no speculative content)
+                    # Add the tool-call message with the model's text beside its calls
+                        # (its own context; never part of the final answer)
                     if tool_calls:
                         tool_call_dicts = [
                             {
@@ -655,7 +676,7 @@ class AgentLoop:
                             tool_calls=tool_call_dicts,
                             responses_output=response.responses_output,
                             gemini_parts=response.gemini_parts,
-                            content=None,  # INVARIANT: no speculative content in LLM context
+                            content=summary.content or None,  # the model's own text beside its calls
                         )
 
                     # Validate integrity

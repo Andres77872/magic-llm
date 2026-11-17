@@ -30,28 +30,6 @@ from magic_llm.util.http import AsyncHttpClient, HttpClient, HttpError
 
 logger = logging.getLogger(__name__)
 
-# Some providers reject a bad key with HTTP 400 instead of 401/403 (Google
-# answers ``400 API_KEY_INVALID``). These body markers classify such a 400 as
-# an authentication failure rather than a generic upstream error.
-_AUTH_ERROR_BODY_MARKERS = (
-    "api_key_invalid",
-    "api key not valid",
-    "invalid api key",
-    "invalid_api_key",
-    "incorrect api key",
-    "unauthenticated",
-    "permission_denied",
-)
-
-
-def _body_preview(body: Optional[str], limit: int = 160) -> str:
-    """Collapse whitespace and truncate a provider error body for messages."""
-    if not body:
-        return ""
-    preview = " ".join(body.split())
-    return preview if len(preview) <= limit else preview[:limit] + "…"
-
-
 def versioned_endpoint(base_url: str, version: str, suffix: str = "models") -> str:
     """Join a listing path onto a base URL without duplicating the version.
 
@@ -456,12 +434,9 @@ class BaseDiscoveryAdapter(abc.ABC):
             DiscoveryError: HTTP 5xx or other errors (default)
         """
         policy = self._discovery_policy
+        # HttpError classifies the provider's body and drops it (it can echo
+        # the key), so the decisions below read its fields, never a body.
         response_body = None
-        if error.response_content:
-            try:
-                response_body = error.response_content.decode('utf-8', errors='replace')
-            except Exception:
-                response_body = str(error.response_content)
 
         if error.status_code is None:
             # Transport failure (DNS, refused connection, TLS, timeout): there is
@@ -479,23 +454,16 @@ class BaseDiscoveryAdapter(abc.ABC):
                 response_body=response_body,
             )
 
-        if error.status_code == 400 and response_body and any(
-            marker in response_body.lower() for marker in _AUTH_ERROR_BODY_MARKERS
-        ):
+        if error.status_code == 400 and getattr(error, 'code', None) == 'PROVIDER_AUTHENTICATION_REJECTED':
+            # Some providers reject a bad key with HTTP 400 (Google answers
+            # ``400 INVALID_ARGUMENT``, "API key not valid").
             raise DiscoveryAuthError(provider=self.provider, response_body=response_body)
 
         if error.status_code == 429:
             # ALWAYS propagate — no graceful flag for rate limits
-            retry_after = None
-            if response_body:
-                try:
-                    data = json.loads(response_body)
-                    retry_after = data.get('retry_after') or data.get('retry-after')
-                except json.JSONDecodeError:
-                    pass
             raise DiscoveryRateLimitError(
                 provider=self.provider,
-                retry_after=retry_after,
+                retry_after=getattr(error, 'retry_after', None),
                 response_body=response_body,
             )
 
@@ -550,12 +518,8 @@ class BaseDiscoveryAdapter(abc.ABC):
                     error.status_code,
                 )
             return None
-        preview = _body_preview(response_body)
         raise DiscoveryError(
-            message=(
-                f"Provider '{self.provider}' discovery failed: HTTP {error.status_code}"
-                + (f" — {preview}" if preview else "")
-            ),
+            message=f"Provider '{self.provider}' discovery failed: HTTP {error.status_code}",
             provider=self.provider,
             status_code=error.status_code,
             response_body=response_body,

@@ -23,6 +23,22 @@ response = client.run_agent(
 
 If a budget is exceeded, the loop raises `AgentBudgetExceeded` and calls `on_budget_exceeded` when hooks are provided.
 
+### Ending with an answer at the iteration limit
+
+```python
+budget = AgentBudget(
+    max_iterations=8,
+    final_answer_notice="You have reached the step limit. Reply now with what you have.",
+)
+```
+
+With `final_answer_notice` set, the call at the iteration limit is made with
+`tool_choice="none"` and the notice appended as a user message for that call
+only (the loop's conversation does not keep it). The loop then ends with the
+model's reply instead of `AgentBudgetExceeded`. Tool calls the model makes
+anyway on that call are dropped; a final call with no text still raises
+`AgentBudgetExceeded` (`max_iterations`).
+
 ## Hooks
 
 `AgentHooks` defines observer callbacks:

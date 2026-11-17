@@ -39,6 +39,87 @@ version checks for mutations, and prefer cancellable async tools. The synchronou
 loop checks its wall-clock budget between operations; it cannot interrupt a
 blocked provider's synchronous call. Use the async loop for enforced deadlines.
 
+## Host integration surface
+
+What a host such as a server application builds on. These names are public
+and documented; anything with a leading underscore is not, and may change.
+
+**Wrapping the engine (routing, model chains, request shaping).** Pass
+`transport=` to the constructor instead of replacing `client.llm`:
+
+```python
+from magic_llm import MagicLLM
+from magic_llm.engine.transport import EngineTransport
+
+class Router(EngineTransport):
+    async def async_stream_generate(self, chat, **kwargs):
+        async for chunk in self.wrapped.async_stream_generate(chat, **kwargs):
+            yield chunk
+
+client = MagicLLM(engine="openai", model="m", private_key=key, retries=1,
+                  transport=Router)
+```
+
+`client.llm` is the transport; what it does not define is the wrapped
+engine's (`wrapped`), and the loop speaks the wrapped engine's tool dialect
+(`engine`). Engine options such as `retries=` (attempts per call) still go to
+the engine. Hosts that retry on their own pass `retries=1`.
+
+**Tool executor extension points** (`magic_llm.agent.tool_executor.ToolExecutor`):
+
+| Name | What it is for |
+| --- | --- |
+| `error_result(tool_call, start, exc)` | The failed result for a tool exception. Override to report a host refusal its own way; call `ToolExecutor.error_result` for the rest |
+| `fingerprint(name, arguments)` | The stable digest of a call, for a host's repeat or failure accounting |
+| `timeout_for(name)`, `content_limit(name)` | The effective per-tool deadline and size limit |
+| `serialize_output(output)` | How a result becomes the text the model reads. Override to change the JSON encoding |
+| `serial_tools=` / `serialize_tools(...)` | Stateful tools: barriers in a batch, and one at a time across concurrent single `execute_async` calls (a bridge that executes calls as they arrive) |
+| `cancel(tool_call_id)`, `running_call_ids()` | Cancel a call in flight; it returns `error_type="ToolCallCancelled"`. A sync tool's thread cannot be stopped and is left to finish, its result discarded |
+| `result_fitter=` / `set_result_fitter(fn)` | `fn(name, output, limit)` returns a smaller output that says what it left out, before any cut. `None` lets the cut happen |
+| `fork()` | The per-run copy: own registry, caches, limits, calls in flight and locks. Other attributes, a subclass's included, are shared |
+
+**Ending at the limit with an answer.** `AgentBudget(max_iterations=60,
+final_answer_notice="...")` makes the call at the iteration limit a call with
+`tool_choice="none"` and the notice appended for that call only. The loop
+ends with the model's answer instead of `AgentBudgetExceeded`; tool calls it
+makes anyway are dropped, and a final call with no text still raises.
+
+**What the model sees of its own turns.** A turn that calls tools keeps the
+text the model wrote beside the calls, in the conversation sent back to the
+provider (OpenAI `content`, Anthropic text block, Gemini text part). That
+text never becomes part of the final answer, which is the content of the
+iterations without tool calls.
+
+**Tool choice without tools** is not sent: a request with no tools carries no
+`tool_choice`, which OpenAI and Anthropic would reject.
+
+**Delegation depth** is `magic_llm.agent.DEPTH` (a context variable), and the
+provider attempt seam is `provider_attempt_control=` with
+`magic_llm.engine.attempt_control.ProviderAttemptControl` /
+`ProviderAttemptControlError`.
+
+**A transport under loop control.** Loop control (`control=`, with
+`continuation=` to resume from an `AgentLoopCheckpoint`) requires
+`provider_attempt_control=` and a model method that declares it honours
+attempt control. The engines' methods declare it themselves; a host
+transport declares it on its own `async_generate` / `async_stream_generate`
+with `magic_llm.engine.attempt_control.supports_attempt_control`, and routes
+every provider attempt through the control it receives (for example by
+passing it on to `self.wrapped`):
+
+```python
+from magic_llm.engine.attempt_control import supports_attempt_control
+
+class Router(EngineTransport):
+    @supports_attempt_control
+    async def async_stream_generate(self, chat, **kwargs):
+        async for chunk in self.wrapped.async_stream_generate(chat, **kwargs):
+            yield chunk
+```
+
+A transport that does not declare it is refused with
+`PROVIDER_ATTEMPT_CONTROL_UNSUPPORTED` before any provider work.
+
 ## Bounded subagents
 
 Enable native children per executor instead of changing a process-wide feature

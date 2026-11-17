@@ -8,6 +8,7 @@ from magic_llm import MagicLLM
 from magic_llm.engine.engine_openai import EngineOpenAI
 from magic_llm.engine.tooling import StreamIterationSummary, accumulate_stream_chunk
 from magic_llm.model import ModelChat
+from magic_llm.util.http import HttpError
 
 
 REASONING = {'type': 'reasoning', 'id': 'rs_1', 'summary': [], 'encrypted_content': 'opaque-test-state'}
@@ -185,10 +186,13 @@ def test_refusal_incomplete_and_failure_are_not_silent_success():
     assert client.transform_response(response(status='incomplete', incomplete_details={'reason': 'max_output_tokens'})).finish_reason == 'length'
     refusal = {**TEXT, 'content': [{'type': 'refusal', 'refusal': 'Cannot help'}]}
     assert client.transform_response(response([refusal])).choices[0].message.refusal == 'Cannot help'
-    with pytest.raises(ValueError, match='rejected'):
+    # A failure is an HttpError whose text never repeats the provider's message.
+    with pytest.raises(HttpError) as failed:
         client.transform_response(response(status='failed', error={'message': 'rejected'}))
-    with pytest.raises(ValueError, match='rejected'):
+    assert 'rejected' not in str(failed.value)
+    with pytest.raises(HttpError) as failed:
         client.transform_stream_chunk({'type': 'error', 'message': 'rejected'}, {})
+    assert 'rejected' not in str(failed.value)
 
 
 def test_legacy_default_and_chat_wire_stay_compatible():

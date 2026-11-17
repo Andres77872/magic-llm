@@ -9,6 +9,15 @@ class ChatException(Exception):
         super().__init__(self.message)
 
 
+class ProviderProtocolError(ValueError):
+    """A provider response or stream broke the wire protocol.
+
+    Raised by the library's own checks (a stream with no terminal event, a
+    frame without choices). The message is the library's wording, never
+    provider text, so it is kept in retries, logs and callbacks.
+    """
+
+
 class RequestValidationError(ChatException):
     """Mandatory input validation failure: never retry, log bodies or fallback.
 

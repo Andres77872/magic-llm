@@ -471,3 +471,51 @@ async def test_cancelled_input_checkpoint_never_dispatches(stream):
     assert provider.requests == []
     assert loop.checkpoint is None
     assert control.pending
+
+
+async def test_a_host_transport_that_declares_attempt_control_runs_a_controlled_loop():
+    """A transport (``EngineTransport``) that forwards attempt control to the
+    engine it wraps declares it with ``supports_attempt_control``; the loop
+    then runs under control and checkpoints at its tool-result boundary."""
+
+    from magic_llm.engine.attempt_control import supports_attempt_control
+    from magic_llm.engine.transport import EngineTransport
+
+    class Router(EngineTransport):
+        def __init__(self, engine):
+            super().__init__(engine)
+            self.controls = []
+
+        @supports_attempt_control
+        async def async_stream_generate(self, chat, **kwargs):
+            self.controls.append(kwargs.get('provider_attempt_control'))
+            async for chunk in self.wrapped.async_stream_generate(chat, **kwargs):
+                yield chunk
+
+        @supports_attempt_control
+        async def async_generate(self, chat, **kwargs):
+            return await self.wrapped.async_generate(chat, **kwargs)
+
+    provider = Provider([answer('', calls=[tool('call-1', 'ping')]), answer('pong')])
+    router = Router(provider)
+    control = Control()
+    loop = AsyncAgentLoop(SimpleNamespace(llm=router), control=control, provider_attempt_control=control,
+        tools=[{'type': 'function', 'function': {'name': 'ping', 'parameters': {'type': 'object', 'properties': {}}}}],
+        tool_functions={'ping': lambda: 'pong'}, builtin_todo_tools=False)
+    chunks = [item async for item in loop.stream(user_input='hi')]
+
+    assert chunks and router.controls == [control, control]
+    assert [boundary for boundary, _ in control.saved].count('tool_results') == 1
+    assert len(control.attempts) == 2
+
+
+def test_an_undeclared_transport_cannot_run_a_controlled_loop():
+    from magic_llm.engine.attempt_control import ProviderAttemptControlError, require_attempt_capability
+    from magic_llm.engine.transport import EngineTransport
+
+    class Router(EngineTransport):
+        async def async_stream_generate(self, chat, **kwargs):
+            yield None
+
+    with pytest.raises(ProviderAttemptControlError):
+        require_attempt_capability(Router(Provider([])).async_stream_generate)

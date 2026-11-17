@@ -119,12 +119,19 @@ class AgentBudget:
         max_input_tokens: Max cumulative input tokens across the loop (None = no limit).
         max_output_tokens: Max cumulative output tokens across the loop (None = no limit).
         wall_clock_timeout: Max wall-clock seconds for the entire loop (None = no limit).
+        final_answer_notice: When set, the call at the iteration limit is made
+            with ``tool_choice="none"`` and this text appended as a user
+            message for that call only, so the loop ends with an answer
+            instead of ``AgentBudgetExceeded``. Tool calls the model makes
+            anyway on that call are dropped. A final call with no text still
+            raises ``AgentBudgetExceeded`` (``max_iterations``).
     """
 
     max_iterations: int = 150
     max_input_tokens: Optional[int] = None
     max_output_tokens: Optional[int] = None
     wall_clock_timeout: Optional[float] = None
+    final_answer_notice: Optional[str] = None
 
 
 @dataclass

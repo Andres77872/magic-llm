@@ -708,11 +708,10 @@ class TestAgentLoopRun:
         )
         assert has_tool_call_msg
 
-    def test_run_content_suppressed_when_tool_calls_present(self):
-        """INVARIANT: When response has both content AND tool_calls, content is
-        suppressed — no add_assistant_message for that iteration, only
-        add_tool_call_message(content=None). The content-invariant spec enforces
-        that pre-tool speculative text is never persisted."""
+    def test_run_text_beside_tool_calls_stays_out_of_the_answer(self):
+        """INVARIANT: text the model writes beside its tool calls is kept in
+        the tool-call message, so the next call sees it, and is never part of
+        the final answer."""
         client = MagicMock()
         client.llm = MagicMock()
         tc = _make_tool_call()
@@ -735,18 +734,18 @@ class TestAgentLoopRun:
             m for m in loop.state.messages if m.get("role") == "assistant"
         ]
         # Phase 7: 2 assistant messages in chat for this turn:
-        #  - [0]: tool-call message from iter-1 (content="thinking..." suppressed,
+        #  - [0]: tool-call message from iter-1 (content="thinking..." kept for the model,
         #         tool_calls preserved)
         #  - [1]: final answer from iter-2 (content="final", no tool_calls)
         # Before Phase 7, the second message was never added because break
         # fired before content recording. Now content is recorded BEFORE break.
         assert len(assistant_msgs) == 2
-        # The first assistant message is the tool-call message — content is None
-        # (suppressed per invariant), tool_calls are preserved
+        # The first assistant message is the tool-call message: it keeps the
+        # text the model wrote beside its calls, for the model's next call.
         tool_call_msg = assistant_msgs[0]
         assert tool_call_msg["role"] == "assistant"
         assert "tool_calls" in tool_call_msg
-        assert tool_call_msg.get("content") is None
+        assert tool_call_msg.get("content") == "thinking..."
         # The second assistant message is the final answer — content preserved,
         # no tool_calls
         final_msg = assistant_msgs[1]
@@ -1679,15 +1678,14 @@ class TestAgentLoopStream:
 # ─── Slice 9c: AgentLoop.stream() content invariant
 
 class TestAgentLoopStreamInvariant:
-    """AgentLoop.stream() enforces the content-invariant:
-    content produced alongside tool_calls MUST be suppressed — never
-    persisted to chat, never accumulated for final output, never passed
-    as LLM context."""
+    """AgentLoop.stream() enforces the content invariant: content produced
+    alongside tool_calls stays with them in the tool-call message (the
+    model's own context) and is never accumulated into the final output."""
 
-    def test_sync_stream_content_suppressed_when_tool_calls(self):
-        """INVARIANT: stream() suppresses content when tool_calls are
-        present in the same iteration — no add_assistant_message, no
-        collected_content.append, add_tool_call_message(content=None)."""
+    def test_sync_stream_text_beside_tool_calls_stays_out_of_the_answer(self):
+        """INVARIANT: text the model writes beside its tool calls is kept in
+        the tool-call message, so the next call sees it, and is never part of
+        the final answer."""
         client = MagicMock()
         client.llm = MagicMock()
 
@@ -1696,7 +1694,7 @@ class TestAgentLoopStreamInvariant:
             FunctionCall as StreamFunctionCall,
         )
 
-        # First iteration: content + tool_calls → content suppressed
+        # First iteration: content + tool_calls → content kept beside the calls
         chunks_iter0 = [
             ChatCompletionModel(
                 id="chunk-0",
@@ -1741,32 +1739,23 @@ class TestAgentLoopStreamInvariant:
 
         result = list(loop.stream("hello"))
 
-        # INVARIANT: The pre-tool content "thinking..." is NOT leaked into any
-        # assistant message. The tool-call assistant gets content=None.
-        # Phase 7: the final content-only iteration ("done") IS recorded as a
-        # second assistant message BEFORE the break exits the loop.
+        # INVARIANT: the text written beside the tool calls ("thinking...")
+        # stays with them in the tool-call message, for the model's next call,
+        # and is never part of the final answer ("done").
         assistant_msgs = [
             m for m in loop.state.messages if m.get("role") == "assistant"
         ]
         assert len(assistant_msgs) == 2, (
             f"Expected 2 assistant msgs (tool-call + final answer), got {len(assistant_msgs)}"
         )
-        # First assistant: tool-call message — content suppressed
         tool_call_msg = assistant_msgs[0]
         assert tool_call_msg["role"] == "assistant"
         assert "tool_calls" in tool_call_msg
-        assert tool_call_msg.get("content") is None
-        # Second assistant: final answer — content recorded before break
+        assert tool_call_msg.get("content") == "thinking..."
         final_msg = assistant_msgs[1]
         assert final_msg["role"] == "assistant"
         assert "tool_calls" not in final_msg
         assert final_msg.get("content") == "done"
-        # Verify "thinking..." is NOT leaked into any message content
-        all_contents = [
-            m.get("content", "") for m in loop.state.messages
-            if m.get("content")
-        ]
-        assert all("thinking..." not in str(c) for c in all_contents)
 
     def test_sync_stream_content_preserved_no_tool_calls(self):
         """Normal behavior: stream() preserves content when no tool_calls

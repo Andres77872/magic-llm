@@ -445,8 +445,14 @@ def coerce_tool_choice_to_string(tool_choice: ToolChoice, default: str = "auto")
 
 
 def map_request_tools(provider: str, tools: list[Any] | None, tool_choice: ToolChoice) -> RequestTools:
-    """Map raw package tool definitions to provider request shape exactly once."""
+    """Map raw package tool definitions to provider request shape exactly once.
+
+    A tool choice without tools is dropped: OpenAI and Anthropic reject a
+    request that sets ``tool_choice`` and offers no tool.
+    """
     provider_key = provider.lower()
+    if not tools:
+        return RequestTools(tools=None, tool_choice=None)
     if provider_key in {"openai", "deepinfra"}:
         mapped_tools, mapped_choice = map_to_openai(tools, tool_choice)
         return RequestTools(tools=mapped_tools, tool_choice=mapped_choice)
@@ -631,11 +637,21 @@ def guard_tools_supported(engine_name: str, tools: Any = None, tool_choice: Any 
 
 
 def infer_provider_from_client(client: Any) -> str:
-    """Infer engine/provider key from a MagicLLM-like client."""
+    """Infer engine/provider key from a MagicLLM-like client.
+
+    An engine's key is its class attribute ``engine``; an ``EngineTransport``
+    reports the wrapped engine's. Anything that is not a string (a test
+    double's automatic attribute) falls back to ``"openai"``.
+    """
     engine_instance = getattr(client, "llm", None)
     if engine_instance is None:
-        return getattr(client, "engine", "openai")
-    return getattr(type(engine_instance), "engine", "openai")
+        value = getattr(client, "engine", "openai")
+        return value if isinstance(value, str) else "openai"
+    for value in (getattr(type(engine_instance), "engine", None),
+                  getattr(engine_instance, "engine", None)):
+        if isinstance(value, str):
+            return value
+    return "openai"
 
 
 def accumulate_stream_chunk(summary: StreamIterationSummary, chunk: Any) -> StreamIterationSummary:

@@ -17,7 +17,7 @@ from magic_llm.exception.ChatException import ChatException, RequestValidationEr
 from magic_llm.model import ModelChat, ModelChatResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.util.http import HttpError
-from magic_llm.util.provider_errors import provider_error_detail
+from magic_llm.util.provider_errors import failure_message, provider_error_detail
 
 if TYPE_CHECKING:
     from magic_llm.model.discovery import NormalizedDiscoveredModel
@@ -360,7 +360,7 @@ class BaseChat(abc.ABC):
                             )
                         )
                         usage = attach_attempt_metadata(current_attempt_usage, attempt_usages)
-                    er = provider_error_detail(e)['message']
+                    er = failure_message(e)
                     logger.error('Provider generation failed code=%s', provider_error_detail(e)['code'])
                     await self._execute_callback(chat,
                                                  response_content,
@@ -493,7 +493,7 @@ class BaseChat(abc.ABC):
                             )
                         )
                         usage = attach_attempt_metadata(current_attempt_usage, attempt_usages)
-                    er = provider_error_detail(e)['message']
+                    er = failure_message(e)
                     logger.error('Provider generation failed code=%s', provider_error_detail(e)['code'])
                     self._execute_callback_sync(chat,
                                                 response_content,
@@ -553,7 +553,7 @@ class BaseChat(abc.ABC):
                 except Exception as e:
                     if is_permanent_provider_error(e):
                         raise
-                    er = provider_error_detail(e)['message']
+                    er = failure_message(e)
                     logger.error('Provider generation failed code=%s', provider_error_detail(e)['code'])
                     await self._execute_callback(chat,
                                                  None,
@@ -607,7 +607,7 @@ class BaseChat(abc.ABC):
                 except Exception as e:
                     if is_permanent_provider_error(e):
                         raise
-                    er = provider_error_detail(e)['message']
+                    er = failure_message(e)
                     logger.error('Provider generation failed code=%s', provider_error_detail(e)['code'])
                     self._execute_callback_sync(chat,
                                                 None,

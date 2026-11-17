@@ -48,6 +48,7 @@ class CheckpointBudget(BaseModel):
     max_input_tokens: int | None = Field(default=None, ge=0)
     max_output_tokens: int | None = Field(default=None, ge=0)
     wall_clock_timeout: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    final_answer_notice: str | None = Field(default=None, max_length=8192)
 
 
 def utc_timestamp(seconds: float) -> str:

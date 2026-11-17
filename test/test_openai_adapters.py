@@ -163,7 +163,7 @@ class TestOpenAiBaseProcessChunk:
     def test_raises_when_no_choices(self):
         chunk = 'data: {"id":"chat-1","model":"test"}\n\n'
 
-        with pytest.raises(ValueError, match="no choices"):
+        with pytest.raises(ValueError, match="omitted choices"):
             self.provider.process_chunk(chunk)
 
     def test_returns_none_for_ping(self):

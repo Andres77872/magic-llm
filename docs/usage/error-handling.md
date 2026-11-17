@@ -15,6 +15,40 @@ except ChatException as exc:
 
 Provider-specific HTTP errors may be wrapped by engine/adapters. Keep logs around provider, model, and request ID if your provider returns one.
 
+## What an `HttpError` keeps
+
+A provider's error body can echo the API key or the prompt, so it is never
+kept, and no message is taken from it. The body is classified while it is in
+hand, and the error keeps only:
+
+| Attribute | Meaning |
+| --- | --- |
+| `status_code` | The HTTP status, when there was one |
+| `code` | The classification: `PROVIDER_AUTHENTICATION_REJECTED`, `PROVIDER_QUOTA_EXCEEDED`, `PROVIDER_CONTEXT_EXCEEDED`, `PROVIDER_PERMISSION_DENIED`, `PROVIDER_RATE_LIMITED` or `PROVIDER_UNAVAILABLE` |
+| `error_type` | A recognized typed kind (`magic_llm.util.provider_errors.ERROR_TYPES`), such as OpenRouter's `context_length_exceeded` or Anthropic's `overloaded_error`. Unrecognized values are dropped |
+| `provider_code` | A recognized auth, quota or rate-limit code |
+| `retry_after` | A numeric `retry_after` the body gave, in seconds |
+
+`PROVIDER_CONTEXT_EXCEEDED` covers HTTP 413, the typed context errors and a
+plain 400 whose body names the context window, so a caller can retry with a
+smaller request instead of giving up. A rejected key behind a plain 400
+(Google's "API key not valid") is classified as an authentication failure.
+
+With a body, the text is the safe message for the classification and the
+status; without one, it is the library's own wording. Errors the library
+raises for a broken wire protocol are `ProviderProtocolError` (a
+`ValueError`) and keep their wording through retries, as `ChatException`
+does. `magic_llm.util.provider_errors.failure_message(exc)` gives the text
+that is safe to log or show for any exception.
+
+## OpenRouter
+
+OpenRouter's usage, cache reads and writes (`cached_tokens_write`) and cost
+(`usage.provider_extra["cost"]`, with a BYOK key's upstream charge added) are
+read from the stream itself. A failure inside an HTTP 200 (a top-level
+`error`, or a choice with `finish_reason: "error"`) fails the call with its
+status and `error_type`.
+
 ## Fallback chain
 
 ```python

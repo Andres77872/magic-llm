@@ -94,6 +94,23 @@ def reject_sync_control(control: ProviderAttemptControl | None) -> None:
         )
 
 
+def supports_attempt_control(method: Any) -> Any:
+    """Declare that a host transport's method honours mandatory attempt control.
+
+    A host that stands in for an engine (an ``EngineTransport`` that routes,
+    retries or shapes requests) decorates its ``async_generate`` and
+    ``async_stream_generate`` with this when it accepts
+    ``provider_attempt_control=`` and routes every provider attempt it makes
+    through that control, typically by forwarding it to the wrapped engine's
+    methods, which declare the capability themselves. Agent loop control
+    (``control=``) requires the capability on the method the loop calls.
+    The method is returned unchanged.
+    """
+
+    method._provider_attempt_control_version = 1
+    return method
+
+
 def require_attempt_capability(method: Any) -> None:
     if getattr(method, '_provider_attempt_control_version', None) != 1:
         raise ProviderAttemptControlError(
@@ -254,8 +271,14 @@ async def _observe(engine, chat, attempt, outcome, content, started):
     )
 
 
+#: Refusals the library raises before dispatch that every retry repeats.
+LOCAL_PERMANENT_CODES = frozenset({'TOOL_WIRING_NOT_IMPLEMENTED'})
+
+
 def is_permanent_provider_error(error):
     if isinstance(error, RequestValidationError):
+        return True
+    if isinstance(error, ChatException) and error.error_code in LOCAL_PERMANENT_CODES:
         return True
     return (isinstance(error, HttpError) and type(error.status_code) is int
             and 400 <= error.status_code < 500 and error.status_code not in (408, 429))

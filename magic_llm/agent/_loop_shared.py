@@ -10,7 +10,7 @@ Functions:
     _register_tools_with_executor: Registers tools from callables and dicts.
     _finalize_response: Concatenates collected content into the final response.
     _invoke_hook_safely: Calls a hook method, isolating exceptions (logs, does not propagate).
-    _compute_fingerprint: SHA-256 hash for tool deduplication.
+    _compute_fingerprint: SHA-256 hash for tool deduplication (loop-level).
 
 Global Depth Helpers:
     get_global_depth: Get current global nesting depth.
@@ -147,6 +147,50 @@ def reset_global_depth() -> None:
     Used at execution start to ensure clean state.
     """
     GLOBAL_DEPTH.set(0)
+
+
+def final_answer_inputs(
+    chat: ModelChat,
+    state: AgentState,
+    budget: AgentBudget,
+    tools: Any,
+    tool_choice: Any,
+) -> tuple[ModelChat, Any, bool]:
+    """The chat and tool choice for the next model call, and whether it is final.
+
+    At the iteration limit, with ``budget.final_answer_notice`` set and tools
+    offered, the call is made with ``tool_choice="none"`` and the notice as a
+    trailing user message. The notice is on a copy: the loop's conversation
+    does not keep it.
+    """
+    notice = getattr(budget, "final_answer_notice", None)
+    if notice is None or not tools or state.step != budget.max_iterations - 1:
+        return chat, tool_choice, False
+    final_chat = copy.copy(chat)
+    final_chat.messages = [*chat.messages, {"role": "user", "content": notice}]
+    return final_chat, "none", True
+
+
+def final_answer_tool_calls(tool_calls: list, content: Optional[str], state: AgentState,
+                            budget: AgentBudget, hooks: Any) -> list:
+    """What the final call's tool calls become: none, or a budget error.
+
+    The final call may not run a tool. Calls the model makes anyway are
+    dropped and its text is the answer; without text there is no answer and
+    the loop ends as it would have at the limit.
+    """
+    if tool_calls:
+        logger.warning("Final-answer call returned %d tool call(s); dropped", len(tool_calls))
+    if not content:
+        exc = AgentBudgetExceeded(
+            budget_type="max_iterations",
+            limit=budget.max_iterations,
+            current=state.step + 1,
+        )
+        _invoke_hook_safely(getattr(hooks, "on_budget_exceeded", None),
+                            exc.budget_type, str(exc), state=state)
+        raise exc
+    return []
 
 
 def _check_budget(

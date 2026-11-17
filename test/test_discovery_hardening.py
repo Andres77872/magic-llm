@@ -115,12 +115,14 @@ def test_google_invalid_key_400_is_auth_error():
         _raise_sync(GoogleDiscoveryAdapter(api_key="k"), HttpError("x", status_code=400, response_content=body))
 
 
-def test_plain_400_stays_generic_with_body_preview():
+def test_plain_400_stays_generic_without_the_body():
+    """The body can echo the key: the message names the status, not the body."""
     with pytest.raises(DiscoveryError) as exc:
         _raise_sync(OpenAIDiscoveryAdapter(api_key="k"),
                     HttpError("x", status_code=400, response_content=b'{"error": "bad request shape"}'))
     assert not isinstance(exc.value, DiscoveryAuthError)
-    assert "bad request shape" in str(exc.value)
+    assert "HTTP 400" in str(exc.value)
+    assert "bad request shape" not in str(exc.value)
 
 
 def test_transport_error_without_status_does_not_crash():

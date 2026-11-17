@@ -34,7 +34,7 @@ class TestHttpClientSyncErrors:
             client.request("GET", "https://example.com/api")
 
         assert exc_info.value.status_code == 404
-        assert exc_info.value.response_content == b'{"error": "not found"}'
+        assert exc_info.value.response_content is None
         assert "404" in str(exc_info.value)
 
     def test_post_json_invalid_json_propagates_decode_error(self):
@@ -71,8 +71,10 @@ class TestHttpClientSyncErrors:
             client.request("POST", "https://example.com/api")
 
         assert exc_info.value.status_code == 502
-        assert exc_info.value.response_content == b'bad gateway'
-        assert "connection issue" in str(exc_info.value)
+        assert exc_info.value.response_content is None
+        # Exception text can carry the URL and its key; it is never kept.
+        assert "connection issue" not in str(exc_info.value)
+        assert "502" in str(exc_info.value)
 
     def test_request_exception_without_response_message_only(self):
         """RequestException without response → HttpError with message only."""
@@ -89,7 +91,8 @@ class TestHttpClientSyncErrors:
 
         assert exc_info.value.status_code is None
         assert exc_info.value.response_content is None
-        assert "network unreachable" in str(exc_info.value)
+        assert "network unreachable" not in str(exc_info.value)
+        assert "RequestException" in str(exc_info.value)
 
     def test_successful_request_returns_content(self):
         """200 response → returns content bytes."""
@@ -163,7 +166,7 @@ class TestAsyncHttpClientErrors:
             await client.request("POST", "https://example.com/api")
 
         assert exc_info.value.status_code == 500
-        assert exc_info.value.response_content == b'{"error": "server error"}'
+        assert exc_info.value.response_content is None
         assert "500" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -198,7 +201,8 @@ class TestAsyncHttpClientErrors:
 
         assert exc_info.value.status_code is None
         assert exc_info.value.response_content is None
-        assert "connection refused" in str(exc_info.value)
+        assert "connection refused" not in str(exc_info.value)
+        assert "ClientError" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_successful_request_returns_content(self):

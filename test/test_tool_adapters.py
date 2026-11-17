@@ -403,6 +403,7 @@ class TestAnthropicSerializeToolResults:
                 "type": "tool_result",
                 "tool_use_id": "toolu_weather",
                 "content": result.content,
+                "is_error": False,
             }
         ]
         assert "Observation" not in str(msg["content"])

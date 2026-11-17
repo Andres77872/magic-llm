@@ -7,6 +7,13 @@ This module provides the ToolExecutor class responsible for:
 - Per-tool timeout enforcement
 - Fingerprint-based deduplication (opt-in)
 - Structured error capture (ToolResult with is_error, error, error_type)
+- Ordering of serial (stateful) tools, in batches and across single calls
+- Cancellation of a running call by its id
+- A caller-supplied fitter for results over their size limit
+
+Extension points for a subclass or a host (public, documented):
+``error_result``, ``fingerprint``, ``timeout_for``, ``content_limit``,
+``serialize_output``, ``fork``, ``cancel`` and ``set_result_fitter``.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ import contextvars
 import hashlib
 import json
 import math
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any, Callable
@@ -44,6 +52,14 @@ class ToolExecutor:
             Key is tool name, value is max chars. Takes precedence over global.
         tool_timeouts: Per-tool-name timeout overrides in seconds.
             Key is tool name, value is timeout. Takes precedence over per_tool_timeout.
+        serial_tools: Stateful tools. In a batch they are barriers; across
+            concurrent single calls (``execute_async`` called by a host one
+            call at a time) they run one at a time, in arrival order.
+        result_fitter: ``fitter(tool_name, output, limit)`` called when a
+            result's serialized size exceeds its limit, before any cut. It
+            returns a smaller output that says what it left out, or None to
+            let the cut happen. A fitted result that still exceeds the limit
+            is cut.
     """
 
     def __init__(
@@ -56,6 +72,7 @@ class ToolExecutor:
         dedup_excluded_tools: set[str] | None = None,
         max_parallel_tools: int = 8,
         serial_tools: set[str] | None = None,
+        result_fitter: Callable[[str, Any, int], Any] | None = None,
     ) -> None:
         if isinstance(max_parallel_tools, bool) or max_parallel_tools < 1:
             raise ValueError("max_parallel_tools must be a positive integer")
@@ -71,9 +88,25 @@ class ToolExecutor:
         self._dedup_cache: dict[str, ToolResult] = {}
         self._complete_output_tools: set[str] = set()
         self._propagated_errors: tuple[type[Exception], ...] = ()
+        self._result_fitter = result_fitter
+        self._reset_run_state()
+
+    def _reset_run_state(self) -> None:
+        # Per-run: the calls in flight, the cancellations asked for, and the
+        # locks that order serial tools across single calls.
+        self._running: dict[str, asyncio.Future[Any]] = {}
+        self._cancel_requested: set[str] = set()
+        self._async_serial_lock: asyncio.Lock | None = None
+        self._sync_serial_lock = threading.Lock()
 
     def fork(self):
-        """Return an isolated per-run registry and result cache."""
+        """Return a per-run copy.
+
+        The copy has its own registry, result cache, limits, calls in flight
+        and serial-tool locks. Every other attribute, including a subclass's,
+        is shared with the parent (a shallow copy); a subclass that needs its
+        own copy of something overrides ``fork`` and calls this first.
+        """
         clone = copy.copy(self)
         clone._registry = dict(self._registry)
         clone._dedup_cache = {}
@@ -82,7 +115,33 @@ class ToolExecutor:
         clone._max_content_sizes = dict(self._max_content_sizes)
         clone._tool_timeouts = dict(self._tool_timeouts)
         clone._complete_output_tools = set(self._complete_output_tools)
+        clone._reset_run_state()
         return clone
+
+    def set_result_fitter(self, fitter: Callable[[str, Any, int], Any] | None) -> None:
+        """Set the fitter used for results over their size limit (see the class doc)."""
+        if fitter is not None and not callable(fitter):
+            raise TypeError("result fitter must be callable")
+        self._result_fitter = fitter
+
+    def cancel(self, tool_call_id: str) -> bool:
+        """Cancel a call in flight in ``execute_async``, by its id.
+
+        The call returns a ``ToolCallCancelled`` result instead of its
+        output. An async tool is cancelled; a sync tool's thread cannot be
+        stopped and finishes on its own, its result discarded. Call this from
+        the event loop the call runs on. Returns whether a call was found.
+        """
+        waiter = self._running.get(tool_call_id)
+        if waiter is None or waiter.done():
+            return False
+        self._cancel_requested.add(tool_call_id)
+        waiter.cancel()
+        return True
+
+    def running_call_ids(self) -> frozenset[str]:
+        """Ids of the calls in flight in ``execute_async``."""
+        return frozenset(call_id for call_id, waiter in self._running.items() if not waiter.done())
 
     def with_options(self, options: dict[str, Any]):
         """Return a run-local executor with validated execution limit overrides.
@@ -250,7 +309,7 @@ class ToolExecutor:
         # Check dedup cache
         dedup_enabled = self._can_deduplicate(tool_call.name)
         if dedup_enabled:
-            fingerprint = self._compute_fingerprint(
+            fingerprint = self.fingerprint(
                 tool_call.name, tool_call.arguments
             )
             if fingerprint in self._dedup_cache:
@@ -267,9 +326,12 @@ class ToolExecutor:
             return self._limit_complete_result(self._unknown_tool_result(tool_call, start))
 
         # Execute with timeout (per-tool override supported)
-        effective_timeout = self._resolve_timeout(tool_call.name)
-        future = submit_in_daemon_thread(self._invoke_sync, fn, tool_call)
+        effective_timeout = self.timeout_for(tool_call.name)
+        serial = tool_call.name in self._serial_tools
+        if serial:
+            self._sync_serial_lock.acquire()
         try:
+            future = submit_in_daemon_thread(self._invoke_sync, fn, tool_call)
             output = future.result(timeout=effective_timeout)
         except FuturesTimeoutError as exc:
             if isinstance(exc, self._propagated_errors):
@@ -279,12 +341,15 @@ class ToolExecutor:
             # here too. The future tells the two apart: an expired deadline
             # leaves it unfinished; a tool-raised TimeoutError completed it.
             if future.done():
-                return self._limit_complete_result(self._error_result(tool_call, start, exc))
+                return self._limit_complete_result(self.error_result(tool_call, start, exc))
             return self._limit_complete_result(self._deadline_result(tool_call, start, effective_timeout))
         except Exception as exc:
             if isinstance(exc, self._propagated_errors):
                 raise
-            return self._limit_complete_result(self._error_result(tool_call, start, exc))
+            return self._limit_complete_result(self.error_result(tool_call, start, exc))
+        finally:
+            if serial:
+                self._sync_serial_lock.release()
 
         duration_ms = (time.monotonic() - start) * 1000
         result = self._build_output_result(tool_call, output, duration_ms)
@@ -323,7 +388,7 @@ class ToolExecutor:
         batch: list[CanonicalToolCall] = []
         seen: set[str] = set()
         for call in tool_calls:
-            fingerprint = self._compute_fingerprint(call.name, call.arguments)
+            fingerprint = self.fingerprint(call.name, call.arguments)
             duplicate = (self._can_deduplicate(call.name)
                          and fingerprint in seen)
             if call.name in self._serial_tools or duplicate:
@@ -356,7 +421,7 @@ class ToolExecutor:
         # Check dedup cache
         dedup_enabled = self._can_deduplicate(tool_call.name)
         if dedup_enabled:
-            fingerprint = self._compute_fingerprint(
+            fingerprint = self.fingerprint(
                 tool_call.name, tool_call.arguments
             )
             if fingerprint in self._dedup_cache:
@@ -372,7 +437,50 @@ class ToolExecutor:
         if fn is None:
             return self._limit_complete_result(self._unknown_tool_result(tool_call, start))
 
-        effective_timeout = self._resolve_timeout(tool_call.name)
+        effective_timeout = self.timeout_for(tool_call.name)
+        call_id = tool_call.id or ""
+        waiter = asyncio.ensure_future(
+            self._invoke_with_deadline(fn, tool_call, start, effective_timeout))
+        if call_id:
+            self._running[call_id] = waiter
+        try:
+            output, failed = await waiter
+        except asyncio.CancelledError:
+            task = asyncio.current_task()
+            outer_cancelled = bool(getattr(task, "cancelling", lambda: 0)())
+            if call_id in self._cancel_requested and not outer_cancelled:
+                return self._limit_complete_result(self._cancelled_result(tool_call, start))
+            waiter.cancel()
+            raise
+        finally:
+            if call_id and self._running.get(call_id) is waiter:
+                del self._running[call_id]
+            self._cancel_requested.discard(call_id)
+        if failed is not None:
+            return failed
+
+        duration_ms = (time.monotonic() - start) * 1000
+        result = self._build_output_result(tool_call, output, duration_ms)
+
+        if dedup_enabled and not result.is_error:
+            self._dedup_cache[fingerprint] = result
+
+        return result
+
+    async def _invoke_with_deadline(
+        self, fn: Callable[..., Any], tool_call: CanonicalToolCall,
+        start: float, effective_timeout: float,
+    ) -> tuple[Any, ToolResult | None]:
+        """Run one call under its deadline: ``(output, None)`` or ``(None, failure)``.
+
+        A serial tool holds the run's serial lock for the whole call.
+        """
+        lock = None
+        if tool_call.name in self._serial_tools:
+            if self._async_serial_lock is None:
+                self._async_serial_lock = asyncio.Lock()
+            lock = self._async_serial_lock
+            await lock.acquire()
         invocation: Any = None
         try:
             if is_async_callable(fn):
@@ -385,6 +493,7 @@ class ToolExecutor:
                 output = await await_thread_future(
                     invocation, timeout=effective_timeout
                 )
+            return output, None
         except asyncio.TimeoutError as exc:
             if isinstance(exc, self._propagated_errors):
                 raise
@@ -398,20 +507,19 @@ class ToolExecutor:
             else:
                 hit_deadline = invocation is None or not invocation.done()
             if not hit_deadline:
-                return self._limit_complete_result(self._error_result(tool_call, start, exc))
-            return self._limit_complete_result(self._deadline_result(tool_call, start, effective_timeout))
+                return None, self._limit_complete_result(self.error_result(tool_call, start, exc))
+            return None, self._limit_complete_result(self._deadline_result(tool_call, start, effective_timeout))
+        except asyncio.CancelledError:
+            if isinstance(invocation, asyncio.Task) and not invocation.done():
+                invocation.cancel()
+            raise
         except Exception as exc:
             if isinstance(exc, self._propagated_errors):
                 raise
-            return self._limit_complete_result(self._error_result(tool_call, start, exc))
-
-        duration_ms = (time.monotonic() - start) * 1000
-        result = self._build_output_result(tool_call, output, duration_ms)
-
-        if dedup_enabled and not result.is_error:
-            self._dedup_cache[fingerprint] = result
-
-        return result
+            return None, self._limit_complete_result(self.error_result(tool_call, start, exc))
+        finally:
+            if lock is not None:
+                lock.release()
 
     async def execute_parallel_async(
         self, tool_calls: list[CanonicalToolCall]
@@ -486,6 +594,20 @@ class ToolExecutor:
         )
 
     @staticmethod
+    def _cancelled_result(tool_call: CanonicalToolCall, start: float) -> ToolResult:
+        duration_ms = (time.monotonic() - start) * 1000
+        error_msg = f"Tool '{tool_call.name}' was cancelled"
+        return ToolResult(
+            tool_call_id=tool_call.id,
+            name=tool_call.name,
+            content=json.dumps({"error": error_msg, "type": "ToolCallCancelled"}),
+            is_error=True,
+            error=error_msg,
+            error_type="ToolCallCancelled",
+            duration_ms=duration_ms,
+        )
+
+    @staticmethod
     def _deadline_result(
         tool_call: CanonicalToolCall, start: float, effective_timeout: float
     ) -> ToolResult:
@@ -504,9 +626,15 @@ class ToolExecutor:
         )
 
     @staticmethod
-    def _error_result(
+    def error_result(
         tool_call: CanonicalToolCall, start: float, exc: BaseException
     ) -> ToolResult:
+        """The failed result for an exception a tool raised.
+
+        The model reads ``{"error": str(exc), "type": <class name>}``. A
+        subclass overrides this to report its own refusals another way, and
+        calls ``ToolExecutor.error_result`` for everything else.
+        """
         duration_ms = (time.monotonic() - start) * 1000
         error_type = type(exc).__name__
         # str(exc) is "" for a bare raise of many exception types; an empty
@@ -535,6 +663,12 @@ class ToolExecutor:
             output, tool_name=tool_call.name
         )
         limit = self._resolve_max_content_size(tool_call.name)
+        if full_chars > limit and self._result_fitter is not None:
+            fitted = self._result_fitter(tool_call.name, output, limit)
+            if fitted is not None:
+                content, full_chars = self._serialize_output_with_size(
+                    fitted, tool_name=tool_call.name
+                )
         truncated = full_chars > limit
         if truncated:
             error_msg = (
@@ -558,7 +692,7 @@ class ToolExecutor:
             duration_ms=duration_ms,
         )
 
-    def _resolve_timeout(self, tool_name: str) -> float:
+    def timeout_for(self, tool_name: str) -> float:
         """Resolve the effective timeout for a tool name.
 
         Per-tool override takes precedence over the global per_tool_timeout.
@@ -635,8 +769,8 @@ class ToolExecutor:
         return content
 
     @staticmethod
-    def _compute_fingerprint(name: str, arguments: dict[str, Any]) -> str:
-        """Compute a SHA-256 fingerprint for a tool call.
+    def fingerprint(name: str, arguments: dict[str, Any]) -> str:
+        """Compute a SHA-256 fingerprint for a tool call (name and arguments).
 
         Uses json.dumps with sort_keys=True for deterministic hashing.
 

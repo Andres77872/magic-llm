@@ -37,6 +37,8 @@ from magic_llm.agent._loop_shared import (
     _register_tools_with_executor,
     _initial_tool_call_ids,
     _reserve_tool_call_ids,
+    final_answer_inputs,
+    final_answer_tool_calls,
     # Parent context ContextVars for nested LLM node execution
     PARENT_BUDGET,
     PARENT_HOOKS,
@@ -330,7 +332,7 @@ class AsyncAgentLoop:
             return [AsyncAgentLoop._response_json(item) for item in value]
         return value
 
-    async def _native_response(self, chat):
+    async def _native_response(self, chat, tool_choice):
         save = getattr(self._control, 'response_ready', None)
         restore = getattr(self._control, 'restore_response', None)
         before = self._control_snapshot(chat) if callable(save) else None
@@ -341,13 +343,13 @@ class AsyncAgentLoop:
             response = ModelChatResponse.model_validate(retained['response'])
         else:
             response = await self._await_with_budget(self._client.llm.async_generate(
-                chat, tools=self._tools, tool_choice=self._tool_choice,
+                chat, tools=self._tools, tool_choice=tool_choice,
                 **self._generate_kwargs, **self._attempt_options(self._client.llm.async_generate)))
         if callable(save):
             await save(before, {'kind': 'response', 'response': self._response_json(response)})
         return response
 
-    async def _native_stream(self, chat):
+    async def _native_stream(self, chat, tool_choice):
         save = getattr(self._control, 'response_ready', None)
         restore = getattr(self._control, 'restore_response', None)
         before = self._control_snapshot(chat) if callable(save) else None
@@ -361,7 +363,7 @@ class AsyncAgentLoop:
         chunks = [] if callable(save) else None
         chunk_bytes = 2
         source = self._stream_with_budget(self._client.llm.async_stream_generate(
-            chat, tools=self._tools, tool_choice=self._tool_choice,
+            chat, tools=self._tools, tool_choice=tool_choice,
             **self._generate_kwargs, **self._attempt_options(self._client.llm.async_stream_generate)))
         try:
             async for chunk in source:
@@ -664,11 +666,13 @@ class AsyncAgentLoop:
                             )
 
                     # Step 2: LLM_CALL (async) — pass raw tools to engine/core tooling.
-                    validate_agent_request(self._request_guard, chat=chat,
-                        tools=self._tools, tool_choice=self._tool_choice,
+                    call_chat, call_choice, final_call = final_answer_inputs(
+                        chat, self._state, self._budget, self._tools, self._tool_choice)
+                    validate_agent_request(self._request_guard, chat=call_chat,
+                        tools=self._tools, tool_choice=call_choice,
                         provider=self._provider, client=self._client,
                         generation_options=self._generate_kwargs)
-                    response = await self._native_response(chat)
+                    response = await self._native_response(call_chat, call_choice)
 
                     # Update token counts from response usage
                     if response.usage is not None:
@@ -702,6 +706,12 @@ class AsyncAgentLoop:
 
                     # Step 5: EXTRACT — consume normalized engine response tool calls.
                     tool_calls: list[CanonicalToolCall] = extract_tool_calls(response)
+                    if final_call:
+                        if tool_calls:
+                            response.responses_output = None
+                            response.gemini_parts = None
+                        tool_calls = final_answer_tool_calls(
+                            tool_calls, response.content, self._state, self._budget, self._hooks)
                     _reserve_tool_call_ids(tool_calls, seen_tool_call_ids)
 
                     # Step 6: RECORD_CONTENT — INVARIANT: suppress when tool_calls present
@@ -721,7 +731,9 @@ class AsyncAgentLoop:
                         collected_content.clear()
                         continue
 
-                    # Step 8: ADD_TOOL_CALL — tool-call message (no speculative content)
+                    # Step 8: ADD_TOOL_CALL — the tool-call message keeps the text the model
+                    # wrote beside its calls: it is the model's own context. It never
+                    # joins the final answer.
                     if tool_calls:
                         tool_call_dicts = [
                             {
@@ -739,7 +751,7 @@ class AsyncAgentLoop:
                             tool_calls=tool_call_dicts,
                             responses_output=response.responses_output,
                             gemini_parts=response.gemini_parts,
-                            content=None,  # INVARIANT: no speculative content in LLM context
+                            content=content or None,  # the model's own text beside its calls
                         )
 
                     # Step 8: VALIDATE_INTEGRITY
@@ -938,11 +950,13 @@ class AsyncAgentLoop:
                     summary = StreamIterationSummary()
                     last_chunk: Optional[ChatCompletionModel] = None
 
-                    validate_agent_request(self._request_guard, chat=chat,
-                        tools=self._tools, tool_choice=self._tool_choice,
+                    call_chat, call_choice, final_call = final_answer_inputs(
+                        chat, self._state, self._budget, self._tools, self._tool_choice)
+                    validate_agent_request(self._request_guard, chat=call_chat,
+                        tools=self._tools, tool_choice=call_choice,
                         provider=self._provider, client=self._client,
                         generation_options=self._generate_kwargs)
-                    source = self._native_stream(chat)
+                    source = self._native_stream(call_chat, call_choice)
                     try:
                         async for chunk in source:
                             before_input = getattr(summary.usage, "prompt_tokens", 0) or 0
@@ -1007,6 +1021,12 @@ class AsyncAgentLoop:
                         )
 
                         tool_calls = stream_summary_tool_calls(summary)
+                        if final_call:
+                            if tool_calls:
+                                summary.responses_output = None
+                                summary.gemini_parts = None
+                            tool_calls = final_answer_tool_calls(
+                                tool_calls, summary.content, self._state, self._budget, self._hooks)
                         _reserve_tool_call_ids(tool_calls, seen_tool_call_ids)
 
                         # Record content — runs for EVERY iteration (including final no-tool answer)
@@ -1026,7 +1046,8 @@ class AsyncAgentLoop:
                             collected_content.clear()
                             continue
 
-                        # Add tool_call message (no speculative content)
+                        # Add the tool-call message with the model's text beside its calls
+                        # (its own context; never part of the final answer)
                         if tool_calls:
                             tool_call_dicts = [
                                 {
@@ -1044,7 +1065,7 @@ class AsyncAgentLoop:
                                 tool_calls=tool_call_dicts,
                                 responses_output=response.responses_output,
                                 gemini_parts=response.gemini_parts,
-                                content=None,  # INVARIANT: no speculative content in LLM context
+                                content=summary.content or None,  # the model's own text beside its calls
                             )
 
                         # Validate integrity

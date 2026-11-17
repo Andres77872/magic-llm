@@ -8,7 +8,7 @@ from typing import Dict, Tuple, Optional, Any
 
 from magic_llm.engine.tooling import map_request_tools
 from magic_llm.engine._usage_factory import usage_from_openai_payload
-from magic_llm.exception.ChatException import ChatException
+from magic_llm.exception.ChatException import ChatException, ProviderProtocolError
 from magic_llm.model import ModelChat, ModelChatResponse, ModelEmbeddingResponse
 from magic_llm.model.ModelAudio import AudioSpeechRequest, AudioTranscriptionsRequest
 from magic_llm.model.ModelChatStream import ChatCompletionModel
@@ -296,7 +296,7 @@ class OpenAiBaseProvider(ABC):
             if chunk.get('error'):
                 raise HttpError('Provider stream failed', response_content=json.dumps(chunk).encode())
             if 'choices' not in chunk:
-                raise ValueError('Provider stream omitted choices')
+                raise ProviderProtocolError('Provider stream omitted choices')
             chunk['usage'] = usage_from_openai_payload(chunk) if chunk.get('usage') else {}
             if len(chunk['choices']) == 0:
                 if not chunk['usage']:
