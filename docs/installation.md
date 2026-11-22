@@ -11,7 +11,7 @@
 The primary install path is the Git repository:
 
 ```bash
-pip install git+https://github.com/Andres77872/magic-llm.git
+python -m pip install 'magic_llm @ git+https://github.com/Andres77872/magic-llm.git@master'
 ```
 
 For local development:
@@ -24,21 +24,11 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-## Install from PyPI, if available
-
-The package metadata names the distribution `magic_llm`. If the package is published in your environment, one of these may be available:
-
-```bash
-pip install magic-llm
-# or
-pip install magic_llm
-```
-
-If that fails, use the GitHub install command above.
+Don't install by bare name from public PyPI; `magic-llm` and `magic_llm` resolve to an unrelated project there. This repo installs independently of `magic-agents`.
 
 ## Core dependencies
 
-Project metadata includes `aiohttp`, `requests`, `pydantic` v2, `PyYAML`, `tiktoken`, `tokenizers`, and `botocore`, plus testing and utility packages.
+`setup.cfg` declares direct runtime dependencies and test tools separately. For Jupyter, install the `notebook` extra (`python -m pip install -e '.[notebook]'` from the checkout).
 
 ## Credentials
 

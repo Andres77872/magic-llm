@@ -10,7 +10,7 @@ source .venv/bin/activate
 python -m pip install -e '.[test]'
 ```
 
-The project uses setuptools through `setup.cfg` and `pyproject.toml`. Test tooling is exposed through the `test` extra rather than installed for runtime consumers. `requirements.txt` remains the fully pinned local development environment.
+The project uses setuptools through `setup.cfg` and `pyproject.toml`. Test tooling is exposed through the `test` extra rather than installed for runtime consumers. From this checkout, `python -m pip install -r requirements.txt` is shorthand for the editable install with test tools; it isn't a lock file.
 
 ## Python version
 

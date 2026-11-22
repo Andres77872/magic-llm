@@ -2,7 +2,7 @@
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Andres77872/magic-llm)
 
-Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface across native and OpenAI-compatible LLM providers. Version `0.1.37` supports chat, streaming, async calls, embeddings, provider-specific audio, model discovery, tool calling, ReAct-style agents, and YAML-backed subagents.
+Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface across native and OpenAI-compatible LLM providers. It supports chat, streaming, async calls, embeddings, provider-specific audio, model discovery, tool calling, ReAct-style agents, and YAML-backed subagents.
 
 > Magic LLM is a client library. It does **not** ship a CLI, REST server, or `.env` loader. Pass credentials explicitly to `MagicLLM(...)` from your own application configuration.
 
@@ -37,19 +37,15 @@ Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface
 
 ## Install
 
-Primary install path:
+Install from the official Git repository:
 
 ```bash
-pip install git+https://github.com/Andres77872/magic-llm.git@master
+python -m pip install 'magic_llm @ git+https://github.com/Andres77872/magic-llm.git@master'
 ```
 
-If the package is published in your environment, this may also work:
+For an editable install, run `python -m pip install -e .` from a local `magic-llm` checkout. No `magic-agents` install is needed. Use `.[notebook]` to add the Jupyter dependency, or install `-r requirements.txt` for an editable checkout with test tools.
 
-```bash
-pip install magic-llm
-```
-
-The project metadata does not declare a Python floor, but the source uses Python 3.10+ syntax. Use Python 3.10 or newer.
+Don't install by bare name (`magic-llm` or `magic_llm`) from public PyPI; it is a different project.
 
 ## 5-minute quickstart
 

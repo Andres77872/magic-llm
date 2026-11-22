@@ -478,14 +478,14 @@ class TestGeminiStreamingToolLoop:
 
         # Build SSE chunks for the first iteration (tool call)
         tool_stream_chunks = [
-            f'data: {json.dumps({
+            'data: ' + json.dumps({
                 "candidates": [{
                     "content": {"parts": [{"text": "Let me check..."}], "role": "model"},
                     "finishReason": "STOP",
                 }],
                 "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 2, "totalTokenCount": 12},
-            })}',
-            f'data: {json.dumps({
+            }),
+            'data: ' + json.dumps({
                 "candidates": [{
                     "content": {
                         "parts": [{
@@ -500,18 +500,18 @@ class TestGeminiStreamingToolLoop:
                     "finishReason": "STOP",
                 }],
                 "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5, "totalTokenCount": 15},
-            })}',
+            }),
         ]
 
         # Build SSE chunks for the final iteration (text only)
         final_stream_chunks = [
-            f'data: {json.dumps({
+            'data: ' + json.dumps({
                 "candidates": [{
                     "content": {"parts": [{"text": "The weather in London is sunny."}], "role": "model"},
                     "finishReason": "STOP",
                 }],
                 "usageMetadata": {"promptTokenCount": 20, "candidatesTokenCount": 10, "totalTokenCount": 30},
-            })}',
+            }),
         ]
 
         stream_iterations = [iter(tool_stream_chunks), iter(final_stream_chunks)]
@@ -539,7 +539,7 @@ class TestGeminiStreamingToolLoop:
         """Streaming chunk with only functionCall → delta.content = '', no crash."""
         engine = EngineGoogle(api_key="test-key", model="gemini-2.5-flash")
 
-        chunk = f'data: {json.dumps({
+        chunk = 'data: ' + json.dumps({
             "candidates": [{
                 "content": {
                     "parts": [{
@@ -554,7 +554,7 @@ class TestGeminiStreamingToolLoop:
                 "finishReason": "STOP",
             }],
             "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5, "totalTokenCount": 15},
-        })}'
+        })
 
         result = engine.prepare_stream_response(chunk)
 

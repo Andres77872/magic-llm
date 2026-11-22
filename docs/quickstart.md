@@ -5,7 +5,7 @@ This page shows the smallest useful path: install, create a client, build a chat
 ## 1. Install
 
 ```bash
-pip install git+https://github.com/Andres77872/magic-llm.git
+python -m pip install 'magic_llm @ git+https://github.com/Andres77872/magic-llm.git@master'
 ```
 
 ## 2. Create a client

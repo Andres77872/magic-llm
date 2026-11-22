@@ -117,7 +117,7 @@ class PythonExecutor:
 
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
-        except TimeoutError as exc:
+        except asyncio.TimeoutError as exc:
             await self._terminate_subprocess(process)
             raise TimeoutError(f"Execution timed out after {self.timeout}s") from exc
         except BaseException:
