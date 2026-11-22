@@ -39,3 +39,9 @@ embedding = client.llm.embedding(text="semantic search query")
 ```
 
 Provider response shape can vary. The library exposes `ModelEmbeddingResponse` where adapters normalize the provider output.
+
+## Engine support
+
+Embeddings are implemented only by `engine="openai"`. Every OpenAI-compatible adapter posts to `{base_url}/embeddings` with the client's `model`; whether that works depends on the provider. `async_embedding()` is also available.
+
+On `anthropic`, `google`, `amazon`, `cloudflare`, `cohere`, and `azure`, `embedding()` and `async_embedding()` return `None` instead of raising. Check for `None` if your code can run against those engines.

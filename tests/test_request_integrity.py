@@ -110,7 +110,7 @@ def invoke(loop, mode, chat):
 
 @pytest.mark.parametrize('provider', ['openai', 'anthropic', 'google'])
 @pytest.mark.parametrize('mode', ['sync', 'sync-stream', 'async', 'async-stream'])
-def test_metadata_first_complete_second_wire_and_isolated_observer(provider, mode):
+def test_metadata_first_complete_second_wire_and_isolated_observer(provider, mode, offline_token_estimator):
     engine = type('OfflineWireEngine', (WireEngine,), {'engine': provider})(provider)
     chat = initial_chat()
     original = copy.deepcopy(chat.messages)
@@ -257,7 +257,7 @@ def test_public_tool_limits_exact_unicode_output_and_atomic_exception_results():
     assert client.tool_content_limit('load', tool_executor_options={'max_content_size': 999}) == 999
 
 
-def test_guarded_chat_counts_call_arguments_and_native_results_and_never_trims_pairs():
+def test_guarded_chat_counts_call_arguments_and_native_results_and_never_trims_pairs(offline_token_estimator):
     chat = ModelChat(system='policy', max_input_tokens=40)
     chat.add_user_message('task')
     chat.add_tool_call_message([{'id': 'one', 'function': {'name': 'load', 'arguments': 'x '*500}}])

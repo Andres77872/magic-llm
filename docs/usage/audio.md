@@ -12,8 +12,9 @@ Unsupported media paths now fail fast with `UNSUPPORTED_MEDIA_OPERATION` instead
 | `openai` + Together | ✅ | ✅ | ❌ | ❌ | `/audio/generations` TTS only. |
 | `openai` + DeepInfra | ❌ | ✅ | ❌ | ❌ | Async TTS only; STT is conservative/unsupported. |
 | `openai` + Fireworks | ❌ | ❌ | ❌ | ✅ | Async STT only for `whisper-v3` and `whisper-v3-turbo`. |
-| Other OpenAI-compatible adapters | ❌ | ❌ | ❌ | ❌ | No inherited generic media endpoint claim. |
-| `google` | ✅ | ✅ | ❌ | ❌ | Gemini TTS returns WAV bytes. |
+| `openai` + Groq, SambaNova, OpenRouter, Mistral, DeepSeek | ❌ | ❌ | ❌ | ❌ | Media unsupported. |
+| `openai` + any other host (generic adapter) | ❌ | ⚠️ | ❌ | ❌ | Marked unsupported, but `async_audio_speech` does not enforce the flag and still posts to `{base_url}/audio/speech`. |
+| `google` | ✅ | ✅ | ❌ | ❌ | Gemini TTS returns WAV bytes; always uses `gemini-2.5-flash-preview-tts`. |
 | `azure` Speech | ❌ | ✅ | ❌ | ✅ | Async-only Azure Speech. |
 | `amazon` Polly | ✅ | ❌ | ❌ | ❌ | Sync TTS only; no Amazon Transcribe in core. |
 | `anthropic`, `cloudflare`, `cohere` | ❌ | ❌ | ❌ | ❌ | Audio unsupported. |

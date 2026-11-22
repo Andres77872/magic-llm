@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -8,6 +9,36 @@ from magic_llm.engine.engine_anthropic import EngineAnthropic
 
 def _make_engine():
     return EngineAnthropic(api_key="test-key", model="claude-3-haiku-20240307")
+
+
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+async def test_stream_preserves_data_prefix_inside_text_and_terminal_usage(asynchronous):
+    events = [
+        {"type": "message_start", "message": {"id": "r", "usage": {"input_tokens": 2, "output_tokens": 0}}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Here is data: 42"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "."}},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 3}},
+        {"type": "message_stop"},
+    ]
+    frames = ["event: message_start", "", *("data: " + json.dumps(e) for e in events)]
+    engine, chat = _make_engine(), ModelChat(system="test")
+    try:
+        if asynchronous:
+            async def stream(*args, **kwargs):
+                for frame in frames:
+                    yield frame.encode()
+            with patch("magic_llm.engine.engine_anthropic.AsyncHttpClient") as http:
+                http.return_value.__aenter__.return_value.post_stream = stream
+                chunks = [chunk async for chunk in engine.async_stream_generate(chat)]
+        else:
+            with patch("magic_llm.engine.engine_anthropic.HttpClient") as http:
+                http.return_value.__enter__.return_value.stream_request.return_value = frames
+                chunks = list(engine.stream_generate(chat))
+    finally:
+        engine.executor.shutdown(wait=False)
+    assert "".join(chunk.choices[0].delta.content or "" for chunk in chunks) == "Here is data: 42."
+    assert chunks[-1].choices[0].finish_reason == "stop"
+    assert chunks[-1].usage.total_tokens == 5
 
 
 # ─────────────────────────────────────────────────────────────────────────────

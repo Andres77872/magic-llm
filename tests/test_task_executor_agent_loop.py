@@ -236,38 +236,6 @@ class TestTimeoutInLoop:
         assert parsed["status"] == "ok"
 
 
-class TestConcurrencyInLoop:
-    """Tests for semaphore concurrency control in async context."""
-
-    @pytest.mark.asyncio
-    async def test_concurrency_limit_queues_calls(self):
-        """Concurrency limit queues excess calls."""
-        executor = TaskExecutor()
-        execution_order = []
-
-        async def tracked_task(query: str) -> str:
-            execution_order.append(f"start_{query}")
-            await asyncio.sleep(0.3)
-            execution_order.append(f"end_{query}")
-            return query
-
-        executor.register_task(_make_manifest(id="tracked_task", max_concurrency=2), tracked_task)
-
-        # Launch 3 concurrent calls (max_concurrency=2)
-        calls = [
-            _make_call("tracked_task", {"query": f"call_{i}"}, id=f"call_{i}")
-            for i in range(3)
-        ]
-
-        results = await executor.execute_parallel_async(calls)
-
-        assert len(results) == 3
-        assert all(r.is_error is False for r in results)
-
-        # Verify all 3 completed
-        assert len([x for x in execution_order if x.startswith("end_")]) == 3
-
-
 class TestParallelTaskExecution:
     """Tests for parallel task execution via TaskExecutor."""
 

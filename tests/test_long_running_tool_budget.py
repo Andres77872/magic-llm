@@ -54,23 +54,26 @@ class TestPerToolTimeout:
         assert "0.01" in result.error
 
     async def test_per_tool_name_override_applies(self):
-        """Caller-owned generate_image tool timeout uses 120.0, not global 1.0."""
-        executor = ToolExecutor(
-            per_tool_timeout=0.01,
-            tool_timeouts={"generate_image": 120.0},
-        )
+        """The named operation survives the same wait that times out its sibling."""
+        executor = ToolExecutor(per_tool_timeout=0.02, tool_timeouts={"extended": 5})
+        entered, release = asyncio.Event(), asyncio.Event()
 
-        async def fast_image_tool() -> str:
-            # This is a generic caller-registered tool name, not a core image-generation API.
-            return '{"url": "/images/img-abc.webp"}'
+        async def held():
+            entered.set()
+            await release.wait()
+            return "released"
 
-        executor.register("generate_image", fast_image_tool)
-
-        # The per-tool override lets the call succeed despite the short global timeout.
-        result = await executor.execute_async(_make_call("generate_image"))
-
-        assert result.is_error is False
-        assert "/images/img-abc.webp" in result.content
+        executor.register("extended", held)
+        executor.register("ordinary", held)
+        extended = asyncio.create_task(executor.execute_async(_make_call("extended")))
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            ordinary = await asyncio.wait_for(executor.execute_async(_make_call("ordinary")), 2)
+            assert ordinary.error_type == "TimeoutError"
+        finally:
+            release.set()
+            result = await asyncio.wait_for(extended, 2)
+        assert not result.is_error and "released" in result.content
 
     async def test_global_timeout_used_when_no_per_tool_override(self):
         """Tools not in tool_timeouts use the global per_tool_timeout."""

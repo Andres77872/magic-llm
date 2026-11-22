@@ -20,6 +20,7 @@ PNG_1x1_BASE64 = (
 LARGE_B64 = "A" * 10000
 
 
+@pytest.mark.usefixtures('offline_token_estimator')
 class TestTokenCountingMultimodal:
     def test_string_content_counts_tokens(self):
         chat = ModelChat()

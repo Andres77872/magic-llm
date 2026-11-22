@@ -17,6 +17,7 @@ from uuid import uuid4
 from magic_llm.exception.ChatException import ChatException, RequestValidationError
 from magic_llm.model.ModelChatStream import ChatMetaModel
 from magic_llm.util.http import HttpError
+from magic_llm.util.private_output import PrivateOutputError
 
 
 class ProviderAttemptControlError(ChatException):
@@ -137,7 +138,18 @@ def has_semantic_output(chunk: Any) -> bool:
     return False
 
 
-def _request_options(engine: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+def prepare_provider_attempt(engine, chat, kwargs):
+    """Produce the dispatch inputs and their effective admission snapshot."""
+    defaults = getattr(engine, 'kwargs', {})
+    effective = {**defaults, **kwargs} if defaults else kwargs
+    prepare = getattr(type(engine), '_prepare_provider_attempt', None)
+    if prepare is None:
+        return chat, kwargs, effective
+    chat, options = prepare(engine, chat, effective)
+    return chat, options, options
+
+
+def _request_options(kwargs: dict[str, Any]) -> dict[str, Any]:
     # Never copy transport credentials or callback/control objects into a
     # request-admission snapshot. It is private context, not public telemetry.
     excluded = {'headers', 'authorization', 'api_key', 'private_key', 'secret',
@@ -154,7 +166,8 @@ def _request_options(engine: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
             return [sanitize(item) for item in value]
         return copy.deepcopy(value)
 
-    options = {**getattr(engine, 'kwargs', {}), **kwargs}
+    # Callers supply the effective defaults + overrides after per-attempt policy.
+    options = dict(kwargs)
     if options.get('tools'):
         from magic_llm.engine.tooling import normalize_openai_tools
         options['tools'] = normalize_openai_tools(options['tools'])
@@ -226,10 +239,9 @@ def _attempt_model(engine, options, stream):
 
 def _new_attempt(engine, chat, kwargs, operation_id, parent_id,
                  stream, index, retry_index, is_fallback):
-    raw_options = {**getattr(engine, 'kwargs', {}), **kwargs}
     native_tools = any(isinstance(tool, dict) and tool.get('type') not in (None, 'function')
-                       for tool in (raw_options.get('tools') or ()))
-    options = _request_options(engine, kwargs)
+                       for tool in (kwargs.get('tools') or ()))
+    options = _request_options(kwargs)
     return ProviderAttempt(
         request_operation_id=operation_id,
         provider_attempt_id=str(uuid4()),
@@ -276,7 +288,7 @@ LOCAL_PERMANENT_CODES = frozenset({'TOOL_WIRING_NOT_IMPLEMENTED'})
 
 
 def is_permanent_provider_error(error):
-    if isinstance(error, RequestValidationError):
+    if isinstance(error, (RequestValidationError, PrivateOutputError)):
         return True
     if isinstance(error, ChatException) and error.error_code in LOCAL_PERMANENT_CODES:
         return True
@@ -287,7 +299,7 @@ def is_permanent_provider_error(error):
 def _terminal_error(error, semantic):
     if not isinstance(error, Exception):
         raise error
-    if isinstance(error, (RequestValidationError, ProviderAttemptControlError)):
+    if isinstance(error, (RequestValidationError, ProviderAttemptControlError, PrivateOutputError)):
         raise error
     if semantic:
         raise ProviderStreamInterrupted() from error
@@ -320,7 +332,8 @@ async def controlled_stream(engine, func, chat, kwargs, control):
     for provider_index, (current, raw, attempts, delay) in enumerate(chain):
         for retry_index in range(1, attempts + 1):
             index += 1
-            attempt = _new_attempt(current, chat, kwargs, operation_id, parent_id,
+            attempt_chat, options, snapshot_options = prepare_provider_attempt(current, chat, kwargs)
+            attempt = _new_attempt(current, attempt_chat, snapshot_options, operation_id, parent_id,
                                    True, index, retry_index, provider_index > 0)
             # Outside the provider-error handler: any admission denial is final.
             await control.before_attempt(attempt)
@@ -329,7 +342,7 @@ async def controlled_stream(engine, func, chat, kwargs, control):
             started = time.monotonic()
             source = None
             try:
-                source = raw(current, chat, **kwargs)
+                source = raw(current, attempt_chat, **options)
                 async for chunk in source:
                     if getattr(chunk, 'usage', None) is not None:
                         candidate = chunk.usage
@@ -351,7 +364,7 @@ async def controlled_stream(engine, func, chat, kwargs, control):
                             error = caught
                 outcome = _outcome(error, semantic, usage)
                 await control.after_attempt(attempt, outcome)
-            await _observe(current, chat, attempt, outcome, content, started)
+            await _observe(current, attempt_chat, attempt, outcome, content, started)
             if error is None:
                 return
             _terminal_error(error, semantic)
@@ -370,19 +383,20 @@ async def controlled_generate(engine, func, chat, kwargs, control):
     for provider_index, (current, raw, attempts, delay) in enumerate(chain):
         for retry_index in range(1, attempts + 1):
             index += 1
-            attempt = _new_attempt(current, chat, kwargs, operation_id, parent_id,
+            attempt_chat, options, snapshot_options = prepare_provider_attempt(current, chat, kwargs)
+            attempt = _new_attempt(current, attempt_chat, snapshot_options, operation_id, parent_id,
                                    False, index, retry_index, provider_index > 0)
             await control.before_attempt(attempt)
             parent_id = attempt.provider_attempt_id
             started = time.monotonic()
             error, response = None, None
             try:
-                response = await raw(current, chat, **kwargs)
+                response = await raw(current, attempt_chat, **options)
             except BaseException as caught:
                 error = caught
             outcome = _outcome(error, response is not None, getattr(response, 'usage', None))
             await control.after_attempt(attempt, outcome)
-            await _observe(current, chat, attempt, outcome,
+            await _observe(current, attempt_chat, attempt, outcome,
                            getattr(response, 'content', None), started)
             if error is None:
                 return response

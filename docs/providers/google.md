@@ -94,10 +94,14 @@ with a configuration error so the two protocols cannot be mixed accidentally.
 
 - Chat, streaming, async chat, and async streaming are supported.
 - Tool schemas are mapped into Gemini's expected format.
-- Model discovery is supported.
 - Vision inputs are supported through `ModelChat.add_user_message(..., image=...)` where the model supports images.
-- Gemini TTS is supported through both `audio_speech(...)` and `async_audio_speech(...)`; returned audio is WAV bytes.
+- Gemini TTS is supported through both `audio_speech(...)` and `async_audio_speech(...)`, and returns WAV bytes. Requests always go to `models/gemini-2.5-flash-preview-tts:generateContent`; `AudioSpeechRequest.model` does not change the URL.
 - STT/transcription is unsupported for the Google engine in core.
+- Embeddings are not implemented: `embedding()` and `async_embedding()` return `None`.
+
+## Model discovery
+
+`client.list_models()` and `await client.async_list_models()` list `https://generativelanguage.googleapis.com/v1beta/models` using the configured Google API key.
 
 ## Example
 

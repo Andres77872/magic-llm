@@ -26,15 +26,15 @@ Use `engine="openai"` plus the provider's OpenAI-compatible `base_url`.
 
 ## Why does Azure chat fail?
 
-Azure is speech-only in v0.1.37. Chat methods raise `NotImplementedError`.
+Azure is speech-only. Chat methods raise `NotImplementedError` internally; callers receive `ChatException` (`STREAM_GENERATION_ERROR`) after the retries.
 
 ## Why does model discovery fail for Amazon or Cloudflare?
 
-Those engines do not have discovery adapters.
+Those engines do not have discovery adapters. See [model discovery](usage/model-discovery.md) for supported engines and endpoints.
 
 ## Why do subagents not load?
 
-Subagents default to disabled. Call `enable_subagents()` before `load_subagents()`.
+Subagents default to disabled. Call `magic_llm.agent.enable_subagents()` before `await client.load_subagents(...)`.
 
 ## What test command should I run?
 

@@ -11,6 +11,7 @@ from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union
 
 from magic_llm.engine.attempt_control import (
     ProviderAttemptControl, controlled_generate, controlled_stream, reject_sync_control, is_permanent_provider_error,
+    prepare_provider_attempt,
 )
 from magic_llm.engine._usage_factory import attach_attempt_metadata, usage_attempt_dict, usage_has_tokens
 from magic_llm.exception.ChatException import ChatException, RequestValidationError
@@ -294,13 +295,14 @@ class BaseChat(abc.ABC):
             attempt_usages: list[dict[str, Any]] = []
 
             for attempt in range(self.retry_config.attempts):
+                attempt_chat, options, _ = prepare_provider_attempt(self, chat, kwargs)
                 try:
                     metrics.start_time = time.time()
                     first_token_received = False
                     current_item = None
                     current_attempt_usage = None
 
-                    async for item in func(self, chat, **kwargs):
+                    async for item in func(self, attempt_chat, **options):
                         current_item = item
                         if not first_token_received:
                             metrics.ttfb = time.time() - metrics.start_time
@@ -345,7 +347,7 @@ class BaseChat(abc.ABC):
                             metrics.calculate_ttf(),
                             usage
                         )
-                        await self._execute_callback(chat, response_content, usage, model, meta)
+                        await self._execute_callback(attempt_chat, response_content, usage, model, meta)
                     break
 
                 except Exception as e:
@@ -362,7 +364,7 @@ class BaseChat(abc.ABC):
                         usage = attach_attempt_metadata(current_attempt_usage, attempt_usages)
                     er = failure_message(e)
                     logger.error('Provider generation failed code=%s', provider_error_detail(e)['code'])
-                    await self._execute_callback(chat,
+                    await self._execute_callback(attempt_chat,
                                                  response_content,
                                                  usage,
                                                  model,
@@ -535,10 +537,11 @@ class BaseChat(abc.ABC):
                 return await controlled_generate(self, func, chat, kwargs, provider_attempt_control)
             model = self.model or kwargs.get('model')
             for attempt in range(self.retry_config.attempts):
+                attempt_chat, options, _ = prepare_provider_attempt(self, chat, kwargs)
                 start_time = time.time()
                 usage = None
                 try:
-                    response = await func(self, chat, **kwargs)
+                    response = await func(self, attempt_chat, **options)
                     ttf = time.time() - start_time
 
                     usage = response.usage
@@ -547,7 +550,7 @@ class BaseChat(abc.ABC):
                     usage.ttf = meta.TTF
                     usage.ttft = meta.TTFB
 
-                    await self._execute_callback(chat, response.content, usage, model, meta)
+                    await self._execute_callback(attempt_chat, response.content, usage, model, meta)
                     return response
 
                 except Exception as e:
@@ -555,8 +558,8 @@ class BaseChat(abc.ABC):
                         raise
                     er = failure_message(e)
                     logger.error('Provider generation failed code=%s', provider_error_detail(e)['code'])
-                    await self._execute_callback(chat,
-                                                 None,
+                    await self._execute_callback(attempt_chat,
+                                                  None,
                                                  usage,
                                                  model,
                                                  ChatMetaModel(
@@ -812,10 +815,7 @@ class BaseChat(abc.ABC):
     def list_models(self) -> List["NormalizedDiscoveredModel"]:
         """Discover available models from the provider's listing API.
 
-        Delegates to :meth:`MagicLlmBase._resolve_discovery_adapter` using
-        the chat instance's engine name and credentials. The chat ``base_url``
-        is deliberately NOT reused — each discovery adapter owns its own
-        endpoint URL.
+        Compatible providers are resolved from their actual chat origin.
 
         Returns:
             List of NormalizedDiscoveredModel objects
@@ -826,16 +826,7 @@ class BaseChat(abc.ABC):
             DiscoveryAuthError: Invalid credentials.
             DiscoveryRateLimitError: Rate limited.
         """
-        from magic_llm.base import MagicLlmBase
-        from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
-
-        creds = BaseDiscoveryAdapter.resolve_credentials(self)
-        adapter = MagicLlmBase._resolve_discovery_adapter(
-            engine=self.engine,
-            api_key=creds["api_key"],
-            base_url=None,  # adapter default — not chat base_url
-        )
-        return adapter.discover()
+        return self._discovery_adapter().discover()
 
     async def async_list_models(self) -> List["NormalizedDiscoveredModel"]:
         """Async variant of :meth:`list_models`.
@@ -851,13 +842,26 @@ class BaseChat(abc.ABC):
             DiscoveryAuthError: Invalid credentials.
             DiscoveryRateLimitError: Rate limited.
         """
+        return await self._discovery_adapter().async_discover()
+
+    def _discovery_adapter(self):
+        from urllib.parse import urlsplit
         from magic_llm.base import MagicLlmBase
+        from magic_llm.engine.discovery import resolve_discovery_engine
         from magic_llm.engine.discovery.base_discovery import BaseDiscoveryAdapter
 
         creds = BaseDiscoveryAdapter.resolve_credentials(self)
-        adapter = MagicLlmBase._resolve_discovery_adapter(
-            engine=self.engine,
-            api_key=creds["api_key"],
-            base_url=None,  # adapter default — not chat base_url
-        )
-        return await adapter.async_discover()
+        engine, base_url = self.engine, None
+        if engine == 'openai':
+            base_url = getattr(getattr(self, 'base', None), 'base_url', None) or creds['base_url']
+            engine = resolve_discovery_engine(engine, base_url)
+        adapter = MagicLlmBase._resolve_discovery_adapter(engine=engine, api_key=creds['api_key'])
+        if base_url:
+            # A dedicated provider may list at a different path (e.g. DeepInfra).
+            # Use its default only on the same origin. Never send a proxy's key
+            # to the canonical host, including for unrecognized/custom endpoints.
+            configured = urlsplit(base_url)
+            default = urlsplit(adapter.base_url)
+            if engine == 'openai' or (configured.scheme, configured.netloc) != (default.scheme, default.netloc):
+                adapter.base_url = base_url
+        return adapter

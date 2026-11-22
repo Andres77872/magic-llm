@@ -66,6 +66,36 @@ class TestMagicLLMEndToEnd:
             async_mock.return_value = async_instance
             yield {"sync": sync_mock, "async": async_mock}
 
+    @pytest.mark.parametrize("base_url,provider,listing", [
+        ("https://api.groq.com/openai/v1", "groq", "https://api.groq.com/openai/v1/models"),
+        ("https://api.deepinfra.com/v1/openai", "deepinfra", "https://api.deepinfra.com/v1/models"),
+        ("https://custom.example/gateway/v1", "openai", "https://custom.example/gateway/v1/models"),
+        ("https://eu.api.groq.com/openai/v1", "groq", "https://eu.api.groq.com/openai/v1/models"),
+    ])
+    async def test_compatible_facade_routes_discovery_and_key_to_provider(self, mock_http, base_url, provider, listing):
+        client = MagicLLM(engine="openai", private_key="test-key", model="test", base_url=base_url)
+        try:
+            results = [client.list_models(), await client.async_list_models()]
+            for mode, models in zip(("sync", "async"), results):
+                request = mock_http[mode].return_value.request
+                request.assert_called_once()
+                assert request.call_args.args == ("GET", listing)
+                assert request.call_args.kwargs["headers"]["Authorization"] == "Bearer test-key"
+                assert models and all(m.provider == provider for m in models)
+        finally:
+            client.llm.executor.shutdown(wait=False)
+
+    def test_google_facade_uses_default_listing_endpoint(self, mock_http):
+        request = mock_http["sync"].return_value.request
+        request.return_value = b'{"models":[{"name":"models/gemini-test"}]}'
+        client = MagicLLM(engine="google", private_key="google-test", model="test")
+        try:
+            assert client.list_models()[0].provider == "google"
+            assert request.call_args.args == ("GET", "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000")
+            assert request.call_args.kwargs["headers"]["x-goog-api-key"] == "google-test"
+        finally:
+            client.llm.executor.shutdown(wait=False)
+
     def test_list_models_for_unsupported_engine_raises(self):
         """Unsupported engines raise NotImplementedError via resolver."""
         from magic_llm.base import MagicLlmBase
@@ -261,28 +291,6 @@ class TestOpenAICompatibleDiscoveryQuirkTable:
         )
 
 
-class TestOfflineDiscoveryFacadeReplacement:
-    """Offline facade-chain proof that keeps live discovery smoke optional."""
-
-    def test_resolver_facade_proxy_provider_list_models_with_mocked_http(self):
-        with patch("magic_llm.engine.discovery.base_discovery.HttpClient") as mock_cls:
-            instance = MagicMock()
-            instance.request.return_value = json.dumps({"data": [{"id": "groq-model"}]}).encode("utf-8")
-            instance.__enter__.return_value = instance
-            mock_cls.return_value = instance
-
-            from magic_llm.base import MagicLlmBase
-            adapter = MagicLlmBase._resolve_discovery_adapter(engine="groq", api_key="gk-test", base_url=None)
-            models = adapter.discover()
-
-        assert len(models) == 1
-        assert models[0].provider == "groq"
-        assert mock_cls.return_value.request.call_args.args[:2] == (
-            "GET",
-            "https://api.groq.com/openai/v1/models",
-        )
-
-
 # ── Negative / Edge Cases ────────────────────────────────────────────────
 
 class TestNegativeCases:
@@ -312,11 +320,6 @@ class TestNegativeCases:
 
 class TestBackwardCompat:
     """Verify the public import path consumers (api.magic_llm) use."""
-
-    def test_get_adapter_import_path(self):
-        """Import exactly as api.magic_llm's discovery_client.py does."""
-        from magic_llm.engine.discovery import get_adapter as ga
-        assert ga is get_adapter  # same symbol
 
     def test_get_adapter_instantiation(self):
         """Verify adapter can be instantiated the way consumers do it."""

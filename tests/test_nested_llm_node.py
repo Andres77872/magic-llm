@@ -19,7 +19,6 @@ Tests cover:
 """
 import asyncio
 import json
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -718,14 +717,17 @@ class TestChildSemaphoreIsolation:
 
         mock_client = MagicMock()
 
-        # Track execution order
-        execution_times = []
+        full, release = asyncio.Event(), asyncio.Event()
+        started = 0
 
         async def mock_child_run(user_input):
-            execution_times.append(time.time())
-            await asyncio.sleep(0.1)  # Simulate work
+            nonlocal started
+            started += 1
+            if started == 2:
+                full.set()
+            await release.wait()
             mock_response = MagicMock()
-            mock_response.content = f"Done at {len(execution_times)}"
+            mock_response.content = "Done"
             mock_response.choices = []
             return mock_response
 
@@ -754,26 +756,21 @@ class TestChildSemaphoreIsolation:
                 for i in range(3)
             ]
 
-            results = await asyncio.gather(*calls)
+            batch = asyncio.gather(*calls)
+            try:
+                await asyncio.wait_for(full.wait(), 2)
+                await asyncio.sleep(0)
+                assert started == 2
+            finally:
+                release.set()
+                results = await asyncio.wait_for(batch, 2)
+                disable_nested_llm_nodes()
 
             # All 3 should complete (no rejection)
-            assert len(results) == 3
+            assert len(results) == started == 3
             for r in results:
                 parsed = json.loads(r.content)
                 assert parsed["status"] == "ok"
-
-            # Verify execution order shows semaphore limiting
-            # With max_concurrency=2, first 2 should start together, 3rd should wait
-            # Check timing: first 2 should be close, 3rd should be ~0.1s later
-            if len(execution_times) >= 3:
-                first_two_diff = abs(execution_times[1] - execution_times[0])
-                third_diff = execution_times[2] - execution_times[0]
-                # First two should start within ~0.05s of each other
-                # Third should start ~0.1s after first (after one of the first two completes)
-                assert first_two_diff < 0.05  # First two started together
-                assert third_diff >= 0.08  # Third waited for semaphore
-
-        disable_nested_llm_nodes()
 
 
 class TestAnthropicCompatibilityNotes:

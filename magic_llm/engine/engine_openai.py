@@ -2,6 +2,7 @@
 import json
 import logging
 import math
+from contextlib import closing, nullcontext
 from typing import Callable, Type, Optional, Dict, Any, Tuple
 from urllib.parse import urlsplit
 
@@ -23,6 +24,8 @@ from magic_llm.model.ModelChatStream import ChatCompletionModel
 from magic_llm.exception.ChatException import ProviderProtocolError
 from magic_llm.util.http import AsyncHttpClient, HttpClient
 from magic_llm.util.private_http import PrivateAsyncHttpClient, validate_private_provider_url
+from magic_llm.util.private_limits import PrivateRequestLimits
+from magic_llm.util.private_output import PrivateOutputGuard
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,7 @@ class EngineOpenAI(BaseChat):
                  base_url: Optional[str] = None,
                  endpoint: str = "chat_completions",
                  private_transport: bool = False,
+                 private_limits: PrivateRequestLimits | None = None,
                  **kwargs) -> None:
         """
         Initialize the OpenAI engine with the appropriate provider.
@@ -66,10 +70,21 @@ class EngineOpenAI(BaseChat):
         if type(private_transport) is not bool:
             raise ValueError('private_transport must be a boolean')
         self._private_transport = private_transport
+        self._private_limits = private_limits
+        if private_limits is not None:
+            if not private_transport or not isinstance(private_limits, PrivateRequestLimits):
+                raise ValueError('private_limits requires private transport and a PrivateRequestLimits profile')
+            if kwargs.get('model') != private_limits.model or kwargs.get('fallback') is not None:
+                raise ValueError('A limited request requires the approved model and cannot change providers')
         if private_transport:
             validate_private_provider_url(base_url or 'https://api.openai.com/v1')
             openai_adapter = ProviderOpenAI
         super().__init__(**kwargs)
+
+        if private_limits is not None:
+            # Keep generation defaults on the engine only. The policy resolves
+            # them per attempt; the adapter must not reintroduce removed fields.
+            kwargs = {'model': self.model}
 
         if openai_adapter is None and base_url is None:
             # Default to OpenAI if no adapter or base_url is provided
@@ -106,6 +121,15 @@ class EngineOpenAI(BaseChat):
     def chat_url(self):
         path = "/responses" if self.endpoint == "responses" else "/chat/completions"
         return self.base.base_url.rstrip("/") + path
+
+    def _prepare_provider_attempt(self, chat, options):
+        if self._private_limits is None:
+            return chat, options
+        chat, effective, timeout = self._private_limits.prepare(chat, options)
+        return chat, {**effective, 'timeout': timeout}
+
+    def _output_guard(self):
+        return closing(PrivateOutputGuard(self.base.api_key)) if self._private_transport else nullcontext()
 
     def _get_provider_for_url(self, url: str) -> Type[OpenAiBaseProvider]:
         """
@@ -144,6 +168,8 @@ class EngineOpenAI(BaseChat):
         Most OpenAI-compatible providers support images through the
         image_url content type.
         """
+        if self._private_limits is not None:
+            chat, kwargs = self._prepare_provider_attempt(chat, {**self.kwargs, **kwargs})
         return self._chat_provider.transform_request(chat, **kwargs)
 
     def transform_response(self, raw: Dict[str, Any]) -> ModelChatResponse:
@@ -176,7 +202,10 @@ class EngineOpenAI(BaseChat):
                                               data=json_data,
                                               headers=headers,
                                               timeout=kwargs.get('timeout', 30))
-            return self.transform_response(response)
+            with self._output_guard() as guard:
+                if guard is not None:
+                    guard.assert_safe(response)
+                return self.transform_response(response)
 
     @BaseChat.sync_intercept_generate
     def generate(self, chat: ModelChat, **kwargs) -> ModelChatResponse:
@@ -217,22 +246,26 @@ class EngineOpenAI(BaseChat):
     @BaseChat.async_intercept_stream_generate
     async def async_stream_generate(self, chat: ModelChat, **kwargs):
         json_data, headers = self._chat_provider.transform_request(chat, stream=True, **kwargs)
-        async with (PrivateAsyncHttpClient() if self._private_transport else AsyncHttpClient()) as client:
-            id_generation = ''
-            context = {}
-            async for chunk in client.post_stream(self.chat_url,
-                                                  data=json_data,
-                                                  headers=headers,
-                                                  timeout=kwargs.get('timeout', 30)):
-                chunk = chunk.decode('utf-8')
-                if c := self.transform_stream_chunk(chunk.strip(), context):
-                    if c.id:
-                        id_generation = c.id
-                    context.update(id_generation=id_generation, last_chunk=c)
-                    yield c
+        with self._output_guard() as guard:
+            async with (PrivateAsyncHttpClient() if self._private_transport else AsyncHttpClient()) as client:
+                id_generation = ''
+                context = {}
+                async for chunk in client.post_stream(self.chat_url, data=json_data, headers=headers,
+                                                      timeout=kwargs.get('timeout', 30)):
+                    frame = chunk.decode('utf-8').strip()
+                    if guard is not None:
+                        # Also inspect metadata dropped by the protocol adapter.
+                        guard.assert_safe(frame)
+                    if c := self.transform_stream_chunk(frame, context):
+                        if guard is not None:
+                            c = guard.guard_chunk(c)
+                        if c.id:
+                            id_generation = c.id
+                        context.update(id_generation=id_generation, last_chunk=c)
+                        yield c
 
-            if self.endpoint == "responses" and not context.get("terminal"):
-                raise ProviderProtocolError("Responses stream ended before a terminal event")
+                if self.endpoint == "responses" and not context.get("terminal"):
+                    raise ProviderProtocolError("Responses stream ended before a terminal event")
 
 
     def embedding(self, text: list[str] | str, **kwargs):

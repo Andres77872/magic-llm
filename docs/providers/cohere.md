@@ -14,11 +14,13 @@ client = MagicLLM(
 
 ## Notes
 
-- Chat, streaming, async chat, and async streaming are supported.
+- Chat, streaming, async chat, and async streaming are supported through the v1 chat API (`https://api.cohere.ai/v1/chat`).
 - The engine maps messages into Cohere's role format.
-- Tool calling is unsupported.
-- Model discovery is supported.
-- Embeddings and audio are not documented as supported by this engine.
+- Tool calling is unsupported. Passing `tools` raises `TOOL_WIRING_NOT_IMPLEMENTED`.
+- Vision input is unsupported. Images are rejected before any request is sent; see [unsupported-feature errors](index.md#unsupported-feature-errors).
+- Model discovery is supported through `client.list_models()` and `client.async_list_models()`.
+- Audio is unsupported, and TTS/STT methods raise `UNSUPPORTED_MEDIA_OPERATION`.
+- Embeddings are not implemented: `embedding()` and `async_embedding()` return `None`.
 
 ## Example
 

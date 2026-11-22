@@ -26,7 +26,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tests:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/tests.yml
+
   release:
+    needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Pushes made with GITHUB_TOKEN do not retrigger workflows, and the bump commit
@@ -93,10 +99,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add magic_llm/__init__.py
           git commit -m "chore(release): ${TAG} [skip ci]"
-          # Land on top of anything pushed while we were building, then tag the
-          # final commit so the tag can never point at a rebased-away SHA.
-          git fetch origin "${BRANCH}"
-          git rebase "origin/${BRANCH}"
+          # If the branch advanced, the atomic push must fail. Its next run
+          # tests and builds that newer tree; never rebase untested code into a release.
           git tag -a "${TAG}" -m "magic_llm ${VERSION}"
           # --atomic: the branch and the tag both land, or neither does.
           git push --atomic origin "HEAD:${BRANCH}" "refs/tags/${TAG}"

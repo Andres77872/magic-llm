@@ -1,11 +1,41 @@
 """Shared pytest fixtures for the magic-llm test suite."""
 
 import json
+import importlib
 import os
 from pathlib import Path
 from typing import Any, Dict
 
 import pytest
+
+
+@pytest.fixture
+def offline_token_estimator(monkeypatch):
+    """Predictable byte counts for budget tests; no downloaded tokenizer data."""
+    for module in ('magic_llm.agent.request', 'magic_llm.model.ModelChat', 'magic_llm.util.private_limits'):
+        monkeypatch.setattr(importlib.import_module(module), 'from_openai', lambda text: text.encode('utf-8'))
+
+
+def assert_forced_weather_response(response, name):
+    calls = response.tool_calls
+    assert calls, f"Expected the forced function {name}"
+    call = calls[0]
+    assert call.id and call.type == 'function' and call.function.name == name
+    assert json.loads(call.function.arguments)['location']
+    assert response.finish_reason in ('tool_calls', 'stop')
+
+
+def assert_forced_weather_stream(chunks, name):
+    from magic_llm.engine.tooling import StreamIterationSummary, accumulate_stream_chunk, stream_summary_tool_calls
+
+    summary = StreamIterationSummary()
+    for chunk in chunks:
+        accumulate_stream_chunk(summary, chunk)
+    calls = stream_summary_tool_calls(summary)
+    assert calls, f"Stream did not deliver the forced function {name}"
+    assert calls[0].name == name and not calls[0].arguments_error
+    assert calls[0].arguments['location']
+    assert summary.finish_reason in ('tool_calls', 'stop')
 
 
 # ─── Key / Resource Fixtures ───────────────────────────────────────────────

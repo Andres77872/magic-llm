@@ -67,4 +67,8 @@ Vision support depends on the selected provider and model. If uncertain, test wi
 
 This page documents **image input** for chat/vision models. Magic LLM does not currently provide a first-class image generation/text-to-image API, `ModelImage`, or `/images/generations` proxy. A user-defined tool named `generate_image` is just a caller-owned tool name, not a core media feature.
 
-Providers that cannot accept image input now fail fast with `VISION_NOT_SUPPORTED` before a provider request where possible. Amazon Nova vision is disabled until its native Bedrock image payload transform is implemented and tested.
+## Provider support
+
+Image input is accepted by official OpenAI (Chat Completions and `endpoint="responses"`), OpenRouter, Anthropic, and Google. Every other adapter rejects images before a provider request: Groq, SambaNova, Mistral, Fireworks, DeepSeek, DeepInfra, Together, generic OpenAI-compatible endpoints, all Amazon Bedrock adapters, Cloudflare, and Cohere.
+
+The rejection is a `VISION_NOT_SUPPORTED` error. The chat wrapper retries it, then raises `ChatException` with `error_code="STREAM_GENERATION_ERROR"`, keeping the original error as `__context__`. Amazon Bedrock vision stays disabled until a native Bedrock image payload transform is implemented and tested.

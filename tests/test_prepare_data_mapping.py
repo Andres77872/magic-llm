@@ -209,31 +209,44 @@ def test_sambanova_provider_strips_is_error_from_tool_messages():
 
 
 def test_anthropic_engine_prepare_data_accepts_callable_and_pydantic(chat_simple):
-    try:
-        from pydantic import BaseModel
-    except Exception:
-        BaseModel = None
+    from pydantic import BaseModel
 
     def get_weather(location: str):
         """Get current temperature for a given location."""
         return ""
 
-    tools = [get_weather]
-    if BaseModel is not None:
-        class GetForecast(BaseModel):
-            """Forecast for a given location and days."""
-            location: str
-            days: int
+    class GetForecast(BaseModel):
+        """Forecast for a given location and days."""
+        location: str
+        days: int
 
-        tools.append(GetForecast)
+    tools = [get_weather, GetForecast]
 
     eng = EngineAnthropic(api_key="ak-xxx", model="claude-3-haiku-20240307")
     body_bytes, headers = eng.prepare_data(chat_simple, tools=tools, tool_choice={"name": "get_weather"})
     body = _decode_body(body_bytes)
 
-    assert isinstance(body.get("tools"), list) and len(body["tools"]) >= 1
-    # First tool is callable get_weather
-    assert any(t.get("name") == "get_weather" and "input_schema" in t for t in body["tools"])
+    assert {t["name"] for t in body["tools"] if "input_schema" in t} == {"get_weather", "GetForecast"}
+
+
+def test_cohere_multiturn_preparation_preserves_caller_history():
+    from copy import deepcopy
+    from magic_llm.engine.engine_cohere import EngineCohere
+
+    chat = ModelChat(system="policy")
+    chat.add_user_message("first")
+    chat.add_assistant_message("second")
+    chat.add_user_message("third")
+    original = deepcopy(chat.messages)
+    engine = EngineCohere(api_key="dummy", model="test")
+    try:
+        first = json.loads(engine.transform_request(chat)[0])
+        assert chat.messages == original
+        assert json.loads(engine.transform_request(chat)[0]) == first
+        assert first["preamble"] == "policy" and first["message"] == "third"
+        assert [msg["role"] for msg in first["messages"]] == ["User", "Chatbot"]
+    finally:
+        engine.executor.shutdown(wait=False)
 
 
 # ─── Task: max_tokens → max_completion_tokens for official OpenAI ─────

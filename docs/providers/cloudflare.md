@@ -15,11 +15,13 @@ client = MagicLLM(
 
 ## Notes
 
-- `account_id` is required.
+- `account_id` is required. Requests go to `https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}`.
 - Chat, streaming, async chat, and async streaming are supported.
-- Tool calling is unsupported.
+- Tool calling is unsupported. Passing `tools` raises `TOOL_WIRING_NOT_IMPLEMENTED`.
+- Vision input is unsupported. Images are rejected before any request is sent; see [unsupported-feature errors](index.md#unsupported-feature-errors).
+- Audio is unsupported, and TTS/STT methods raise `UNSUPPORTED_MEDIA_OPERATION`.
+- Embeddings are not implemented: `embedding()` and `async_embedding()` return `None`.
 - Model discovery is unsupported and raises `NotImplementedError`.
-- Embeddings and audio are not documented as supported by this engine.
 
 ## Example
 

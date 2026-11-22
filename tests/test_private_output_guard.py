@@ -94,11 +94,7 @@ class Provider:
 @pytest.mark.asyncio
 @pytest.mark.parametrize('stream',[False,True])
 @pytest.mark.parametrize('location',['content','tool','metadata'])
-async def test_actual_private_adapter_rejects_echo_before_callback_or_caller(monkeypatch,caplog,stream,location):
-    import importlib
-    count=lambda text:list(range(len(str(text).encode('utf-8'))))
-    monkeypatch.setattr('magic_llm.util.private_limits.from_openai',count)
-    monkeypatch.setattr(importlib.import_module('magic_llm.model.ModelChat'),'from_openai',count)
+async def test_actual_private_adapter_rejects_echo_before_callback_or_caller(monkeypatch,caplog,stream,location,offline_token_estimator):
     callbacks=[]
     async def callback(*args,**kwargs):callbacks.append(repr(args)+repr(kwargs))
     facade=MagicLLM(engine='openai',model='approved',private_key=CANARY,
@@ -106,11 +102,11 @@ async def test_actual_private_adapter_rejects_echo_before_callback_or_caller(mon
         private_limits=PrivateRequestLimits(model='approved',max_input_tokens=1024,max_output_tokens=64,max_messages=4,timeout_seconds=5))
     facade.llm.callback=callback
     provider=Provider(location)
-    monkeypatch.setattr(facade.llm,'_async_http_client',lambda:provider)
+    monkeypatch.setattr('magic_llm.engine.engine_openai.PrivateAsyncHttpClient',lambda:provider)
     chat=ModelChat();chat.add_user_message('A quiet forest.')
     emitted=[]
     try:
-        with pytest.raises(Exception) as error:
+        with pytest.raises(PrivateOutputError) as error:
             if stream:
                 async for event in facade.llm.async_stream_generate(chat):emitted.append(event.model_dump_json())
             else:

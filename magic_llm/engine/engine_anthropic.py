@@ -537,11 +537,8 @@ class EngineAnthropic(BaseChat):
                                                data=json_data,
                                                headers=headers,
                                                timeout=kwargs.get('timeout', 30)):
-                if chunk:
-                    evt = chunk.split('data:')
-                    if len(evt) != 2:
-                        continue
-                    if c := self.process_chunk(evt[-1].strip(), idx, usage, state):
+                if chunk.startswith('data:'):
+                    if c := self.process_chunk(chunk.removeprefix('data:').strip(), idx, usage, state):
                         idx = c[1]
                         usage = c[2]
                         if c[0]:
@@ -568,11 +565,8 @@ class EngineAnthropic(BaseChat):
                                                   data=json_data,
                                                   headers=headers,
                                                   timeout=kwargs.get('timeout', 30)):
-                if chunk:
-                    evt = chunk.decode().split('data:')
-                    if len(evt) != 2:
-                        continue
-                    if c := self.process_chunk(evt[-1].strip(), idx, usage, state):
+                if chunk.startswith(b'data:'):
+                    if c := self.process_chunk(chunk.removeprefix(b'data:').decode().strip(), idx, usage, state):
                         idx = c[1]
                         usage = c[2]
                         if c[0]:

@@ -223,7 +223,7 @@ synthesis with evidence. The host skill catalog should follow the
 [Agent Skills specification](https://agentskills.io/specification), including
 metadata-first discovery and loading full instructions only when needed.
 
-`test/test_agent_safety_regressions.py` exercises live async cancellation,
+`tests/test_agent_safety_regressions.py` exercises live async cancellation,
 concurrent-run rejection without state mutation, ordered mutation barriers,
 per-batch concurrency limits, dedup IDs, invalid task inputs, task queue/child
 deadlines, parent/child usage accounting, provider generator cleanup and context,

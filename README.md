@@ -16,8 +16,13 @@ Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface
 - [Vision](docs/usage/vision.md)
 - [Audio](docs/usage/audio.md)
 - [Embeddings](docs/usage/embeddings.md)
+- [Model discovery](docs/usage/model-discovery.md)
 - [Error handling](docs/usage/error-handling.md)
 - [Tool calling and agents](docs/agents/index.md)
+- [Agent budgets and hooks](docs/agents/budget-hooks.md)
+- [Reliable application integration](docs/agents/production-integration.md)
+- [Request validation and complete tool results](docs/agents/request-integrity.md)
+- [Prompt fragments](docs/agents/prompt-fragment.md)
 - [Subagents](docs/agents/subagents.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [FAQ](docs/faq.md)
@@ -30,6 +35,7 @@ Magic LLM is a Python 3.10+ client library that exposes one `MagicLLM` interface
 - Public chat methods: `generate`, `stream_generate`, `async_generate`, and `async_stream_generate`.
 - Native engines: `openai`, `google`, `cloudflare`, `amazon`, `cohere`, `anthropic`, and `azure`.
 - OpenAI-compatible routing by `engine='openai'` plus `base_url`: dedicated chat adapters are URL-matched for Groq, SambaNova, OpenRouter, Mistral, Fireworks, DeepSeek, DeepInfra, and Together; any other OpenAI-compatible endpoint works through the generic path.
+- OpenAI Responses API through `engine='openai', endpoint='responses'`, behind the same chat, streaming, and agent methods. The default is `endpoint='chat_completions'`.
 - Streaming and async support across the core chat surface.
 - Unified response models with usage and latency metadata where providers expose it.
 - Embeddings, speech-to-text, text-to-speech, model discovery, fallback clients, callbacks, tool calling, ReAct agents (`run_agent`, `run_agent_stream`, `run_agent_async`, `run_agent_stream_async`), and YAML-backed subagents.
@@ -90,10 +96,10 @@ async for chunk in client.llm.async_stream_generate(chat):
 | OpenAI-compatible providers | `openai` + `base_url` | Groq, SambaNova, OpenRouter, Mistral, Fireworks, DeepSeek, DeepInfra, and Together are selected by URL matching; other endpoints use the generic path. |
 | Anthropic | `anthropic` | Native Claude API support. |
 | Google AI Studio | `google` | Native Gemini request/response formatting. |
-| AWS Bedrock | `amazon` | Routes by Bedrock model prefix. Model discovery is unsupported. |
+| AWS Bedrock | `amazon` | Routes by Bedrock model prefix. Tool calling and model discovery are unsupported. |
 | Cloudflare Workers AI | `cloudflare` | Requires `account_id`. Tool calling and model discovery are unsupported. |
 | Cohere | `cohere` | Native Cohere chat formatting. Tool calling is unsupported. |
-| Azure | `azure` | Speech-only engine. Chat generation methods raise `NotImplementedError`. |
+| Azure | `azure` | Speech-only engine (async TTS/STT). Chat generation is not implemented. |
 
 See [providers/index.md](docs/providers/index.md) and the per-provider pages for credentials and examples.
 
@@ -112,17 +118,35 @@ client = MagicLLM(
 
 Magic LLM detects known provider URLs and applies provider-specific chat adapters where implemented; unrecognized `base_url` values fall back to the generic OpenAI-compatible path.
 
-Model discovery covers a wider set than chat routing: registered discovery adapters also include xAI, Cerebras, Hyperbolic, Nebius, Novita, Parasail, and Perplexity. See [usage/model-discovery.md](docs/usage/model-discovery.md).
+Model discovery covers a wider set than chat routing: registered discovery adapters also include xAI, Cerebras, Hyperbolic, Nebius, Novita, Parasail, and Perplexity. For these hosts, call the adapter directly instead of `client.list_models()`; see [usage/model-discovery.md](docs/usage/model-discovery.md).
+
+For endpoints and keys supplied by your users at runtime, `private_transport=True` restricts chat to async calls over public HTTPS, with no redirects or proxies. See [providers/openai.md](docs/providers/openai.md#private-transport-for-caller-supplied-endpoints).
+
+### OpenAI Responses API
+
+Pass `endpoint="responses"` to send requests to `/responses` instead of `/chat/completions`:
+
+```python
+client = MagicLLM(
+    engine="openai",
+    model="gpt-4o-mini",
+    private_key="sk-your-key",
+    endpoint="responses",
+)
+```
+
+`ModelChat`, `generate`/`stream_generate` (sync and async), and `run_agent*` work the same way. Conversation state stays in `ModelChat`, and Responses output items (including encrypted reasoning) are replayed with tool results, so nothing is stored on the provider side between agent iterations.
 
 ## Key gotchas
 
-- **Official OpenAI token argument:** for `api.openai.com` only, `max_tokens` is transformed into `max_completion_tokens`. If both are supplied, `max_completion_tokens` wins and `max_tokens` is removed. Other OpenAI-compatible endpoints keep `max_tokens` unchanged.
-- **Azure is speech-only:** `generate`, `stream_generate`, `async_generate`, and `async_stream_generate` raise `NotImplementedError` for `engine='azure'`.
+- **Official OpenAI token argument:** on the Chat Completions path for `api.openai.com` only, `max_tokens` is transformed into `max_completion_tokens`. If both are supplied, `max_completion_tokens` wins and `max_tokens` is removed. Other OpenAI-compatible endpoints keep `max_tokens` unchanged. With `endpoint="responses"`, the value is sent as `max_output_tokens`.
+- **Azure is speech-only:** `generate`, `stream_generate`, `async_generate`, and `async_stream_generate` fail for `engine='azure'`. The internal `NotImplementedError` is retried and surfaces as `ChatException` (`STREAM_GENERATION_ERROR`).
+- **Embeddings are OpenAI-family only:** `embedding()` on any other engine returns `None` instead of raising.
 - **Audio support is provider/method-specific:** unsupported TTS/STT paths fail fast instead of returning `None`; see `docs/usage/audio.md` for the sync/async matrix and STT upload metadata requirements.
 - **No core image generation:** Magic LLM supports vision/image input for compatible chat models, not text-to-image output generation.
-- **Model discovery gaps:** Amazon and Cloudflare do not support model discovery.
+- **Model discovery gaps:** Amazon and Cloudflare do not support model discovery. See [model discovery](docs/usage/model-discovery.md) for provider-specific listing endpoints.
 - **Tool-calling gaps:** Amazon Bedrock, Cohere, and Cloudflare do not support tool calling.
-- **Subagents are disabled by default:** call `enable_subagents()` before `load_subagents()` or you will get an empty bundle.
+- **Subagents are disabled by default:** call `magic_llm.agent.enable_subagents()` before `await client.load_subagents(...)` (it is async), or you will get an empty bundle.
 - **No `.env` loading:** read secrets from your own secret manager or environment layer, then pass them as constructor arguments.
 
 ## Agents and tool calling
@@ -149,6 +173,8 @@ print(response.content)
 
 Tool specs may be Python callables, OpenAI-style JSON schemas with `tool_functions`, or Pydantic model classes. See [agents/tool-calling.md](docs/agents/tool-calling.md).
 
+`max_iterations` defaults to 150. To bound tokens and wall-clock time too, pass `budget=AgentBudget(...)` from `magic_llm.agent.types`. A budget that goes over its limit raises `AgentBudgetExceeded`. If you set `AgentBudget(final_answer_notice="...")`, the call at the iteration limit runs without tools and the loop returns the model's text answer instead of raising. Lifecycle hooks, `request_guard`, and provider attempt control are covered in [agents/budget-hooks.md](docs/agents/budget-hooks.md), [agents/request-integrity.md](docs/agents/request-integrity.md), and [agents/production-integration.md](docs/agents/production-integration.md).
+
 ## Model discovery
 
 ```python
@@ -160,7 +186,7 @@ for model in client.list_models():
 
 An async variant, `client.async_list_models()`, is also available.
 
-Discovery is provider-dependent. Amazon and Cloudflare are explicitly unsupported. See [usage/model-discovery.md](docs/usage/model-discovery.md).
+`client.list_models()` supports Google, Anthropic, Cohere, and OpenAI-compatible clients whose provider offers a listing endpoint. For Azure OpenAI and Foundry, use their discovery adapters directly; see [model discovery](docs/usage/model-discovery.md).
 
 ## Development
 
@@ -172,10 +198,10 @@ source .venv/bin/activate
 pip install -e '.[test]'
 ```
 
-Test command used by the project:
+Run the same offline coverage gate as CI (all tests live in `tests/`):
 
 ```bash
-python -m pytest
+python -m pytest --cov=magic_llm --cov-branch
 ```
 
 The configured default excludes live/billable provider tests. Run those only with an explicit provider marker and `MAGIC_LLM_KEYS=/path/to/private-keys.json`. Do not commit real keys. Optional live media tests use `MAGIC_LLM_AUDIO_FILE` and `MAGIC_LLM_IMAGE_B64_FILE`; debug payload logging uses `MAGIC_LLM_DEBUG_PAYLOAD` and `MAGIC_LLM_DEBUG_PAYLOAD_FULL`.

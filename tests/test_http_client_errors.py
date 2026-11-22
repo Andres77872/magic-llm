@@ -131,6 +131,53 @@ class TestHttpClientSyncErrors:
             client.request("GET", "https://example.com")
 
 
+@pytest.mark.parametrize("binary", [False, True], ids=["lines", "bytes"])
+def test_sync_stream_decodes_text_or_preserves_bytes_and_closes_early(binary):
+    client = HttpClient()
+    client.session = MagicMock()
+    context = client.session.request.return_value
+    response = context.__enter__.return_value
+    response.status_code = 200
+    response.iter_lines.return_value = [b"", "café".encode(), b"second"]
+    response.iter_content.return_value = [b"", b"\xff\x00", b"second"]
+    read = client.stream_request_bytes if binary else client.stream_request
+    stream = read("POST", "https://example.test", data={"key": 1})
+    try:
+        assert next(stream) == (b"\xff\x00" if binary else "café")
+        sent = client.session.request.call_args.kwargs
+        assert sent["stream"] is True and json.loads(sent["data"]) == {"key": 1}
+    finally:
+        stream.close()
+    context.__exit__.assert_called_once()
+
+
+@pytest.mark.parametrize("binary", [False, True], ids=["lines", "bytes"])
+@pytest.mark.parametrize("midstream", [False, True], ids=["http-status", "read-failure"])
+def test_sync_stream_failures_release_response_and_keep_only_safe_errors(binary, midstream, caplog):
+    client = HttpClient()
+    client.session = MagicMock()
+    context = client.session.request.return_value
+    response = context.__enter__.return_value
+    response.content = b"private-test-marker"
+    response.status_code = 200 if midstream else 429
+
+    def interrupted():
+        yield b"ok"
+        raise RequestException("private-test-marker")
+
+    (response.iter_content if binary else response.iter_lines).return_value = interrupted()
+    read = client.stream_request_bytes if binary else client.stream_request
+    stream = read("GET", "https://example.test")
+    if midstream:
+        assert next(stream) == (b"ok" if binary else "ok")
+    with pytest.raises(HttpError) as exc:
+        next(stream)
+    assert exc.value.status_code == (None if midstream else 429)
+    assert exc.value.response_content is None
+    assert "private-test-marker" not in str(exc.value) + caplog.text
+    context.__exit__.assert_called_once()
+
+
 # ─── Slice 18: AsyncHttpClient async error paths ───────────────────────────
 
 

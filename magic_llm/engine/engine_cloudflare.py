@@ -60,6 +60,7 @@ class EngineCloudFlare(BaseChat):
             **kwargs,
             **self.kwargs
         }
+        data.pop('timeout', None)
         json_data = json.dumps(data).encode('utf-8')
         return json_data, headers
 
@@ -143,7 +144,8 @@ class EngineCloudFlare(BaseChat):
         with HttpClient() as client:
             response = client.post_json(url=self.url,
                                         data=data,
-                                        headers=headers)
+                                        headers=headers,
+                                        timeout=kwargs.get('timeout', 30))
             return self.process_generate(response)
 
     def prepare_stream_response(self, event):

@@ -1,16 +1,10 @@
 # Testing
 
-The configured default proof gate is offline, deterministic, and non-billable. Pytest excludes `provider_functional` and `provider_health` unless a command explicitly overrides the marker expression.
+Pytest discovers the entire suite in `tests/`. The default selection excludes `provider_functional` and `provider_health`. Pull requests and releases run this selection with branch coverage and a cold tokenizer cache; a failing test or coverage below the configured threshold blocks the release.
 
 ## Managed async stack
 
-The project-managed test stack declares:
-
-- `pytest==8.3.4`
-- `pytest-asyncio==0.24.0`
-- `pytest-cov==5.0.0`
-
-`setup.cfg` keeps editable installs below unsupported major versions. `pyproject.toml` uses `asyncio_mode = "auto"` and `asyncio_default_fixture_loop_scope = "function"`, so bare `async def test_*` functions and explicit `@pytest.mark.asyncio` tests run under pytest-asyncio.
+Install `pip install -e '.[test]'`. `setup.cfg` declares the supported ranges for pytest, pytest-asyncio, and pytest-cov. `pyproject.toml` enables automatic async tests with a function-scoped event loop. Budget tests use a deterministic byte estimator; tokenizer integration uses a small, fixed BPE vocabulary without downloading data.
 
 ## Marker taxonomy
 
@@ -26,13 +20,13 @@ The project-managed test stack declares:
 | --- | --- | --- |
 | Default offline proof | `python -m pytest` | No |
 | Collection safety | `python -m pytest --collect-only -q` | No |
-| Async reliability slice | `python -m pytest test/test_long_running_tool_budget.py -m "not provider_functional and not provider_health" -v` | No |
-| Core media/protocol proof | `python -m pytest test/test_media_fail_fast.py test/test_stt_multipart.py test/test_media_retry.py -m "not provider_functional and not provider_health" -v` | No |
-| Provider media request shapes | `python -m pytest test/test_openai_provider_media_shapes.py test/test_provider_support_flags.py test/test_google_tts_payload_shape.py -m "not provider_functional and not provider_health" -v` | No |
-| Mock-quality / seam proof | `python -m pytest test/test_amazon_engine_mocked.py test/test_fireworks_hostnames.py test/test_openrouter_pure_process_chunk.py test/test_amazon_no_sdk.py test/test_agent_loop_integration_smoke.py -m "not provider_functional and not provider_health" -v` | No |
-| Discovery consolidation proof | `python -m pytest test/test_discovery_integration.py -m "not provider_functional and not provider_health" -v` | No |
-| Provider health smoke | `MAGIC_LLM_KEYS=/path/to/keys.json python -m pytest test/test_discovery_smoke.py -m "provider_health" -v` | Yes — explicit live |
-| Provider-functional smoke | `MAGIC_LLM_KEYS=/path/to/keys.json python -m pytest test/ -m "provider_functional and not provider_health" -v` | Yes — explicit live |
+| Async reliability slice | `python -m pytest tests/test_long_running_tool_budget.py` | No |
+| Core media/protocol proof | `python -m pytest tests/test_media_fail_fast.py tests/test_stt_multipart.py tests/test_media_retry.py` | No |
+| Provider media request shapes | `python -m pytest tests/test_openai_provider_media_shapes.py tests/test_provider_support_flags.py tests/test_google_tts_payload_shape.py` | No |
+| Mock-quality / seam proof | `python -m pytest tests/test_amazon_engine_mocked.py tests/test_fireworks_hostnames.py tests/test_openrouter_pure_process_chunk.py tests/test_amazon_no_sdk.py tests/test_agent_loop_integration_smoke.py` | No |
+| Discovery consolidation proof | `python -m pytest tests/test_discovery_integration.py` | No |
+| Provider health smoke | `MAGIC_LLM_KEYS=/path/to/keys.json python -m pytest tests/test_discovery_smoke.py -m provider_health` | Yes — explicit live |
+| Provider-functional smoke | `MAGIC_LLM_KEYS=/path/to/keys.json python -m pytest -m "provider_functional and not provider_health"` | Yes — explicit live |
 | Coverage gate | `python -m pytest --cov=magic_llm --cov-branch` | No; enforced at the configured threshold |
 
 ## Credentials and resource fixtures

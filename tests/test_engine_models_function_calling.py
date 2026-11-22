@@ -1,12 +1,10 @@
-import json
-
 from magic_llm import MagicLLM
 
 import pytest
 
 from magic_llm.model import ModelChat, ModelChatResponse
 
-from conftest import get_provider_key
+from conftest import assert_forced_weather_response, assert_forced_weather_stream, get_provider_key
 
 # All tests in this file require live provider access
 pytestmark = pytest.mark.provider_functional
@@ -55,19 +53,6 @@ TEST_PROVIDERS = [
     ("fireworks.ai", "fireworks.ai", "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507",
      "accounts/fireworks/models/llama4-scout-instruct-basic-fail"),
 ]
-CALL_DEF = {"name": "get_stock_price", "arguments": {"ticker": "AAPL"}}
-
-def extract_body(engine, chat, **kwargs):
-    # choose canonical transform_request method when available
-    if hasattr(engine, 'base'):
-        body_bytes, _ = engine.base.transform_request(chat, **kwargs)
-    elif hasattr(engine, 'transform_request'):
-        body_bytes, _ = engine.transform_request(chat, **kwargs)
-    else:
-        body_bytes, _ = engine.prepare_data(chat, **kwargs)
-    return json.loads(body_bytes)
-
-
 def _build_chat():
     c = ModelChat()
     c.add_user_message("What is the weather like in Paris today?")
@@ -102,23 +87,7 @@ def test_function_and_tool_mapping(provider_keys, provider, key_name, model, fai
     assert res.id is not None, "Response should have an ID"
     assert res.model is not None, "Response should have model name"
 
-    # If model called tools, validate tool_calls structure
-    if res.tool_calls and len(res.tool_calls) > 0:
-        tool_call = res.tool_calls[0]
-        assert tool_call.type == "function", "tool_call.type should be 'function'"
-        assert tool_call.function is not None, "tool_call should have function"
-        assert tool_call.function.name == "get_weather", "Function name should be 'get_weather'"
-        assert tool_call.function.arguments is not None, "Function should have arguments"
-
-        # Arguments should be valid JSON with 'location'
-        args = json.loads(tool_call.function.arguments)
-        assert "location" in args, f"Arguments should contain 'location', got: {args}"
-        print(f"✓ {provider}: Tool called with location='{args.get('location')}'")
-    else:
-        # Model chose not to call tools (valid behavior with auto)
-        print(f"⚠ {provider}: Model did not call tools (model behavior)")
-
-    print(f"✓ {provider}: Real API call completed successfully")
+    assert_forced_weather_response(res, "get_weather")
 
 
 def test_function_and_tool_fallback(provider_keys):
@@ -147,15 +116,7 @@ def test_function_and_tool_fallback(provider_keys):
     # Should have used Claude (fallback) since gpt-4o1 doesn't exist
     assert "claude" in res.model.lower(), f"Expected fallback to Claude, got model: {res.model}"
 
-    # Validate tool calls if present
-    if res.tool_calls and len(res.tool_calls) > 0:
-        tool_call = res.tool_calls[0]
-        assert tool_call.function.name == "get_weather", "Function name should be 'get_weather'"
-        args = json.loads(tool_call.function.arguments)
-        assert "location" in args, f"Arguments should contain 'location', got: {args}"
-        print(f"✓ Fallback: Tool called with location='{args.get('location')}'")
-
-    print(f"✓ Fallback test: Used model {res.model} (fallback worked)")
+    assert_forced_weather_response(res, "get_weather")
 
 
 @pytest.mark.parametrize(
@@ -176,52 +137,4 @@ def test_function_and_tool_mapping_stream(provider_keys, provider, key_name, mod
     # REAL API call - creates actual streaming HTTP request
     client = MagicLLM(model=model, tools=[FUNCTION_DEF], tool_choice=tool_entry, **keys)
 
-    # Accumulate streaming response
-    chunks_received = 0
-    accumulated_tool_calls = {}
-    final_finish_reason = None
-
-    for chunk in client.llm.stream_generate(chat):
-        chunks_received += 1
-
-        # Validate chunk structure
-        assert chunk is not None, "Chunk should not be None"
-        assert chunk.choices is not None, "Chunk should have choices"
-
-        # Accumulate tool calls from delta
-        if chunk.choices[0].delta and chunk.choices[0].delta.tool_calls:
-            for tc in chunk.choices[0].delta.tool_calls:
-                tc_id = tc.id or "default"
-                if tc_id not in accumulated_tool_calls:
-                    accumulated_tool_calls[tc_id] = {"name": None, "arguments": ""}
-                if tc.function:
-                    if tc.function.name:
-                        accumulated_tool_calls[tc_id]["name"] = tc.function.name
-                    if tc.function.arguments:
-                        new_args = tc.function.arguments
-                        current = accumulated_tool_calls[tc_id]["arguments"]
-                        # Handle cumulative vs incremental
-                        if new_args.startswith('{') and current.startswith('{'):
-                            accumulated_tool_calls[tc_id]["arguments"] = new_args
-                        else:
-                            accumulated_tool_calls[tc_id]["arguments"] += new_args
-
-        if chunk.choices[0].finish_reason:
-            final_finish_reason = chunk.choices[0].finish_reason
-
-    # Validate streaming worked
-    assert chunks_received > 0, "Should have received at least one chunk"
-    print(f"✓ {provider}: Received {chunks_received} streaming chunks")
-
-    # Validate tool calls if present
-    if accumulated_tool_calls:
-        first_tc = list(accumulated_tool_calls.values())[0]
-        assert first_tc["name"] == "get_weather", f"Expected 'get_weather', got '{first_tc['name']}'"
-        if first_tc["arguments"]:
-            args = json.loads(first_tc["arguments"])
-            assert "location" in args, f"Arguments should contain 'location', got: {args}"
-            print(f"✓ {provider}: Streamed tool call with location='{args.get('location')}'")
-    else:
-        print(f"⚠ {provider}: No tool calls in stream (model behavior)")
-
-    print(f"✓ {provider}: Real streaming API call completed")
+    assert_forced_weather_stream(client.llm.stream_generate(chat), "get_weather")

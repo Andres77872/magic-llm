@@ -14,16 +14,31 @@ client = MagicLLM(
 )
 ```
 
-`private_key` is used as the AWS access key ID by the base constructor. Some existing examples may pass `aws_access_key_id`; prefer the shape above unless your wrapper maps that value into `private_key`.
+`private_key` is used as the AWS access key ID by the base constructor. Some existing examples may pass `aws_access_key_id`; prefer the shape above unless your wrapper maps that value into `private_key`. `region_name` defaults to `us-east-1`.
+
+If either key is omitted, credentials come from botocore's ambient chain: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `~/.aws/credentials`, or an IAM role. Session tokens from that chain are included in signing.
+
+## Model routing
+
+The Bedrock model ID prefix selects the request format:
+
+| Model ID prefix | Adapter |
+| --- | --- |
+| `amazon.nova...` or `arn:aws:...` | Nova |
+| other `amazon...` | Titan |
+| `anthropic...` | Anthropic on Bedrock |
+| `meta...` | Meta Llama |
+
+Any other prefix raises `ValueError("Unsupported model: ...")` at construction.
 
 ## Notes
 
-- Chat, streaming, async chat, and async streaming are supported.
+- Chat, streaming, async chat, and async streaming are supported (`/invoke` and `/invoke-with-response-stream`).
 - Amazon Polly sync TTS is supported through `client.llm.audio_speech(...)`.
 - Async TTS and all STT methods are unsupported; Amazon Transcribe is not implemented in core.
-- Model routing is based on the Bedrock model prefix, for example Nova, Titan, Anthropic, or Meta model IDs.
-- Amazon Nova vision input is disabled until a native Bedrock image payload transform is implemented and tested.
-- Tool calling is not wired for the Amazon engine.
+- Vision input is disabled for every Bedrock adapter (Nova, Titan, Anthropic, Meta). Images are rejected before any request is sent; see [unsupported-feature errors](index.md#unsupported-feature-errors).
+- Tool calling is not wired for the Amazon engine. Passing `tools` raises `TOOL_WIRING_NOT_IMPLEMENTED`.
+- Embeddings are not implemented: `embedding()` and `async_embedding()` return `None`.
 - Model discovery is unsupported and raises `NotImplementedError`.
 - Requests use AWS Signature Version 4 through `botocore`-compatible signing utilities.
 

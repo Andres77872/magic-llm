@@ -401,17 +401,10 @@ class TestInvokeHookSafely:
         _invoke_hook_safely(hook, 1, 2)
         assert calls == [(1, 2)]
 
-    def test_invoke_hook_safely_isolates_exception(self):
-        """Hook exceptions are caught and logged, NOT propagated to caller."""
-        def hook():
-            raise ValueError("boom")
-        # Exception should be logged but NOT raised
-        _invoke_hook_safely(hook)  # no crash
-
     def test_invoke_hook_safely_noop_when_hook_is_none(self):
         _invoke_hook_safely(None, 1, 2, 3)  # no crash
 
-    def test_invoke_hook_safely_logs_with_state_context(self):
+    def test_invoke_hook_safely_logs_with_state_context(self, caplog):
         """Hook failures are logged with state context when provided."""
         from magic_llm.agent.types import AgentState
 
@@ -426,8 +419,11 @@ class TestInvokeHookSafely:
             total_output_tokens=50,
         )
 
-        # Exception should be logged with state context but NOT raised
-        _invoke_hook_safely(hook, state=state)  # no crash
+        _invoke_hook_safely(hook, state=state)
+        record, = [r for r in caplog.records if r.name == "magic_llm.agent._loop_shared"]
+        assert record.levelname == "WARNING"
+        assert "hook" in record.getMessage() and "step=5" in record.getMessage()
+        assert record.exc_info[0] is ValueError
 
 
 class TestComputeFingerprint:

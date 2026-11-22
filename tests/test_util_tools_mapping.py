@@ -1,5 +1,6 @@
 import json
 import pytest
+from pydantic import BaseModel, Field
 
 from magic_llm.exception.ChatException import ChatException
 from magic_llm.engine.tooling import (
@@ -201,11 +202,6 @@ def test_callable_name_docstring_type_hints_and_param_docs_from_engine_tooling()
 
 
 def test_normalize_openai_tools_accepts_pydantic_model():
-    try:
-        from pydantic import BaseModel
-    except Exception:
-        pytest.skip("pydantic not available")
-
     class GetWeather(BaseModel):
         """Get current temperature for a given location."""
         location: str
@@ -219,11 +215,6 @@ def test_normalize_openai_tools_accepts_pydantic_model():
 
 
 def test_pydantic_field_descriptions_and_nested_refs_are_preserved_by_engine_tooling():
-    try:
-        from pydantic import BaseModel, Field
-    except Exception:
-        pytest.skip("pydantic not available")
-
     class Location(BaseModel):
         """Location payload."""
         city: str = Field(description="City name")
@@ -297,11 +288,6 @@ def test_normalize_preserves_strict_flag():
 
 
 def test_callable_param_with_nested_pydantic_schema_includes_inner_properties():
-    try:
-        from pydantic import BaseModel
-    except Exception:
-        pytest.skip("pydantic not available")
-
     class InnerModel(BaseModel):
         data: str
 

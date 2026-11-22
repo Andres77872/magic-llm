@@ -321,59 +321,38 @@ class TestTaskExecutorConcurrency:
     """Per-task semaphore concurrency control."""
 
     @pytest.mark.asyncio
-    async def test_semaphore_initialized_on_registration(self):
-        """register_task() creates asyncio.Semaphore with max_concurrency."""
+    @pytest.mark.parametrize("limit", [2, 3])
+    async def test_concurrency_limit_queues_calls(self, limit):
         executor = TaskExecutor()
-
-        manifest = _make_manifest(id="my_task", max_concurrency=3)
-        executor.register_task(manifest, lambda: "ok")
-
-        assert "my_task" in executor._task_semaphores
-        semaphore = executor._task_semaphores["my_task"]
-        # Semaphore._value is the current available slots
-        assert semaphore._value == 3
-
-    @pytest.mark.asyncio
-    async def test_concurrency_limit_queues_calls(self):
-        """4 concurrent calls with max_concurrency=3, 4th waits."""
-        executor = TaskExecutor()
-        execution_order = []
+        full, release = asyncio.Event(), asyncio.Event()
+        active = peak = 0
+        entered = []
 
         async def tracked_task(query: str) -> str:
-            execution_order.append(f"start_{query}")
-            await asyncio.sleep(0.5)
-            execution_order.append(f"end_{query}")
-            return query
+            nonlocal active, peak
+            entered.append(query)
+            active += 1
+            peak = max(peak, active)
+            if active == limit:
+                full.set()
+            try:
+                await release.wait()
+                return query
+            finally:
+                active -= 1
 
-        manifest = _make_manifest(id="tracked_task", max_concurrency=3)
-        executor.register_task(manifest, tracked_task)
-
-        # Launch 4 concurrent calls
-        calls = [
-            _make_call("tracked_task", {"query": f"call_{i}"}, id=f"call_{i}")
-            for i in range(4)
-        ]
-
-        start = time.monotonic()
-        results = await executor.execute_parallel_async(calls)
-        elapsed = time.monotonic() - start
-
-        # All should complete
-        assert len(results) == 4
-        assert all(r.is_error is False for r in results)
-
-        # Total time should be ~1s (3 parallel + 1 queued), not 2s (4 parallel)
-        # Actually with max_concurrency=3 and 4 calls, the pattern is:
-        # - First 3 start immediately
-        # - 4th waits until one of first 3 finishes
-        # - Total time ≈ 1s (0.5s for first 3, then 4th runs during second 0.5s)
-        # So elapsed should be ~1s, not ~0.5s (if all 4 were parallel)
-        # and not ~2s (if all 4 were sequential)
-        assert elapsed >= 0.5, "Should not complete instantly"
-        assert elapsed < 1.5, f"4 calls with concurrency=3 took {elapsed:.1f}s, expected ~1s"
-
-        # Verify all 4 completed
-        assert len([x for x in execution_order if x.startswith("end_")]) == 4
+        executor.register_task(_make_manifest(id="tracked", max_concurrency=limit), tracked_task)
+        calls = [_make_call("tracked", {"query": str(i)}, id=str(i)) for i in range(limit + 1)]
+        batch = asyncio.create_task(executor.execute_parallel_async(calls))
+        try:
+            await asyncio.wait_for(full.wait(), 2)
+            await asyncio.sleep(0)  # give the queued call a turn while all slots are held
+            assert len(entered) == limit
+        finally:
+            release.set()
+            results = await asyncio.wait_for(batch, 2)
+        assert peak == limit and len(set(entered)) == limit + 1
+        assert len(results) == limit + 1 and all(not r.is_error for r in results)
 
 
 # ─── Error Handling Tests ─────────────────────────────────────────────────────

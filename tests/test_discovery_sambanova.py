@@ -9,7 +9,6 @@ Tests:
 - ``DiscoveryPolicy`` resilience: graceful 404→[], 5xx propagates (Error Policy B)
 - Auth 401→propagates
 - Sync/async equivalence
-- ``discover()`` is inherited from ``BaseDiscoveryAdapter`` (override removed)
 """
 
 import json
@@ -18,10 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from magic_llm.engine.discovery import get_adapter
-from magic_llm.engine.discovery.base_discovery import (
-    BaseDiscoveryAdapter,
-    DiscoveryError,
-)
+from magic_llm.engine.discovery.base_discovery import DiscoveryError
 from magic_llm.engine.discovery.sambanova_discovery import (
     SambaNovaDiscoveryAdapter,
 )
@@ -51,20 +47,6 @@ class TestSambaNovaDefaults:
         adapter = SambaNovaDiscoveryAdapter(api_key=None)
         headers = adapter._get_headers()
         assert "Authorization" not in headers
-
-
-# ── Override Removal ──────────────────────────────────────────────────────
-
-class TestSambaNovaOverrideRemoved:
-    def test_discover_is_inherited_from_base(self):
-        """SambaNova no longer overrides discover() — it has been removed."""
-        assert SambaNovaDiscoveryAdapter.discover is BaseDiscoveryAdapter.discover
-
-    def test_async_discover_is_inherited_from_base(self):
-        assert (
-            SambaNovaDiscoveryAdapter.async_discover
-            is BaseDiscoveryAdapter.async_discover
-        )
 
 
 # ── Normalization ─────────────────────────────────────────────────────────
@@ -194,7 +176,8 @@ class TestSambaNovaAsync:
     @pytest.mark.asyncio
     async def test_async_discover(self, adapter, mock_async_client):
         result = await adapter.async_discover()
-        assert len(result) == 2
+        assert [m.external_id for m in result] == [item["id"] for item in SAMBA_PAYLOAD["data"]]
+        assert all(m.provider == "sambanova" for m in result)
 
 
 # ── Registry ───────────────────────────────────────────────────────────────
@@ -203,4 +186,3 @@ class TestSambaNovaRegistry:
     def test_get_adapter_returns_sambanova(self):
         cls = get_adapter("sambanova")
         assert cls is SambaNovaDiscoveryAdapter
-        assert cls is not None

@@ -125,4 +125,6 @@ class MagicLlmBase:
                 f"Engine '{engine}' has no discovery adapter registered. "
                 "Model listing is not supported for this engine."
             )
-        return adapter_cls(api_key=api_key, base_url=base_url, **kwargs)
+        if base_url is not None:
+            kwargs['base_url'] = base_url
+        return adapter_cls(api_key=api_key, **kwargs)

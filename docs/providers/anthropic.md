@@ -14,10 +14,13 @@ client = MagicLLM(
 
 ## Notes
 
-- Chat, streaming, async chat, and async streaming are supported.
+- Chat, streaming, async chat, and async streaming are supported through the native Messages API (`https://api.anthropic.com/v1/messages`).
 - Tool calling is supported through Magic LLM's normalized tooling layer.
-- Model discovery is supported.
+- Vision input is supported through `ModelChat.add_user_message(..., image=...)` for vision-capable Claude models.
+- Model discovery is supported through `client.list_models()` and `client.async_list_models()`.
 - When `max_tokens` is not supplied, the Anthropic engine sets a default of `4096`.
+- Audio is unsupported, and TTS/STT methods raise `UNSUPPORTED_MEDIA_OPERATION`.
+- Embeddings are not implemented: `embedding()` and `async_embedding()` return `None`.
 
 ## Example
 

@@ -1,16 +1,22 @@
 # Troubleshooting
 
-## `NotImplementedError` with Azure chat
+## Azure chat fails with `STREAM_GENERATION_ERROR` after retries
 
-`engine="azure"` is speech-only. Chat generation methods are not implemented. Use Azure for speech APIs or switch chat workloads to another engine.
+`engine="azure"` is speech-only. Chat generation raises `NotImplementedError` internally; the chat wrapper retries it and then raises `ChatException` (`error_code="STREAM_GENERATION_ERROR"`, `__context__` is the `NotImplementedError`). Use Azure for speech APIs or switch chat workloads to another engine.
 
-## `NotImplementedError` during model discovery
+## Model discovery errors
 
-Amazon and Cloudflare do not support model discovery. Avoid `client.list_models()` for those engines.
+- `NotImplementedError`: Amazon and Cloudflare do not support model discovery.
+- A custom OpenAI-compatible endpoint returns 404: verify the provider exposes a model-listing endpoint at the configured base URL. See [model discovery](usage/model-discovery.md).
+- `ValueError` on `engine="azure"`: the Azure discovery adapters need Azure OpenAI or Foundry credentials; see [Azure](providers/azure.md#model-discovery).
 
 ## Tool-calling error on Amazon Bedrock, Cohere, or Cloudflare
 
-Amazon Bedrock, Cohere, and Cloudflare do not support tool calling in Magic LLM v0.1.37. Use direct chat or choose OpenAI, Anthropic, Google, or a tool-capable OpenAI-compatible endpoint.
+Amazon Bedrock, Cohere, Cloudflare, and Azure raise `TOOL_WIRING_NOT_IMPLEMENTED` when `tools` are passed. Use direct chat or choose OpenAI, Anthropic, Google, or a tool-capable OpenAI-compatible endpoint.
+
+## `embedding()` returns `None`
+
+Embeddings are implemented only for `engine="openai"` and OpenAI-compatible endpoints. Every other engine returns `None` instead of raising.
 
 ## OpenAI-compatible provider rejects `max_completion_tokens`
 

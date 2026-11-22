@@ -7,7 +7,7 @@ addopts = ["-m", "not provider_functional and not provider_health"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["."]
-testpaths = ["test"]
+testpaths = ["tests"]
 markers = [
     "integration: offline multi-module seam tests with provider/network boundaries mocked",
     "provider_health: explicit live provider discovery/health smoke; excluded from offline gates",

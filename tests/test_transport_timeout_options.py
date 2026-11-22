@@ -1,10 +1,12 @@
 """Provider bodies exclude local HTTP timeout controls."""
 import json
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from magic_llm.engine.engine_anthropic import EngineAnthropic
 from magic_llm.engine.engine_cohere import EngineCohere
+from magic_llm.engine.engine_cloudflare import EngineCloudFlare
 from magic_llm.engine.engine_google import EngineGoogle
 from magic_llm.engine.engine_openai import EngineOpenAI
 from magic_llm.model import ModelChat
@@ -24,6 +26,31 @@ def test_transport_timeout_is_not_serialized_into_a_model_request(engine):
         assert options == {'timeout': 10.0, 'temperature': 0.6}
     finally:
         provider.executor.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+async def test_cloudflare_timeout_reaches_transport_only(asynchronous):
+    engine = EngineCloudFlare(api_key="dummy", account_id="account", model="model", retries=1)
+    chat = ModelChat(system="hello")
+    response = {"success": True, "result": {"response": "ok"}}
+    try:
+        if asynchronous:
+            with patch("magic_llm.engine.engine_cloudflare.AsyncHttpClient") as http:
+                send = AsyncMock(return_value=response)
+                http.return_value.__aenter__.return_value.post_json = send
+                result = await engine.async_generate(chat, timeout=7)
+        else:
+            with patch("magic_llm.engine.engine_cloudflare.HttpClient") as http:
+                send = http.return_value.__enter__.return_value.post_json
+                send.return_value = response
+                result = engine.generate(chat, timeout=7)
+        assert result.content == "ok"
+        send.assert_called_once()
+        assert send.call_args.kwargs["timeout"] == 7
+        assert "timeout" not in json.loads(send.call_args.kwargs["data"])
+    finally:
+        engine.executor.shutdown(wait=False)
 
 
 @pytest.mark.asyncio

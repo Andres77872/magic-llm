@@ -31,37 +31,33 @@ class CapturingAsyncClient:
 class TestFireworksHostnames:
     """Test that Fireworks uses current *.api.fireworks.ai hostnames for ASR."""
 
-    def test_whisper_v3_uses_current_hostname_in_source(self):
-        """whisper-v3 ASR URL uses audio-prod.api.fireworks.ai."""
-        assert ProviderFireworks.ASR_HOSTS["whisper-v3"] == "https://audio-prod.api.fireworks.ai/v1"
-
-    def test_whisper_v3_turbo_uses_current_hostname_in_source(self):
-        """whisper-v3-turbo ASR URL uses audio-turbo.api.fireworks.ai."""
-        assert ProviderFireworks.ASR_HOSTS["whisper-v3-turbo"] == "https://audio-turbo.api.fireworks.ai/v1"
-
     def test_base_url_is_general_inference_endpoint(self):
         """Provider base_url is the general inference endpoint (not ASR-specific)."""
         provider = ProviderFireworks(api_key="test")
         assert provider.base_url == "https://api.fireworks.ai/inference/v1"
 
     @pytest.mark.asyncio
-    async def test_whisper_v3_request_hits_current_hostname(self, monkeypatch):
+    @pytest.mark.parametrize(("model", "hostname"), [
+        ("whisper-v3", "audio-prod.api.fireworks.ai"),
+        ("whisper-v3-turbo", "audio-turbo.api.fireworks.ai"),
+    ])
+    async def test_whisper_request_hits_current_hostname(self, monkeypatch, model, hostname):
         import magic_llm.engine.openai_adapters.openai_fireworks as mod
 
         CapturingAsyncClient.instances.clear()
         monkeypatch.setattr(mod, 'AsyncHttpClient', CapturingAsyncClient)
-        provider = ProviderFireworks(api_key='test', model='whisper-v3')
+        provider = ProviderFireworks(api_key='test', model=model)
         request = AudioTranscriptionsRequest(
             file=WAV_BYTES,
-            model='whisper-v3',
+            model=model,
             filename='sample.wav',
             content_type='audio/wav',
         )
 
         assert await provider.async_audio_transcriptions(request) == {'text': 'hello'}
         call = CapturingAsyncClient.instances[0].calls[0]
-        assert call['url'] == 'https://audio-prod.api.fireworks.ai/v1/audio/transcriptions'
-        assert call['fields']['model'] == 'whisper-v3'
+        assert call['url'] == f'https://{hostname}/v1/audio/transcriptions'
+        assert call['fields']['model'] == model
         assert call['filename'] == 'sample.wav'
         assert call['content_type'] == 'audio/wav'
 
