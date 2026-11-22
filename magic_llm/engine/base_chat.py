@@ -11,7 +11,7 @@ from typing import Iterator, AsyncIterator, Callable, Awaitable, Optional, Union
 
 from magic_llm.engine.attempt_control import (
     ProviderAttemptControl, controlled_generate, controlled_stream, reject_sync_control, is_permanent_provider_error,
-    prepare_provider_attempt,
+    prepare_provider_attempt, skips_retries,
 )
 from magic_llm.engine._usage_factory import attach_attempt_metadata, usage_attempt_dict, usage_has_tokens
 from magic_llm.exception.ChatException import ChatException, RequestValidationError
@@ -374,7 +374,7 @@ class BaseChat(abc.ABC):
                                                      TPS=0,
                                                      status='ERROR: ' + er))
 
-                    if attempt == self.retry_config.attempts - 1:
+                    if attempt == self.retry_config.attempts - 1 or skips_retries(e):
                         fallback = self._handle_fallback(is_async=True)
                         if fallback:
                             async for i in fallback(chat, **kwargs):
@@ -386,6 +386,7 @@ class BaseChat(abc.ABC):
                                     )
                                     i.usage = attach_attempt_metadata(i.usage, attempt_usages + [fallback_attempt])
                                 yield i
+                            return
                         else:
                             yield ChatCompletionModel(**{
                                 'model': self.model or 'unknown',
@@ -507,7 +508,7 @@ class BaseChat(abc.ABC):
                                                     TPS=0,
                                                     status='ERROR: ' + er))
 
-                    if attempt == self.retry_config.attempts - 1:
+                    if attempt == self.retry_config.attempts - 1 or skips_retries(e):
                         fallback = self._handle_fallback(is_async=False)
                         if fallback:
                             for i in fallback(chat, **kwargs):
@@ -519,6 +520,7 @@ class BaseChat(abc.ABC):
                                     )
                                     i.usage = attach_attempt_metadata(i.usage, attempt_usages + [fallback_attempt])
                                 yield i
+                            return
                         else:
                             raise ChatException(
                                 message=f"Stream generation failed after {attempt + 1} attempts: {er}",
@@ -567,7 +569,7 @@ class BaseChat(abc.ABC):
                                                      TTF=0,
                                                      TPS=0,
                                                      status='ERROR: ' + er))
-                    if attempt == self.retry_config.attempts - 1:
+                    if attempt == self.retry_config.attempts - 1 or skips_retries(e):
                         if self.fallback:
                             return await self.fallback.llm.async_generate(chat, **kwargs)
                         else:
@@ -622,7 +624,7 @@ class BaseChat(abc.ABC):
                                                     TPS=0,
                                                     status='ERROR: ' + er))
 
-                    if attempt == self.retry_config.attempts - 1:
+                    if attempt == self.retry_config.attempts - 1 or skips_retries(e):
                         if self.fallback:
                             return self.fallback.llm.generate(chat, **kwargs)
                         else:

@@ -2,7 +2,7 @@
 
 Magic LLM exposes speech request models in `magic_llm.model.ModelAudio`.
 
-Unsupported media paths now fail fast with `UNSUPPORTED_MEDIA_OPERATION` instead of returning `None`. This is an intentional bug-fix breaking change: branch from the matrix below before calling a media method.
+An unsupported media path raises `ChatException` with `error_code="UNSUPPORTED_MEDIA_OPERATION"` before any request is sent, naming the supported alternative where one exists. Check the matrix below before calling a media method.
 
 ## Provider × method matrix
 
@@ -13,7 +13,7 @@ Unsupported media paths now fail fast with `UNSUPPORTED_MEDIA_OPERATION` instead
 | `openai` + DeepInfra | ❌ | ✅ | ❌ | ❌ | Async TTS only; STT is conservative/unsupported. |
 | `openai` + Fireworks | ❌ | ❌ | ❌ | ✅ | Async STT only for `whisper-v3` and `whisper-v3-turbo`. |
 | `openai` + Groq, SambaNova, OpenRouter, Mistral, DeepSeek | ❌ | ❌ | ❌ | ❌ | Media unsupported. |
-| `openai` + any other host (generic adapter) | ❌ | ⚠️ | ❌ | ❌ | Marked unsupported, but `async_audio_speech` does not enforce the flag and still posts to `{base_url}/audio/speech`. |
+| `openai` + any other host (generic adapter) | ❌ | ⚠️ | ❌ | ❌ | Async TTS posts to `{base_url}/audio/speech`, unverified; `supports_tts_async` reports `False`. |
 | `google` | ✅ | ✅ | ❌ | ❌ | Gemini TTS returns WAV bytes; always uses `gemini-2.5-flash-preview-tts`. |
 | `azure` Speech | ❌ | ✅ | ❌ | ✅ | Async-only Azure Speech. |
 | `amazon` Polly | ✅ | ❌ | ❌ | ❌ | Sync TTS only; no Amazon Transcribe in core. |

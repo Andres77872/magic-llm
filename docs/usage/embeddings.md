@@ -17,7 +17,7 @@ print(response)
 
 ## Supported provider families
 
-Research confirmed embedding support for:
+These providers serve embeddings through their OpenAI-compatible API:
 
 - OpenAI.
 - DeepInfra via `engine="openai"` plus DeepInfra `base_url`.

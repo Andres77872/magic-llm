@@ -49,6 +49,23 @@ read from the stream itself. A failure inside an HTTP 200 (a top-level
 `error`, or a choice with `finish_reason: "error"`) fails the call with its
 status and `error_type`.
 
+## Retries
+
+`generate`, `stream_generate`, `async_generate`, and `async_stream_generate` make up to `retries` attempts (constructor option, default 3), waiting 1 second between attempts. Each failed attempt calls the callback with `meta.status` set to `"ERROR: <message>"`.
+
+How a failure is handled depends on the error:
+
+| Error | Attempts | Fallback | What the caller gets |
+| --- | --- | --- | --- |
+| Transport failures, HTTP 408, 429, 5xx, and other errors | All `retries` | Yes | `ChatException` with `error_code="STREAM_GENERATION_ERROR"` |
+| Rejections no retry can change: `VISION_NOT_SUPPORTED`, `NotImplementedError` (chat on `engine="azure"`) | One | Yes | `ChatException` with `error_code="STREAM_GENERATION_ERROR"` |
+| HTTP 4xx other than 408 and 429 | One | No | The `HttpError`, unwrapped, with no error callback |
+| `TOOL_WIRING_NOT_IMPLEMENTED`, `RequestValidationError`, private-output rejections | One | No | The original exception, with no error callback |
+
+In the `STREAM_GENERATION_ERROR` cases, the last underlying error is the exception's `__context__`. `async_stream_generate` without a fallback yields one empty chunk whose `finish_reason` is `"error: <message>"` before raising.
+
+With `provider_attempt_control`, retries and fallback follow the control contract instead; see [reliable application integration](../agents/production-integration.md).
+
 ## Fallback chain
 
 ```python
@@ -64,7 +81,7 @@ client = MagicLLM(
 response = client.llm.generate(chat)
 ```
 
-If the primary client fails, the fallback client can be used transparently.
+When the primary client ends a call on an error that allows a fallback (see the table above), the same chat and options go to the fallback client, and its result is returned.
 
 ## Callbacks
 

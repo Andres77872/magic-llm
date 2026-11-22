@@ -38,13 +38,13 @@ The `base_url` hostname selects a provider adapter. The match is exact, so subdo
 | DeepSeek | `api.deepseek.com` | No | No | No | `deepseek` |
 | DeepInfra | `api.deepinfra.com`, path `/v1` or below | No | Async | No | `deepinfra` |
 | Together | `api.together.xyz` | No | Sync + async | No | `together` |
-| Any other host | none | No | Async (see note) | No | By host (xAI, Cerebras, Hyperbolic, Nebius, Novita, Parasail, Perplexity), else generic `openai` |
+| Any other host | none | No | Async, unverified (see below) | No | By host (xAI, Cerebras, Hyperbolic, Nebius, Novita, Parasail, Perplexity), else generic `openai` |
 
 Every adapter supports chat, streaming, async chat, async streaming, and tool calling. Tools are passed through in the OpenAI format, and the provider decides whether the model accepts them.
 
 "No" in the vision, TTS, or STT columns means the call is rejected before any request is sent; see [unsupported-feature errors](index.md#unsupported-feature-errors).
 
-> **Generic-host TTS:** an unrecognized host is flagged as not supporting async TTS, but the generic adapter's `async_audio_speech()` does not check that flag. It still posts to `{base_url}/audio/speech`. Don't rely on this; the check may be enforced later.
+For hosts without a dedicated adapter, `async_audio_speech()` posts the request to `{base_url}/audio/speech` and returns the response bytes. The adapter reports `supports_tts_async = False` for these hosts because the endpoint is unverified, so check that your provider serves this route before relying on it.
 
 ## Critical `max_tokens` behavior
 
@@ -106,16 +106,21 @@ With it enabled:
 - `base_url` must be public HTTPS on port 443, with no credentials, query, or fragment. Localhost and private, loopback, link-local, or reserved IP addresses are rejected at construction with `HttpError`. DNS answers are also checked at connect time and must all be public.
 - The generic OpenAI adapter is always used, even for known hosts, and the model ID is sent as given.
 - Only async chat runs: `async_generate`, `async_stream_generate`, and the async agent methods. `generate` and `stream_generate` fail.
+- `list_models()` and `async_list_models()` raise `NotImplementedError`, so the caller-supplied key never reaches the listing client. Pass the model ID explicitly.
 - Requests do not follow redirects, ignore proxy environment variables, use no automatic retries at the HTTP layer, and cap responses at 16 MiB. Raw provider error bodies are not surfaced.
 - `stream_options` usage reporting is not requested, and Responses calls do not request encrypted reasoning.
 - Responses and streaming deltas are checked for credential echoes before they reach callbacks or callers. An optional `private_limits` profile (`magic_llm.util.private_limits.PrivateRequestLimits`) binds the model, budgets and timeout per attempt; it cannot be used with a fallback.
 - The value must be a real `bool`. Anything else raises `ValueError`.
 
-Private transport applies to chat only. Embeddings, audio, and `list_models()` use the ordinary HTTP client.
+The guarded transport covers chat only. Embeddings and audio calls use the ordinary HTTP client.
 
 ## Model discovery
 
-`client.list_models()` and `await client.async_list_models()` select the listing adapter using the configured provider origin. Known providers can have a listing path different from their chat path; unknown compatible endpoints use their own base URL plus `/models`.
+`client.list_models()` and `await client.async_list_models()` pick the listing adapter from the `base_url` host, and the listing request always goes to that same origin with the client's key:
+
+- A provider with a dedicated discovery adapter lists at the adapter's default URL when it shares the `base_url` origin. This covers providers whose listing path differs from their chat path, such as DeepInfra (`https://api.deepinfra.com/v1/models` for a `.../v1/openai` chat URL).
+- A dedicated adapter reached through a different origin, such as a regional subdomain, lists at `{base_url}/models`.
+- Hosts without a dedicated adapter, including Fireworks and custom endpoints, list at `{base_url}/models`.
 
 See [model discovery](../usage/model-discovery.md) for the full list of adapters.
 

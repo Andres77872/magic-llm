@@ -118,7 +118,7 @@ client = MagicLLM(
 
 Magic LLM detects known provider URLs and applies provider-specific chat adapters where implemented; unrecognized `base_url` values fall back to the generic OpenAI-compatible path.
 
-Model discovery covers a wider set than chat routing: registered discovery adapters also include xAI, Cerebras, Hyperbolic, Nebius, Novita, Parasail, and Perplexity. For these hosts, call the adapter directly instead of `client.list_models()`; see [usage/model-discovery.md](docs/usage/model-discovery.md).
+Model discovery covers a wider set than chat routing: registered discovery adapters also include xAI, Cerebras, Hyperbolic, Nebius, Novita, Parasail, and Perplexity. `client.list_models()` picks the adapter from the `base_url` host; see [usage/model-discovery.md](docs/usage/model-discovery.md).
 
 For endpoints and keys supplied by your users at runtime, `private_transport=True` restricts chat to async calls over public HTTPS, with no redirects or proxies. See [providers/openai.md](docs/providers/openai.md#private-transport-for-caller-supplied-endpoints).
 
@@ -140,7 +140,8 @@ client = MagicLLM(
 ## Key gotchas
 
 - **Official OpenAI token argument:** on the Chat Completions path for `api.openai.com` only, `max_tokens` is transformed into `max_completion_tokens`. If both are supplied, `max_completion_tokens` wins and `max_tokens` is removed. Other OpenAI-compatible endpoints keep `max_tokens` unchanged. With `endpoint="responses"`, the value is sent as `max_output_tokens`.
-- **Azure is speech-only:** `generate`, `stream_generate`, `async_generate`, and `async_stream_generate` fail for `engine='azure'`. The internal `NotImplementedError` is retried and surfaces as `ChatException` (`STREAM_GENERATION_ERROR`).
+- **Azure is speech-only:** `generate`, `stream_generate`, `async_generate`, and `async_stream_generate` fail for `engine='azure'` without retrying. Without a fallback they raise `ChatException` (`STREAM_GENERATION_ERROR`).
+- **Retries depend on the error:** transient failures are retried up to `retries` times (default 3). Unsupported images and Azure chat fail after one attempt but still reach a `fallback`, and HTTP 4xx rejections (except 408 and 429) raise immediately. See [retries](docs/usage/error-handling.md#retries).
 - **Embeddings are OpenAI-family only:** `embedding()` on any other engine returns `None` instead of raising.
 - **Audio support is provider/method-specific:** unsupported TTS/STT paths fail fast instead of returning `None`; see `docs/usage/audio.md` for the sync/async matrix and STT upload metadata requirements.
 - **No core image generation:** Magic LLM supports vision/image input for compatible chat models, not text-to-image output generation.
@@ -186,7 +187,7 @@ for model in client.list_models():
 
 An async variant, `client.async_list_models()`, is also available.
 
-`client.list_models()` supports Google, Anthropic, Cohere, and OpenAI-compatible clients whose provider offers a listing endpoint. For Azure OpenAI and Foundry, use their discovery adapters directly; see [model discovery](docs/usage/model-discovery.md).
+`client.list_models()` supports OpenAI, OpenAI-compatible clients whose provider offers a listing endpoint, Google, Anthropic, and Cohere. Clients with `private_transport=True` do not list models. For Azure OpenAI and Foundry, use their discovery adapters directly; see [model discovery](docs/usage/model-discovery.md).
 
 ## Development
 

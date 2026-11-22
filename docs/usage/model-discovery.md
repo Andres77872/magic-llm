@@ -31,15 +31,18 @@ Discovery returns a list of `NormalizedDiscoveredModel` objects with these field
 
 | Engine | Result |
 | --- | --- |
-| `openai` (official, no `base_url`) | Works |
-| `openai` + `base_url` | Uses the provider's listing adapter or the configured compatible endpoint's `/models`. |
-| `anthropic` | Works |
-| `cohere` | Works |
-| `google` | Lists Google AI Studio models. |
+| `openai` (official, no `base_url`) | Lists `https://api.openai.com/v1/models` |
+| `openai` + `base_url` | Lists the configured provider's models on the `base_url` origin ([how the URL is chosen](../providers/openai.md#model-discovery)) |
+| `openai` with `private_transport=True` | Raises `NotImplementedError` |
+| `anthropic` | Lists `https://api.anthropic.com/v1/models` |
+| `cohere` | Lists `https://api.cohere.com/v1/models` |
+| `google` | Lists `https://generativelanguage.googleapis.com/v1beta/models` |
 | `azure` | Raises `ValueError`; the Azure discovery adapters need different credentials ([Azure](../providers/azure.md#model-discovery)) |
 | `amazon`, `cloudflare` | Raises `NotImplementedError` |
 
 ## Using discovery adapters directly
+
+To list models without a chat client, resolve and call an adapter yourself:
 
 ```python
 from magic_llm.engine.discovery import get_adapter, resolve_discovery_engine
@@ -85,4 +88,10 @@ Fireworks has a chat adapter but no discovery adapter, so it resolves to the gen
 
 ## Failure modes
 
-Discovery can raise `DiscoveryAuthError` (401), `DiscoveryRateLimitError` (429), or `DiscoveryError` (provider unreachable or 5xx). These are importable from `magic_llm.engine.discovery`. A 404 returns an empty list. Treat discovery as a network call, not a static local registry.
+Discovery errors are importable from `magic_llm.engine.discovery`:
+
+- `DiscoveryAuthError`: HTTP 401 or 403, or a 400 the provider uses for a rejected key.
+- `DiscoveryRateLimitError`: HTTP 429, with `retry_after` when the provider sends it.
+- `DiscoveryError`: the provider is unreachable, returns 5xx or another 4xx, or sends a body that is not JSON.
+
+An HTTP 404 returns an empty list. Treat discovery as a network call, not a static local registry.

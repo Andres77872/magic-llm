@@ -1,12 +1,12 @@
 # Troubleshooting
 
-## Azure chat fails with `STREAM_GENERATION_ERROR` after retries
+## Azure chat fails with `STREAM_GENERATION_ERROR`
 
-`engine="azure"` is speech-only. Chat generation raises `NotImplementedError` internally; the chat wrapper retries it and then raises `ChatException` (`error_code="STREAM_GENERATION_ERROR"`, `__context__` is the `NotImplementedError`). Use Azure for speech APIs or switch chat workloads to another engine.
+`engine="azure"` is speech-only. Chat generation raises `NotImplementedError` internally, which is not retried; without a fallback the call raises `ChatException` (`error_code="STREAM_GENERATION_ERROR"`, `__context__` is the `NotImplementedError`). Use Azure for speech APIs or switch chat workloads to another engine.
 
 ## Model discovery errors
 
-- `NotImplementedError`: Amazon and Cloudflare do not support model discovery.
+- `NotImplementedError`: Amazon and Cloudflare do not support model discovery, and `openai` clients with `private_transport=True` do not list models. Pass the model ID explicitly.
 - A custom OpenAI-compatible endpoint returns 404: verify the provider exposes a model-listing endpoint at the configured base URL. See [model discovery](usage/model-discovery.md).
 - `ValueError` on `engine="azure"`: the Azure discovery adapters need Azure OpenAI or Foundry credentials; see [Azure](providers/azure.md#model-discovery).
 

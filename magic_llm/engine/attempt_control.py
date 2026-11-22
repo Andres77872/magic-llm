@@ -316,6 +316,15 @@ def _unsupported_by_provider(error):
     return isinstance(error, ChatException) and error.error_code == 'VISION_NOT_SUPPORTED'
 
 
+def skips_retries(error):
+    """Whether retrying the same provider cannot change the outcome.
+
+    Used by the default chat wrappers. Unlike permanent errors, these still
+    reach a configured fallback and keep the wrapper's usual final error.
+    """
+    return _unsupported_by_provider(error) or isinstance(error, NotImplementedError)
+
+
 def _exhausted_error(last_error):
     if _unsupported_by_provider(last_error):
         return ProviderAttemptControlError(last_error.message, error_code=last_error.error_code)

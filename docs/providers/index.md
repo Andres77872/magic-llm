@@ -23,12 +23,14 @@ Unsupported features fail before any request is sent, but the errors differ:
 
 | Feature | What you get |
 | --- | --- |
-| Tools on `amazon`, `cloudflare`, `cohere`, `azure` | `ChatException` with `error_code="TOOL_WIRING_NOT_IMPLEMENTED"` |
-| Images on a non-vision adapter | The chat wrapper retries (default 3 attempts), then raises `ChatException` with `error_code="STREAM_GENERATION_ERROR"`. The original `VISION_NOT_SUPPORTED` error is its `__context__`. |
+| Tools on `amazon`, `cloudflare`, `cohere`, `azure` | `ChatException` with `error_code="TOOL_WIRING_NOT_IMPLEMENTED"`. No retry or fallback. |
+| Images on a non-vision adapter | One attempt, no retries. A configured `fallback` handles the request; otherwise `ChatException` with `error_code="STREAM_GENERATION_ERROR"`, whose `__context__` is the `VISION_NOT_SUPPORTED` error. |
 | Unsupported TTS/STT method | `ChatException` with `error_code="UNSUPPORTED_MEDIA_OPERATION"`, naming the supported alternative |
-| Chat on `azure` | Retried like a failed request, then `ChatException` with `error_code="STREAM_GENERATION_ERROR"`; the `NotImplementedError` is its `__context__` |
-| `list_models()` on `amazon`, `cloudflare` | `NotImplementedError` |
+| Chat on `azure` | One attempt, no retries. A configured `fallback` handles the request; otherwise `ChatException` with `error_code="STREAM_GENERATION_ERROR"`, whose `__context__` is the `NotImplementedError`. |
+| `list_models()` on `amazon`, `cloudflare`, or an `openai` client with `private_transport=True` | `NotImplementedError` |
 | `embedding()` / `async_embedding()` on any engine except `openai` | Returns `None` (no error) |
+
+See [retries](../usage/error-handling.md#retries) for how every other chat failure is retried.
 
 ## Common constructor shape
 

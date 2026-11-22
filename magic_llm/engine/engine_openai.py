@@ -131,6 +131,15 @@ class EngineOpenAI(BaseChat):
     def _output_guard(self):
         return closing(PrivateOutputGuard(self.base.api_key)) if self._private_transport else nullcontext()
 
+    def _discovery_adapter(self):
+        if self._private_transport:
+            # Listing uses the ordinary HTTP client, outside the guarded transport
+            # that protects a caller-supplied endpoint and key.
+            raise NotImplementedError(
+                "Model listing is not supported with private_transport; pass the model ID explicitly."
+            )
+        return super()._discovery_adapter()
+
     def _get_provider_for_url(self, url: str) -> Type[OpenAiBaseProvider]:
         """
         Determine the appropriate provider class based on the URL.

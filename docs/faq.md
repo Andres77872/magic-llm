@@ -26,7 +26,7 @@ Use `engine="openai"` plus the provider's OpenAI-compatible `base_url`.
 
 ## Why does Azure chat fail?
 
-Azure is speech-only. Chat methods raise `NotImplementedError` internally; callers receive `ChatException` (`STREAM_GENERATION_ERROR`) after the retries.
+Azure is speech-only. Chat methods raise `NotImplementedError` internally, which is not retried; without a fallback, callers receive `ChatException` (`STREAM_GENERATION_ERROR`).
 
 ## Why does model discovery fail for Amazon or Cloudflare?
 

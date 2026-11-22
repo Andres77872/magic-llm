@@ -23,7 +23,7 @@ Chat is not implemented for `engine="azure"`. These methods all fail:
 - `client.llm.async_generate(chat)`
 - `client.llm.async_stream_generate(chat)`
 
-The engine raises `NotImplementedError` internally, but the chat wrapper treats it as a failed attempt and retries (default 3 attempts). Callers receive `ChatException` with `error_code="STREAM_GENERATION_ERROR"`, with the `NotImplementedError` as its `__context__`. Passing `tools` raises `TOOL_WIRING_NOT_IMPLEMENTED` instead.
+The engine raises `NotImplementedError` and the call is not retried. A configured `fallback` client handles the request; otherwise callers receive `ChatException` with `error_code="STREAM_GENERATION_ERROR"`, with the `NotImplementedError` as its `__context__`. Passing `tools` raises `TOOL_WIRING_NOT_IMPLEMENTED` instead.
 
 Use the Azure engine only for speech APIs. Embeddings are not implemented either: `embedding()` returns `None`.
 

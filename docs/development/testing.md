@@ -22,6 +22,7 @@ Install `pip install -e '.[test]'`. `setup.cfg` declares the supported ranges fo
 | Collection safety | `python -m pytest --collect-only -q` | No |
 | Async reliability slice | `python -m pytest tests/test_long_running_tool_budget.py` | No |
 | Core media/protocol proof | `python -m pytest tests/test_media_fail_fast.py tests/test_stt_multipart.py tests/test_media_retry.py` | No |
+| Chat retry and fallback proof | `python -m pytest tests/test_base_chat_decorators.py tests/test_unretryable_local_rejections.py tests/test_provider_attempt_control.py` | No |
 | Provider media request shapes | `python -m pytest tests/test_openai_provider_media_shapes.py tests/test_provider_support_flags.py tests/test_google_tts_payload_shape.py` | No |
 | Mock-quality / seam proof | `python -m pytest tests/test_amazon_engine_mocked.py tests/test_fireworks_hostnames.py tests/test_openrouter_pure_process_chunk.py tests/test_amazon_no_sdk.py tests/test_agent_loop_integration_smoke.py` | No |
 | Discovery consolidation proof | `python -m pytest tests/test_discovery_integration.py` | No |
